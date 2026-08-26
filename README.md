@@ -49,7 +49,8 @@ Vocabulary used throughout the repo:
 
 | Path | What it is |
 |---|---|
-| `cores/*.v` | Verilog building blocks (each becomes a Vivado IP block) |
+| `cores/*.v` | Verilog building blocks (each becomes a Vivado IP block). `coil_servo_top.v` is the whole servo |
+| `modules/*.v` | The servo submodules (PI, decimator, error path, output mux, flip FSM, heartbeat) instantiated by `coil_servo_top` |
 | `projects/coil_servo/` | The servo's block design (Tcl script — text, diffable, no GUI) |
 | `projects/playground/` | Known-good upstream demo; used to smoke-test a new Vivado install |
 | `scripts/`, `Makefile`, `cfg/` | Build machinery and pin constraints (from pavel-demin/red-pitaya-notes, tag `20251012`, MIT) |
@@ -171,5 +172,5 @@ has no way to clear one.
 | 3 | Python float reference model (`model/`) | ✅ 29 tests green (`pytest`) |
 | 4 | cocotb testbench (`sim/`) | ✅ decimator + PI benches green under Icarus |
 | 5 | PI core + flip FSM Verilog (`cores/`) | ✅ all six servo cores benched (PI, decimator, error path, output mux, flip FSM, heartbeat) |
-| 6 | Vivado build of the full design | next (first hardware build; stub Tcl is unverified until then) |
+| 6 | Vivado build of the full design | Tcl written; integration top simulated ✅ — needs the first `make bit` on the Ubuntu machine |
 | 7 | HIL scripts (`host/`), dummy-load first | — |

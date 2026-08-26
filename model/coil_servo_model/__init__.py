@@ -10,6 +10,7 @@ from .fixed_point import (FixedPI, Decimator, adc_quantize, drive_frame_error,
                           encode_gain, decode_gain, output_mux_fixed, sat)
 from .loop import run_loop, SimResult, T_S
 from . import analysis
+from . import registers
 
 __all__ = [
     "CHANNELS", "Channel", "Plant", "FloatPI", "output_mux",

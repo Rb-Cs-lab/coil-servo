@@ -1,15 +1,16 @@
-# Coil current servo — block design STUB (session 1).
+# Coil current servo block design.
 #
-# This is the infrastructure skeleton only: PS7, clocks, axi_hub register
-# bridge, fast ADC in, fast DAC out pinned to ZERO, XADC monitoring.
-# The servo cores (PI, decimator, output mux, flip FSM, safety, heartbeat)
-# are added in later sessions after they pass their cocotb benches.
-# Wiring follows projects/playground (proven upstream at tag 20251012).
-# NOT yet built with Vivado — first `make xpr && make bit` run happens on the
-# Ubuntu 24.04 host in session 6.
+# All servo logic lives in cores/coil_servo_top.v (verified by
+# sim/tb_coil_servo_top.py before this file is ever built), so this block
+# design is pure plumbing, kept as close as possible to the proven
+# projects/playground wiring: PS7 + clocks, axi_hub register bridge,
+# fast ADC in, fast DAC out, raw-ADC capture FIFO, XADC monitoring.
 #
-# CFG/STS field layout here is provisional bring-up plumbing, not the real
-# register map; the real map is defined in docs/register_map.md (session 2+).
+# Register map: docs/register_map.md (CFG 512 bits, STS 256 bits at
+# 0x40000000 / 0x41000000 through the hub).
+#
+# NOT yet built with Vivado on this machine -- first `make xpr && make bit`
+# runs on the Ubuntu 24.04 host (build playground first as a smoke test).
 
 # 125 MHz fabric clock from the ADC clock, plus the two 250 MHz DDR phases
 # the DAC interface needs
@@ -55,31 +56,15 @@ cell xilinx.com:ip:proc_sys_reset rst_0 {} {
 # Register bridge: PS GP0 -> axi_hub at 0x40000000.
 # Addr bits [27:24]: 0 = CFG, 1 = STS, 2+ = BRAM/streams.
 cell pavel-demin:user:axi_hub hub_0 {
-  CFG_DATA_WIDTH 64
-  STS_DATA_WIDTH 64
+  CFG_DATA_WIDTH 512
+  STS_DATA_WIDTH 256
 } {
   S_AXI ps_0/M_AXI_GP0
   aclk pll_0/clk_out1
   aresetn rst_0/peripheral_aresetn
 }
 
-# CFG bit 0: ADC capture FIFO reset (bring-up plumbing)
-cell pavel-demin:user:port_slicer slice_0 {
-  DIN_WIDTH 64 DIN_FROM 0 DIN_TO 0
-} {
-  din hub_0/cfg_data
-}
-
-# CFG bits [15:8]: LEDs (bring-up blinker / register-write sanity check)
-cell pavel-demin:user:port_slicer slice_1 {
-  DIN_WIDTH 64 DIN_FROM 15 DIN_TO 8
-} {
-  din hub_0/cfg_data
-  dout led_o
-}
-
-# Fast ADC: IN1 = measured current, IN2 = analog setpoint (channels packed
-# into one 32-bit stream word, 16 bits each)
+# Fast ADC: IN1 = measured current [13:0], IN2 = analog setpoint [29:16]
 cell pavel-demin:user:axis_red_pitaya_adc adc_0 {
   ADC_DATA_WIDTH 14
 } {
@@ -89,16 +74,49 @@ cell pavel-demin:user:axis_red_pitaya_adc adc_0 {
   adc_csn adc_csn_o
 }
 
-# Raw ADC capture into the hub for HIL diagnostics
+# The servo itself (error path, decimators, PI, output mux, flip FSM,
+# heartbeat, DIO conditioning -- see cores/coil_servo_top.v)
+cell pavel-demin:user:coil_servo_top servo_0 {} {
+  aclk pll_0/clk_out1
+  aresetn rst_0/peripheral_aresetn
+  S_AXIS adc_0/M_AXIS
+  cfg_data hub_0/cfg_data
+  flip_req_i flip_req_i
+  arm_i arm_i
+  fault_i fault_i
+  bridge_polarity_o bridge_polarity_o
+  bridge_enable_o bridge_enable_o
+  boost_o boost_o
+  heartbeat_o heartbeat_o
+  led_o led_o
+}
+
+# Fast DAC: OUT1 = pass bank [13:0], OUT2 = active clamp [29:16]
+cell pavel-demin:user:axis_red_pitaya_dac dac_0 {
+  DAC_DATA_WIDTH 14
+} {
+  aclk pll_0/clk_out1
+  ddr_clk pll_0/clk_out2
+  wrt_clk pll_0/clk_out3
+  locked pll_0/locked
+  S_AXIS servo_0/M_AXIS
+  dac_clk dac_clk_o
+  dac_rst dac_rst_o
+  dac_sel dac_sel_o
+  dac_wrt dac_wrt_o
+  dac_dat dac_dat_o
+}
+
+# Raw ADC capture FIFO for HIL diagnostics (reset from CFG via the servo)
 cell pavel-demin:user:axis_fifo fifo_0 {
   S_AXIS_TDATA_WIDTH 32
   M_AXIS_TDATA_WIDTH 32
   WRITE_DEPTH 16384
 } {
-  S_AXIS adc_0/M_AXIS
+  S_AXIS servo_0/M01_AXIS
   M_AXIS hub_0/S00_AXIS
   aclk pll_0/clk_out1
-  aresetn slice_0/dout
+  aresetn servo_0/fifo_resetn
 }
 
 # XADC: AIN0 coil temperature, AIN1 rail voltage (logging only)
@@ -111,52 +129,20 @@ cell pavel-demin:user:xadc_bram xadc_0 {} {
   Vaux9 Vaux9
 }
 
-# Fast DAC pinned to zero: OUT1 (pass bank) and OUT2 (clamp) both command
-# zero current until the servo cores replace this constant (safety
-# invariant: reset/idle state is off).
+# STS: servo words 0-4, FIFO fill count as word 5, words 6-7 reserved
 cell xilinx.com:ip:xlconstant const_1 {
-  CONST_WIDTH 32
-  CONST_VAL 0
-}
-
-cell pavel-demin:user:axis_constant zero_0 {
-  AXIS_TDATA_WIDTH 32
-} {
-  cfg_data const_1/dout
-  aclk pll_0/clk_out1
-}
-
-cell pavel-demin:user:axis_red_pitaya_dac dac_0 {
-  DAC_DATA_WIDTH 14
-} {
-  aclk pll_0/clk_out1
-  ddr_clk pll_0/clk_out2
-  wrt_clk pll_0/clk_out3
-  locked pll_0/locked
-  S_AXIS zero_0/M_AXIS
-  dac_clk dac_clk_o
-  dac_rst dac_rst_o
-  dac_sel dac_sel_o
-  dac_wrt dac_wrt_o
-  dac_dat dac_dat_o
-}
-
-# STS: FIFO fill count in the low word, zero in the high word
-cell xilinx.com:ip:xlconstant const_2 {
-  CONST_WIDTH 32
+  CONST_WIDTH 64
   CONST_VAL 0
 }
 
 cell xilinx.com:ip:xlconcat concat_0 {
-  NUM_PORTS 2
-  IN0_WIDTH 32
+  NUM_PORTS 3
+  IN0_WIDTH 160
   IN1_WIDTH 32
+  IN2_WIDTH 64
 } {
-  In0 fifo_0/read_count
-  In1 const_2/dout
+  In0 servo_0/sts_data
+  In1 fifo_0/read_count
+  In2 const_1/dout
   dout hub_0/sts_data
 }
-
-# E1 DIO (exp_p_tri_io / exp_n_tri_io) intentionally unconnected in this
-# stub: pins stay high-impedance, which is the safe state (bridge enable
-# low = all FETs off). The flip FSM / safety cores drive them later.

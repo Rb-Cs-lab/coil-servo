@@ -213,6 +213,13 @@ cell pavel-demin:user:axis_red_pitaya_dac dac_0 {
   dac_dat dac_dat_o
 }
 
+# Tie off the coil-servo DIO output ports (defined repo-wide in
+# cfg/ports.tcl); playground is only a toolchain smoke test.
+cell xilinx.com:ip:xlconstant dio_0 {CONST_VAL 0} {dout bridge_polarity_o}
+cell xilinx.com:ip:xlconstant dio_1 {CONST_VAL 0} {dout bridge_enable_o}
+cell xilinx.com:ip:xlconstant dio_2 {CONST_VAL 0} {dout boost_o}
+cell xilinx.com:ip:xlconstant dio_3 {CONST_VAL 0} {dout heartbeat_o}
+
 # STS
 
 # Create xlconcat

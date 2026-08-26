@@ -146,31 +146,41 @@ set_property PACKAGE_PIN A20 [get_ports Vaux8_v_n]
 set_property PACKAGE_PIN E18 [get_ports Vaux9_v_p]
 set_property PACKAGE_PIN E19 [get_ports Vaux9_v_n]
 
-### Expansion connector
+### Expansion connector E1 (per-signal DIO ports for the coil servo;
+### upstream's generic exp_p/n_tri_io vectors are replaced -- see CLAUDE.md
+### port table. Unused E1 pins are left undeclared. E1 is unbuffered 3.3 V
+### LVCMOS, NOT 5 V tolerant.)
 
-set_property IOSTANDARD LVCMOS33 [get_ports {exp_p_tri_io[*]}]
-set_property IOSTANDARD LVCMOS33 [get_ports {exp_n_tri_io[*]}]
-set_property SLEW FAST [get_ports {exp_p_tri_io[*]}]
-set_property SLEW FAST [get_ports {exp_n_tri_io[*]}]
-set_property DRIVE 8 [get_ports {exp_p_tri_io[*]}]
-set_property DRIVE 8 [get_ports {exp_n_tri_io[*]}]
+# outputs: slow slew / low drive on purpose -- these are DC control lines
+# on unbuffered pins, not high-speed signals
+set_property IOSTANDARD LVCMOS33 [get_ports bridge_polarity_o]
+set_property IOSTANDARD LVCMOS33 [get_ports bridge_enable_o]
+set_property IOSTANDARD LVCMOS33 [get_ports boost_o]
+set_property IOSTANDARD LVCMOS33 [get_ports heartbeat_o]
+set_property SLEW SLOW [get_ports bridge_polarity_o]
+set_property SLEW SLOW [get_ports bridge_enable_o]
+set_property SLEW SLOW [get_ports boost_o]
+set_property SLEW SLOW [get_ports heartbeat_o]
+set_property DRIVE 4 [get_ports bridge_polarity_o]
+set_property DRIVE 4 [get_ports bridge_enable_o]
+set_property DRIVE 4 [get_ports boost_o]
+set_property DRIVE 4 [get_ports heartbeat_o]
 
-set_property PACKAGE_PIN G17 [get_ports {exp_p_tri_io[0]}]
-set_property PACKAGE_PIN G18 [get_ports {exp_n_tri_io[0]}]
-set_property PACKAGE_PIN H16 [get_ports {exp_p_tri_io[1]}]
-set_property PACKAGE_PIN H17 [get_ports {exp_n_tri_io[1]}]
-set_property PACKAGE_PIN J18 [get_ports {exp_p_tri_io[2]}]
-set_property PACKAGE_PIN H18 [get_ports {exp_n_tri_io[2]}]
-set_property PACKAGE_PIN K17 [get_ports {exp_p_tri_io[3]}]
-set_property PACKAGE_PIN K18 [get_ports {exp_n_tri_io[3]}]
-set_property PACKAGE_PIN L14 [get_ports {exp_p_tri_io[4]}]
-set_property PACKAGE_PIN L15 [get_ports {exp_n_tri_io[4]}]
-set_property PACKAGE_PIN L16 [get_ports {exp_p_tri_io[5]}]
-set_property PACKAGE_PIN L17 [get_ports {exp_n_tri_io[5]}]
-set_property PACKAGE_PIN K16 [get_ports {exp_p_tri_io[6]}]
-set_property PACKAGE_PIN J16 [get_ports {exp_n_tri_io[6]}]
-set_property PACKAGE_PIN M14 [get_ports {exp_p_tri_io[7]}]
-set_property PACKAGE_PIN M15 [get_ports {exp_n_tri_io[7]}]
+# inputs: pull-downs so a disconnected cable reads disarmed / no request
+set_property IOSTANDARD LVCMOS33 [get_ports flip_req_i]
+set_property IOSTANDARD LVCMOS33 [get_ports arm_i]
+set_property IOSTANDARD LVCMOS33 [get_ports fault_i]
+set_property PULLTYPE PULLDOWN [get_ports flip_req_i]
+set_property PULLTYPE PULLDOWN [get_ports arm_i]
+set_property PULLTYPE PULLDOWN [get_ports fault_i]
+
+set_property PACKAGE_PIN G17 [get_ports bridge_polarity_o]
+set_property PACKAGE_PIN H16 [get_ports bridge_enable_o]
+set_property PACKAGE_PIN J18 [get_ports boost_o]
+set_property PACKAGE_PIN K17 [get_ports flip_req_i]
+set_property PACKAGE_PIN L14 [get_ports arm_i]
+set_property PACKAGE_PIN L16 [get_ports fault_i]
+set_property PACKAGE_PIN K16 [get_ports heartbeat_o]
 
 ### SATA connector
 

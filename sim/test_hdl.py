@@ -10,11 +10,11 @@ SIM_DIR = Path(__file__).resolve().parent
 ROOT = SIM_DIR.parent
 
 
-def run_bench(toplevel: str, test_module: str, parameters=None):
+def run_bench(toplevel: str, test_module: str, parameters=None, sources=None):
     runner = get_runner("icarus")
     build_dir = SIM_DIR / "sim_build" / toplevel
     runner.build(
-        sources=[ROOT / "cores" / f"{toplevel}.v"],
+        sources=sources or [ROOT / "modules" / f"{toplevel}.v"],
         hdl_toplevel=toplevel,
         build_dir=build_dir,
         build_args=["-g2012"],
@@ -51,3 +51,11 @@ def test_servo_heartbeat():
 
 def test_servo_flip_fsm():
     run_bench("servo_flip_fsm", "tb_servo_flip_fsm")
+
+
+def test_coil_servo_top():
+    # the integration top: cores/coil_servo_top.v + every submodule
+    sources = [ROOT / "cores" / "coil_servo_top.v"]
+    sources += sorted((ROOT / "modules").glob("servo_*.v"))
+    run_bench("coil_servo_top", "tb_coil_servo_top",
+              parameters={"HB_DIV_LOG2": 6}, sources=sources)

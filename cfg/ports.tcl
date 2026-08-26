@@ -33,10 +33,16 @@ create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:diff_analog_io_rtl:1.
 create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:diff_analog_io_rtl:1.0 Vaux9
 create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:diff_analog_io_rtl:1.0 Vaux8
 
-### Expansion connector
+### Expansion connector E1 (per-signal DIO for the coil servo; see the
+### port table in CLAUDE.md and pin constraints in ports.xdc)
 
-create_bd_port -dir IO -from 7 -to 0 exp_p_tri_io
-create_bd_port -dir IO -from 7 -to 0 exp_n_tri_io
+create_bd_port -dir O bridge_polarity_o
+create_bd_port -dir O bridge_enable_o
+create_bd_port -dir O boost_o
+create_bd_port -dir O heartbeat_o
+create_bd_port -dir I flip_req_i
+create_bd_port -dir I arm_i
+create_bd_port -dir I fault_i
 
 ### LED
 

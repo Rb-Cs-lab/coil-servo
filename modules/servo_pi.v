@@ -34,7 +34,8 @@ module servo_pi
 
   output reg  signed [13:0] u14,        // clamped output, DAC counts
   output reg                out_sat,    // clamp engaged on the last tick
-  output wire signed [47:0] acc_mon     // integrator state (STS/debug)
+  output wire signed [47:0] acc_mon,    // integrator state (STS/debug)
+  output wire               int_railed  // accumulator at its s48 rails (STS)
 );
 
   localparam [2:0] S_IDLE = 3'd0, S_MUL = 3'd1, S_SHIFT = 3'd2,
@@ -47,6 +48,7 @@ module servo_pi
   reg signed [47:0] acc;
 
   assign acc_mon = acc;
+  assign int_railed = (acc == 48'sh7fffffffffff) || (acc == 48'sh800000000000);
 
   // saturate to s24 (design.md saturation points 1 and 3)
   function signed [23:0] sat24(input signed [48:0] x);

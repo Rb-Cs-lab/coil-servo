@@ -30,7 +30,9 @@ xpr: tmp/$(NAME).xpr
 
 bit: tmp/$(NAME).bit
 
-tmp/cores/%: cores/%.v
+# cores may instantiate submodules from modules/ (scripts/core.tcl adds
+# them to every core's packaging project)
+tmp/cores/%: cores/%.v $(wildcard modules/*.v)
 	mkdir -p $(@D)
 	$(VIVADO) -source scripts/core.tcl -tclargs $* $(PART)
 

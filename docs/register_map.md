@@ -1,12 +1,11 @@
-# Register map — DRAFT (tracks docs/design.md; final after session 5)
+# Register map (implemented in `cores/coil_servo_top.v`)
 
-Single source of truth for CFG/STS field layout. `host/registers.py` mirrors
-this file; HDL slices are generated per this table. **Never invent offsets —
-change this file first.**
-
-The current `projects/coil_servo/block_design.tcl` stub still carries a
-64/64-bit bring-up layout (fifo reset + LED only); it switches to this map
-when the servo cores are integrated (session 6).
+Single source of truth for CFG/STS field layout.
+`model/coil_servo_model/registers.py` mirrors this file (the integration
+testbench and the host tools both use it); the HDL slices in
+`coil_servo_top.v` follow this table. **Never invent offsets — change this
+file first**, then registers.py, then the HDL (the integration bench catches
+disagreement between the last two).
 
 ## Addressing
 
@@ -43,18 +42,22 @@ their word; unused high bits read/write as 0.
 | 11 | `settle` | u32 | 0 | post-flip settle, 8 ns ticks — eddy placeholder, PROVISIONAL |
 | 12 | `flip_timeout` | u32 | 0 | RAMP_DOWN timeout, 8 ns ticks (0 = disabled) |
 | 13 | `dio_invert` | bits | 0 | invert sense of E1 *inputs*: b0 flip request (DIO3), b1 arm (DIO4), b2 fault (DIO5). Reset 0 = as listed in the port table. Output polarities are fixed in HDL on purpose (reset state must be safe unconfigured). |
-| 14–15 | — | | | reserved |
+| 14 | — | u12 | 0 | reserved for `aout0_trim` (transducer offset trim via slow PWM output; wired up in session 7 when it can be validated against a voltmeter) |
+| 15 | — | | | reserved |
 
 ## STS (0x4100_0000 + 4·word)
 
+Signed fields are raw (LSB-aligned, upper bits zero): the host sign-extends
+from the stated width (`registers.parse_sts` does this).
+
 | Word | Name | Format | Meaning |
 |---|---|---|---|
-| 0 | `flags` | bits | b3:0 `fsm_state`; b4 `fault` (DIO5, read-only, no clear path); b5 `bridge_en`; b6 `polarity`; b7 `armed` (DIO4); b8 `out_sat` (clamp engaged); b9 `int_railed`; b10 `sp_sign_mismatch`; b11 `flip_timeout_hold` |
-| 1 | `i_meas` | s32 (s22 Q2.20 sign-ext) | decimated measured current |
-| 2 | `sp_active` | s32 (s14 sign-ext) | setpoint after mux (what the loop sees) |
-| 3 | `u_pi` | s32 (s24 Q3.20 sign-ext) | PI output before clamp/mux |
-| 4 | `fifo_count` | u32 | ADC capture FIFO fill |
-| 5 | `heartbeat` | u32 | free-running counter (liveness readback) |
+| 0 | `flags` | bits | b3:0 `fsm_state`; b4 `fault` (DIO5, read-only, no clear path); b5 `bridge_en`; b6 `polarity`; b7 `armed` (DIO4); b8 `out_sat` (clamp engaged); b9 `int_railed`; b10 `sp_sign_mismatch`; b11 `timeout_hold` |
+| 1 | `i_meas` | s22 Q2.20 | decimated measured current (board frame) |
+| 2 | `sp_active` | s14 | setpoint after mux (what the loop sees) |
+| 3 | `u14` | s14 | PI output after the hard clamp |
+| 4 | `heartbeat` | u32 | free-running counter (liveness readback) |
+| 5 | `fifo_count` | u32 | ADC capture FIFO fill (added at the block-design level) |
 | 6–7 | — | | reserved |
 
 ## FSM state encoding (`flags[3:0]`)

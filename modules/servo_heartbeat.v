@@ -13,13 +13,15 @@ module servo_heartbeat #
 )
 (
   input  wire aclk,
-  output wire heartbeat
+  output wire heartbeat,
+  output wire [31:0] cnt_mon   // liveness readback for STS
 );
 
-  reg [DIV_LOG2:0] cnt = 0;
+  reg [31:0] cnt = 0;
 
   always @(posedge aclk) cnt <= cnt + 1'b1;
 
   assign heartbeat = cnt[DIV_LOG2];
+  assign cnt_mon = cnt;
 
 endmodule

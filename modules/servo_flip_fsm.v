@@ -49,7 +49,8 @@ module servo_flip_fsm
   output reg                sp_force_zero,  // to servo_error
   output reg                int_clear,      // one-cycle pulse to servo_pi
   output reg                int_hold,       // to servo_pi
-  output wire        [3:0]  fsm_state       // STS
+  output wire        [3:0]  fsm_state,      // STS
+  output wire               timeout_hold    // STS: parked in TIMEOUT_HOLD
 );
 
   localparam [2:0] S_IDLE = 3'd0, S_RUN = 3'd1, S_RAMP = 3'd2,
@@ -62,6 +63,7 @@ module servo_flip_fsm
   reg [15:0] win_cnt;
 
   assign fsm_state = {1'b0, state};
+  assign timeout_hold = (state == S_THOLD);
 
   // |i_meas| < zero_win, compared at the decimated resolution (Q2.20):
   // zero_win is in Q1.13 counts, so scale by 2^7.
