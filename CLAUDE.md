@@ -97,7 +97,8 @@ firmware for speed — the analog side sets the bandwidth.
 
 ## Safety invariants (in FPGA fabric, asserted in every testbench)
 
-1. Hard fixed-point clamp on OUT1/OUT2 at ~110 % of channel rated current.
+1. Hard fixed-point clamp on OUT1/OUT2 at **100 %** of channel rated current
+   (review decision 2026-08-26; supersedes BOOTSTRAP's "~110 %").
 2. Reset state is off: all DIO outputs low, both DACs zero.
 3. OUT1 and OUT2 mutually exclusive at all times (deadband handoff).
 4. Bridge enable requires active assertion; enable-low is safe in both
@@ -123,6 +124,11 @@ Each of these must be a named, commented-provisional parameter
 If a design decision depends on one of these, flag it explicitly.
 
 ## Working style
+
+**Audience: the lab are physicists, not software engineers.** READMEs and
+docs must explain jargon on first use (registers, bitstreams, Q-format,
+cocotb), spell out setup steps end-to-end, and prefer plain language over
+terse engineering shorthand. Code comments follow normal engineering style.
 
 One subsystem per session, small commits, tests green before moving on.
 Simulation before hardware; if something can't be verified in simulation, say

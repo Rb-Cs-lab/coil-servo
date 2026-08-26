@@ -1,13 +1,21 @@
 # Coil servo — fixed-point signal-path design
 
-**Status: FOR REVIEW — no HDL until this is signed off.**
-Session-2 deliverable per [BOOTSTRAP.md](../BOOTSTRAP.md): Q-format and
-gain-per-LSB at every node, decimation ratio, and every saturation point.
-Decisions that need explicit sign-off are marked **⚑ REVIEW**.
+**Status: REVIEWED and signed off 2026-08-26.** This document is the
+contract the HDL is written against; if the HDL and this document disagree,
+the HDL is wrong. Decisions made at review are marked **✓ DECIDED**.
 
-Notation: `sN` = N-bit signed two's complement. `Qm.f` = signed fixed point,
-m integer bits (excluding sign), f fractional bits, total width 1+m+f.
-Numeric examples use the MOT channel; formulas are per-channel.
+**How to read this document.** The FPGA cannot do floating-point cheaply, so
+every signal in the loop is an integer that *stands for* a physical quantity,
+and this document pins down the exchange rate at every point. Notation:
+`sN` = N-bit signed integer (two's complement). `Qm.f` = a signed
+fixed-point number with m integer bits and f fractional bits (total width
+1 + m + f); think of it as an integer with an agreed-upon decimal point —
+e.g. Q1.13 spans −2.0…+2.0 in steps of 2⁻¹³. "1 LSB" = the physical value of
+the least-significant bit, i.e. the smallest representable step. The reason
+this document exists: fixed-point scaling errors are silent — a gain that is
+wrong by 2¹⁴ still simulates *something* — so every conversion is written
+down here where it can be checked by eye, instead of living implicitly in
+the Verilog. Numeric examples use the MOT channel; formulas are per-channel.
 
 ---
 
@@ -17,10 +25,12 @@ Everything in the loop is normalized to the ADC full scale:
 
 - `I_FS` = coil current that produces +1.000 V at IN1
   = `2000 / (R_M · G_ia)` amps (LEM ratio 2000:1, burden `R_M`, in-amp gain `G_ia`).
-- **⚑ REVIEW / provisional:** choose `R_M`/`G_ia` so that **rated current ≈ 80 %
-  of full scale**, i.e. `I_FS ≈ 1.25 × I_rated`. This is what makes a hard
-  clamp at 110 % of rated representable *inside* the DAC range with headroom
-  left to *measure* overshoot above the clamp. Example (MOT, 100 A rated):
+- **✓ DECIDED (value still provisional):** choose `R_M`/`G_ia` so that
+  **rated current ≈ 80 % of full scale**, i.e. `I_FS ≈ 1.25 × I_rated`.
+  The output *command* is clamped at 100 % of rated (Node E), but the
+  *measurement* range extends 25 % above rated so the ADC can still see and
+  log an overshoot or a fault transient instead of pegging at the rail —
+  you cannot diagnose what you cannot measure. Example (MOT, 100 A rated):
   `I_FS = 125 A` → `R_M · G_ia = 16 Ω`, e.g. `R_M = 16 Ω, G_ia = 1` (LEM
   LF 310-S R_M table allows this at ±15 V compliance — verify) or
   `R_M = 8 Ω, G_ia = 2`. Burden value is an Open Unknown; only the *product*
@@ -62,7 +72,7 @@ IN2 ──ADC──┘  ▲                                    └──▶ OUT2
 `sp` (s14) = one of: IN2 (run mode) / CFG setpoint register (tuning, HIL) /
 **0, forced by the flip FSM** during a flip (overrides both).
 
-**⚑ REVIEW — bridge-frame rotation.** The transducer is on the coil side, so
+**✓ DECIDED — bridge-frame rotation.** The transducer is on the coil side, so
 measured current is signed and the plant gain *sign flips with bridge
 polarity* (pass bank can only source magnitude through whichever diagonal is
 on). The PI must therefore run in the drive frame:
@@ -76,9 +86,22 @@ and measurement sit at opposite rails). Consequence of this convention: the
 control computer's setpoint sign must agree with the current bridge polarity;
 a mismatched sign produces a large negative drive-frame error, which drives
 the clamp toward zero current — i.e. the failure mode is *safe* (sits at
-zero). A `sp_sign_mismatch` STS bit reports it. Alternative (rejected):
-firmware takes |setpoint| and ignores its sign — hides wiring errors.
-Confirm the convention.
+zero). A `sp_sign_mismatch` STS bit reports it, and the host tools warn
+loudly when it is set. Alternative (rejected at review): firmware takes
+|setpoint| and ignores its sign — simpler to think about, but it silently
+accepts a control-system misconfiguration that the signed convention turns
+into a visible, safe error. The sign convention is documented in exactly two
+places (here and the port table) so it stays easy to track.
+
+**DIO input polarity** is runtime-configurable: the `dio_invert` CFG
+register (see register map) flips the sense of the three E1 *inputs* —
+flip request (DIO3), arm (DIO4), fault (DIO5) — so a level-shifter or
+wiring inversion is a register write, not a rebuild. E1 *output* polarities
+(bridge enable, bridge polarity, boost) are deliberately **not**
+runtime-configurable: the reset state of the FPGA must be safe with zero
+configuration, and "0 V on the pin = FETs off" is a hardware contract with
+the gate drivers. If an output ever needs inverting, it is a one-line named
+constant in the safety core plus a rebuild — by design.
 
 ### Node C — decimator, 125 MS/s → 976.5625 kS/s
 
@@ -146,19 +169,29 @@ u = sat24( p + i )            → s24, Q3.20   (saturation point #3)
 ```
 u_clamped = min(max(u, −CLAMP), +CLAMP)      CLAMP: u14 CFG register, Q1.13 counts
 ```
-- `CLAMP` = counts equivalent of **110 % of rated current**: MOT
-  `110 A / 125 A × 8192 = 7209` counts; shims `66/75 × 8192 = 7209` (same
+- `CLAMP` = counts equivalent of **100 % of rated current**: MOT
+  `100 A / 125 A × 8192 = 6554` counts; shims `60/75 × 8192 = 6554` (same
   number by construction of the 80 % rule). Written once by Python at config
   time, **enforced in fabric** — no integrator state or setpoint can exceed
   it (**saturation point #4**, the safety-critical one; asserted in every
   testbench).
+- **✓ DECIDED at review (changed from BOOTSTRAP's "~110 %"):** the clamp sits
+  at 100 % of rated, not 110 %. The 110 % figure treated the clamp purely as
+  a fault backstop, leaving headroom so a well-tuned transient never touches
+  it; at 100 % the clamp also bounds normal-operation overshoot, which is
+  more conservative for the coils and pass bank. The cost is that an
+  aggressive setpoint step will ride the clamp briefly (anti-windup
+  mechanism 1 handles this cleanly — verified in the testbench). It is a
+  runtime register, so revisiting the choice is a one-line config change,
+  no rebuild.
 - Conversion s24 Q3.20 → s14 Q1.13 happens here: round-to-nearest on the
   dropped 7 bits, then clamp. (**saturation point #5**, subsumed by #4 since
   CLAMP < full scale.)
 
 ### Node F — output mux / deadband handoff  (safety invariant #3)
 
-**⚑ REVIEW.** BOOTSTRAP says the handoff is "on the sign of the error", but a
+**✓ DECIDED — follow the physics.** BOOTSTRAP says the handoff is "on the
+sign of the error", but a
 literal error-sign handoff can't hold current: at steady state e ≈ 0 while
 the *integrator* holds OUT1 at the pass-bank operating point, and e dithers
 around zero — the outputs would chatter. The workable rule, which matches the
@@ -174,7 +207,7 @@ u_clamped <  −D :  OUT1 = 0,          OUT2 = −u_clamped   (magnitude)
   provides handoff hysteresis-by-gap so the stages never fight).
 - During a down-step the integrator winds down, u goes negative, the clamp
   engages — dynamically this *is* "sign of the error" behavior; statically it
-  holds. Confirm.
+  holds.
 - OUT2 polarity: assumed the clamp stage takes a *positive* command for
   "pull harder" (magnitude, as above). One CFG bit (`out2_invert`) flips it
   if the analog conditioning turns out inverted.
@@ -241,12 +274,13 @@ Timeout guard: RAMP_DOWN not reaching the zero window within `FLIP_TIMEOUT`
 safe configuration, STS flag set, requires CFG acknowledge to retry — never
 flips at nonzero current, which is the entire point).
 
-**⚑ REVIEW — DIO4 "shot trigger / arm" semantics (unspecified in BOOTSTRAP).**
-Assumed: DIO4 high = armed; bridge enable can only be asserted while armed,
+**✓ DECIDED — DIO4 "shot trigger / arm" semantics.**
+DIO4 high = armed; bridge enable can only be asserted while armed,
 and flip requests are only honored while armed. DIO4 falling edge does *not*
-kill the bridge mid-shot (that's the interlock's job). Confirm or correct.
+kill the bridge mid-shot (that's the interlock's job). Active level
+adjustable via `dio_invert`.
 
-**⚑ REVIEW — boost cap (DIO2) policy (unspecified).** Assumed: CFG-selectable
+**✓ DECIDED — boost cap (DIO2) policy.** CFG-selectable
 between manual (register bit) and auto (asserted by FSM from ENABLE until
 current first reaches 90 % of setpoint, then dropped). Default manual-off.
 

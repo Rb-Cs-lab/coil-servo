@@ -35,14 +35,15 @@ their word; unused high bits read/write as 0.
 | 3 | `kp_shift` | u5 | 0 | P gain right-shift |
 | 4 | `ki_mant` | s18 | 0 | I gain mantissa (per-tick) |
 | 5 | `ki_shift` | u6 | 0 | I accumulator right-shift |
-| 6 | `out_clamp` | u14 Q1.13 | 0 | hard output clamp, counts (≈110 % rated). Reset 0 ⇒ outputs forced 0 until configured — safe. |
+| 6 | `out_clamp` | u14 Q1.13 | 0 | hard output clamp, counts (= 100 % of rated current; review decision 2026-08-26). Reset 0 ⇒ outputs forced 0 until configured — safe. |
 | 7 | `deadband` | u14 Q1.13 | 0 | OUT1/OUT2 handoff deadband |
 | 8 | `zero_win` | u14 Q1.13 | 0 | flip zero-current window (counts) — PROVISIONAL |
 | 9 | `zero_holdoff` | u16 | 0 | decimated samples the window must hold |
 | 10 | `deadtime` | u16 | 125 | bridge dead time, 8 ns ticks (125 = 1 µs) — PROVISIONAL |
 | 11 | `settle` | u32 | 0 | post-flip settle, 8 ns ticks — eddy placeholder, PROVISIONAL |
 | 12 | `flip_timeout` | u32 | 0 | RAMP_DOWN timeout, 8 ns ticks (0 = disabled) |
-| 13–15 | — | | | reserved |
+| 13 | `dio_invert` | bits | 0 | invert sense of E1 *inputs*: b0 flip request (DIO3), b1 arm (DIO4), b2 fault (DIO5). Reset 0 = as listed in the port table. Output polarities are fixed in HDL on purpose (reset state must be safe unconfigured). |
+| 14–15 | — | | | reserved |
 
 ## STS (0x4100_0000 + 4·word)
 
