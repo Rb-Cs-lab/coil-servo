@@ -1,0 +1,75 @@
+# Per-channel configuration for the four coil servo boards.
+#
+# EVERY value marked PROVISIONAL is computed or assumed, not measured --
+# see "Open unknowns" in BOOTSTRAP.md. Update here (never in code) as real
+# measurements arrive. Physics values must stay consistent with
+# model/coil_servo_model/channels.py.
+#
+# board_host: address of the board on the WIRED Ethernet lab network
+# (mDNS name from the sticker on the Ethernet jack, or a static IP).
+# The boards are never to be attached via WiFi -- latency and dropouts.
+
+[mot]
+board_host = "rp-mot.local"     # PLACEHOLDER -- set to the real board
+I_rated = 100.0                 # amps
+I_FS = 125.0                    # amps at +1.000 V on IN1 -- PROVISIONAL
+                                # (fixed by the burden resistor choice)
+kp = 0.5                        # normalized -- PROVISIONAL, from the model;
+ki = 15080.0                    # 1/s        -- retune from measured step
+deadband_counts = 8             # PROVISIONAL
+zero_win_amps = 0.5             # flip zero window -- PROVISIONAL
+zero_holdoff_ticks = 16         # decimated samples (~16 us of quiet)
+deadtime_us = 1.0               # PROVISIONAL
+settle_us = 100.0               # chamber eddy PLACEHOLDER -- unmeasured
+flip_timeout_us = 20000.0       # 20 ms then TIMEOUT_HOLD
+dio_invert = 0                  # b0 flip, b1 arm, b2 fault
+out2_invert = 0
+boost_mode = 1                  # 1 = auto (FSM-driven)
+
+[z_shim]
+board_host = "rp-zshim.local"   # PLACEHOLDER
+I_rated = 60.0
+I_FS = 75.0                     # PROVISIONAL
+kp = 0.5                        # PROVISIONAL
+ki = 15080.0                    # PROVISIONAL
+deadband_counts = 8
+zero_win_amps = 0.3
+zero_holdoff_ticks = 16
+deadtime_us = 1.0
+settle_us = 100.0
+flip_timeout_us = 20000.0
+dio_invert = 0
+out2_invert = 0
+boost_mode = 1
+
+[x_shim]
+board_host = "rp-xshim.local"   # PLACEHOLDER
+I_rated = 60.0
+I_FS = 75.0                     # PROVISIONAL
+kp = 0.5                        # PROVISIONAL
+ki = 15080.0                    # PROVISIONAL
+deadband_counts = 8
+zero_win_amps = 0.3
+zero_holdoff_ticks = 16
+deadtime_us = 1.0
+settle_us = 100.0
+flip_timeout_us = 20000.0
+dio_invert = 0
+out2_invert = 0
+boost_mode = 1
+
+[y_shim]
+board_host = "rp-yshim.local"   # PLACEHOLDER
+I_rated = 60.0
+I_FS = 75.0                     # PROVISIONAL
+kp = 0.5                        # PROVISIONAL
+ki = 15080.0                    # PROVISIONAL
+deadband_counts = 8
+zero_win_amps = 0.3
+zero_holdoff_ticks = 16
+deadtime_us = 1.0
+settle_us = 100.0
+flip_timeout_us = 20000.0
+dio_invert = 0
+out2_invert = 0
+boost_mode = 1

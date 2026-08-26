@@ -34,7 +34,7 @@ Everything in the loop is normalized to the ADC full scale:
   `I_FS = 125 A` → `R_M · G_ia = 16 Ω`, e.g. `R_M = 16 Ω, G_ia = 1` (LEM
   LF 310-S R_M table allows this at ±15 V compliance — verify) or
   `R_M = 8 Ω, G_ia = 2`. Burden value is an Open Unknown; only the *product*
-  enters the firmware, as `I_FS` in `channels.yaml`.
+  enters the firmware, as `I_FS` in `channels.toml`.
 - IN2 (setpoint) uses the **same** `I_FS` by construction (÷10 from the
   control computer's ±10 V), so error is a direct code subtraction, no gain
   correction anywhere.
@@ -226,7 +226,7 @@ u_clamped <  −D :  OUT1 = 0,          OUT2 = −u_clamped   (magnitude)
 - Downstream (analog, out of firmware scope, provisional): pass-bank
   transconductance `G_pass` A/V set by the source-sense resistors; if scaled
   so +1 V ≈ I_FS, 1 DAC LSB ≈ 15.26 mA commanded (MOT). Enters only the
-  Python model, as `G_pass` in `channels.yaml`.
+  Python model, as `G_pass` in `channels.toml`.
 
 ### Reset / power-up state (safety invariant #2)
 
@@ -317,7 +317,7 @@ formats don't constrain them.
 
 ---
 
-## 5. Open items blocking nothing, tracked in channels.yaml
+## 5. Open items blocking nothing, tracked in channels.toml
 
 `I_FS` (burden × in-amp product), `G_pass`, `R_loop` (Kelvin pending),
 `ZERO_WIN`, `DEADTIME`, `SETTLE` (eddy), `D` (deadband), PI gains.

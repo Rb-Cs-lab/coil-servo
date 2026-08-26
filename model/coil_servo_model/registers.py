@@ -16,6 +16,8 @@ CFG_FIELDS = {
     "boost_manual":   (0, 6, 1, False),
     "flip_fault_ack": (0, 7, 1, False),
     "led":            (0, 8, 8, False),
+    "open_loop":      (0, 16, 1, False),
+    "capture_sel":    (0, 17, 1, False),
     "setpoint":       (1, 0, 14, True),
     "kp_mant":        (2, 0, 18, True),
     "kp_shift":       (3, 0, 5, False),

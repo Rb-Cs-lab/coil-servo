@@ -64,6 +64,12 @@ module coil_servo_top #
   wire        boost_manual   = cfg_data[6];
   wire        flip_fault_ack = cfg_data[7];
   assign      led_o          = cfg_data[15:8];
+  wire        open_loop      = cfg_data[16];  // route setpoint directly to
+                                              // the output stage (HIL TF
+                                              // measurement; clamp, mux and
+                                              // bridge gating still apply)
+  wire        capture_sel    = cfg_data[17];  // FIFO: 0 = raw ADC @125 MS/s,
+                                              // 1 = decimated {e, i} pairs
   wire signed [13:0] sp_reg       = cfg_data[45:32];    // W1
   wire signed [17:0] kp_mant      = cfg_data[81:64];    // W2
   wire        [4:0]  kp_shift     = cfg_data[100:96];   // W3
@@ -101,8 +107,12 @@ module coil_servo_top #
   wire signed [13:0] meas_code = s_axis_tdata[13:0];
   wire signed [13:0] in2_code  = s_axis_tdata[29:16];
 
-  assign m01_axis_tdata  = s_axis_tdata;
-  assign m01_axis_tvalid = s_axis_tvalid;
+  // capture source: raw ADC every fast sample, or decimated
+  // {error[21:6], measured[21:6]} once per PI tick (16.8 ms per 16384-deep
+  // FIFO fill -- long enough to see the 100 Hz plant pole)
+  assign m01_axis_tdata  = capture_sel ? {e_dec[21:6], i_dec[21:6]}
+                                       : s_axis_tdata;
+  assign m01_axis_tvalid = capture_sel ? tick_i : s_axis_tvalid;
 
   // ------------------------------------------------------------------
   // Error path -> decimators (error and measured current run in lockstep)
@@ -186,12 +196,22 @@ module coil_servo_top #
     .int_railed(int_railed)
   );
 
+  // open-loop mode (HIL transfer-function measurement): the setpoint --
+  // IN2 from a lab function generator, or the register -- drives the output
+  // stage directly. The hard clamp, the deadband mux, and the bridge-enable
+  // gate all still apply; the loop is open, the safety is not.
+  wire signed [13:0] clamp_pos_ol = out_clamp[13:0];
+  wire signed [13:0] sp_clamped =
+      (sp_active > clamp_pos_ol)  ? clamp_pos_ol :
+      (sp_active < -clamp_pos_ol) ? -clamp_pos_ol : sp_active;
+  wire signed [13:0] u_drive = open_loop ? sp_clamped : u14;
+
   wire signed [13:0] out1, out2;
 
   servo_output_mux mux_0 (
     .aclk(aclk), .aresetn(aresetn),
     .enable(bridge_en),          // outputs live only with the bridge closed
-    .u14(u14), .deadband(deadband), .out2_invert(out2_invert),
+    .u14(u_drive), .deadband(deadband), .out2_invert(out2_invert),
     .out1(out1), .out2(out2)
   );
 

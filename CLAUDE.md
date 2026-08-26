@@ -112,7 +112,7 @@ The hardware interlock chain does not pass through the Pitaya. Firmware only
 ## Open unknowns — config values only, never hardcoded
 
 Each of these must be a named, commented-provisional parameter
-(`host/config/channels.yaml` + `model/coil_servo_model/channels.py`):
+(`host/config/channels.toml` + `model/coil_servo_model/channels.py`):
 
 - Actual coil resistance (Kelvin measurement outstanding; PI gains depend on it)
 - Chamber eddy-current settling time (limits post-flip field settling; FSM

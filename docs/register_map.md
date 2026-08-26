@@ -28,7 +28,7 @@ their word; unused high bits read/write as 0.
 
 | Word | Name | Format | Reset | Meaning |
 |---|---|---|---|---|
-| 0 | `ctrl` | bits | 0 | b0 `servo_enable` (1→0 triggers a graceful ramp-to-zero stop, never an instant bridge drop); b1 `int_clear` (level; pulse from host); b2 `sp_source` (0 = IN2 analog, 1 = `setpoint` reg); b3 `fifo_rst`; b4 `out2_invert`; b5 `boost_mode` (0 = manual, 1 = auto); b6 `boost_manual`; b7 `flip_fault_ack`; b15:8 `led` |
+| 0 | `ctrl` | bits | 0 | b0 `servo_enable` (1→0 triggers a graceful ramp-to-zero stop, never an instant bridge drop); b1 `int_clear` (level; pulse from host); b2 `sp_source` (0 = IN2 analog, 1 = `setpoint` reg); b3 `fifo_rst`; b4 `out2_invert`; b5 `boost_mode` (0 = manual, 1 = auto); b6 `boost_manual`; b7 `flip_fault_ack`; b15:8 `led`; b16 `open_loop` (setpoint drives the output stage directly for HIL transfer-function measurement — clamp/mux/bridge gating still apply); b17 `capture_sel` (FIFO source: 0 = raw ADC @ 125 MS/s, 131 µs window; 1 = decimated `{error[21:6], measured[21:6]}` per PI tick, 16.8 ms window) |
 | 1 | `setpoint` | s14 Q1.13 | 0 | register setpoint (counts of I_FS) |
 | 2 | `kp_mant` | s18 | 0 | P gain mantissa |
 | 3 | `kp_shift` | u5 | 0 | P gain right-shift |

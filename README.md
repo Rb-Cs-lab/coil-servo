@@ -57,7 +57,7 @@ Vocabulary used throughout the repo:
 | `docs/` | Design doc and register map |
 | `model/` | Python reference model: plant + float PI (trusted) + bit-exact fixed-point mirror. Run its tests with `pytest` after `pip install -e .` |
 | `sim/` | cocotb testbenches: each servo core is simulated with Icarus Verilog and compared bit-for-bit against the Python fixed-point model. Runs as part of `pytest` |
-| `host/` | Deployment, tuning, and measurement scripts *(session 7 — not yet present)* |
+| `host/` | Lab-PC tools: `deploy` (bitstream + register server onto the board), `check` (sanity), `step` and `sweep` (measurements → CSV), `config/channels.toml` (every provisional value, per board). Boards are reached over **wired Ethernet only** — see [docs/bringup.md](docs/bringup.md) |
 
 ## Setup
 
@@ -128,7 +128,7 @@ Loading a bitstream is instant and non-persistent: a power cycle reverts to
 the stock Red Pitaya image until you load again (deployment scripts in
 `host/` will automate load-on-boot later). All four boards run the *same*
 bitstream — per-channel differences (full-scale current, gains, limits,
-timings) are runtime register settings from `host/config/channels.yaml`.
+timings) are runtime register settings from `host/config/channels.toml`.
 
 ## Changing things later — what's a knob vs. what's a rebuild
 
@@ -141,7 +141,7 @@ Python — no Vivado, no rebuild, takes effect immediately**:
 | Flip timing: zero window, dead time, settle delay, timeout | CFG registers (words 8–12) |
 | Setpoint source (analog IN2 vs. register), boost-cap mode | `ctrl` register bits |
 | Polarity/active level of the DIO *inputs* (flip request, arm, fault) | `dio_invert` register (word 13) |
-| Sensor scaling after a burden-resistor change, or LV→HV jumper move | edit `I_FS` in `host/config/channels.yaml` (it's a calibration constant — one number) |
+| Sensor scaling after a burden-resistor change, or LV→HV jumper move | edit `I_FS` in `host/config/channels.toml` (it's a calibration constant — one number) |
 
 Things that deliberately **do** require editing a file and rebuilding the
 bitstream (~15 min, then reload):
@@ -173,4 +173,4 @@ has no way to clear one.
 | 4 | cocotb testbench (`sim/`) | ✅ decimator + PI benches green under Icarus |
 | 5 | PI core + flip FSM Verilog (`cores/`) | ✅ all six servo cores benched (PI, decimator, error path, output mux, flip FSM, heartbeat) |
 | 6 | Vivado build of the full design | Tcl written; integration top simulated ✅ — needs the first `make bit` on the Ubuntu machine |
-| 7 | HIL scripts (`host/`), dummy-load first | — |
+| 7 | HIL scripts (`host/`), dummy-load first | ✅ written + protocol/config/math tested without hardware; first real run follows [docs/bringup.md](docs/bringup.md) |

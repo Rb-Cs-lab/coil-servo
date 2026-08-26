@@ -3,7 +3,7 @@
 This is the single Python source for plant and scaling numbers. Values marked
 PROVISIONAL are computed/assumed, not measured -- see "Open unknowns" in
 BOOTSTRAP.md. The runtime configuration the boards actually receive lives in
-host/config/channels.yaml (session 7) and must stay consistent with this file.
+host/config/channels.toml (session 7) and must stay consistent with this file.
 """
 
 from dataclasses import dataclass, field

@@ -201,6 +201,57 @@ async def flip_sequence_through_the_pins(dut):
 
 
 @cocotb.test()
+async def open_loop_drives_output_through_clamp(dut):
+    """open_loop=1: the setpoint register drives OUT1/OUT2 directly, still
+    clamped and still gated by the bridge."""
+    await setup(dut, run_cfg(open_loop=1, setpoint=3000))
+    dut.arm_i.value = 1
+    await ClockCycles(dut.aclk, 20)
+
+    def outs():
+        w = int(dut.m_axis_tdata.value)
+        o1, o2 = w & 0x3FFF, (w >> 16) & 0x3FFF
+        return o1 - 0x4000 * (o1 >> 13), o2 - 0x4000 * (o2 >> 13)
+
+    assert outs() == (3000, 0)
+    dut.cfg_data.value = run_cfg(open_loop=1, setpoint=-3000)
+    await ClockCycles(dut.aclk, 10)
+    assert outs() == (0, 3000)
+    dut.cfg_data.value = run_cfg(open_loop=1, setpoint=8000)  # beyond clamp
+    await ClockCycles(dut.aclk, 10)
+    assert outs() == (MOT.clamp_counts, 0), "open loop must respect the clamp"
+    dut.arm_i.value = 0                    # back to IDLE: graceful stop path
+    dut.cfg_data.value = run_cfg(open_loop=1, setpoint=3000, servo_enable=0)
+    await ClockCycles(dut.aclk, 3000)      # ramp-to-zero + deadtime
+    assert outs() == (0, 0), "bridge open must silence open-loop drive too"
+
+
+@cocotb.test()
+async def capture_sel_streams_decimated_pairs(dut):
+    """capture_sel=1: the monitor stream emits one {e[21:6], i[21:6]} word
+    per PI tick instead of raw ADC samples."""
+    await setup(dut, run_cfg(capture_sel=1, setpoint=2000))
+    dut.arm_i.value = 1
+    meas = 500
+    dut.s_axis_tdata.value = pack_adc(meas, 0)
+    await ClockCycles(dut.aclk, 5)
+
+    words = []
+    for _ in range(3 * 128 + 10):
+        await RisingEdge(dut.aclk)
+        if int(dut.m01_axis_tvalid.value):
+            words.append(int(dut.m01_axis_tdata.value))
+    assert 2 <= len(words) <= 4, f"expected ~3 decimated words, got {len(words)}"
+    w = words[-1]
+    i16 = w & 0xFFFF
+    e16 = (w >> 16) & 0xFFFF
+    i16 -= 0x10000 * (i16 >> 15)
+    e16 -= 0x10000 * (e16 >> 15)
+    assert i16 == (meas * 128) >> 6, f"decimated measurement wrong: {i16}"
+    assert e16 == ((2000 - meas) * 128) >> 6, f"decimated error wrong: {e16}"
+
+
+@cocotb.test()
 async def dio_invert_flips_arm_sense(dut):
     await setup(dut, run_cfg(dio_invert=0b010))   # invert the arm input
     dut.arm_i.value = 0                           # physically low = armed now

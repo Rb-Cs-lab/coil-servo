@@ -13,7 +13,7 @@ dependencies = ["numpy>=1.24"]
 dev = ["pytest>=7", "cocotb>=1.9", "matplotlib"]
 
 [tool.setuptools.packages.find]
-where = ["model"]
+where = ["model", "host"]
 
 [tool.pytest.ini_options]
-testpaths = ["model/tests", "sim"]
+testpaths = ["model/tests", "sim", "host/tests"]
