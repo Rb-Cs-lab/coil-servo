@@ -16,4 +16,4 @@ dev = ["pytest>=7", "cocotb>=1.9", "matplotlib"]
 where = ["model"]
 
 [tool.pytest.ini_options]
-testpaths = ["model/tests"]
+testpaths = ["model/tests", "sim"]

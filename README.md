@@ -55,7 +55,7 @@ Vocabulary used throughout the repo:
 | `scripts/`, `Makefile`, `cfg/` | Build machinery and pin constraints (from pavel-demin/red-pitaya-notes, tag `20251012`, MIT) |
 | `docs/` | Design doc and register map |
 | `model/` | Python reference model: plant + float PI (trusted) + bit-exact fixed-point mirror. Run its tests with `pytest` after `pip install -e .` |
-| `sim/` | cocotb testbenches *(session 4 — not yet present)* |
+| `sim/` | cocotb testbenches: each servo core is simulated with Icarus Verilog and compared bit-for-bit against the Python fixed-point model. Runs as part of `pytest` |
 | `host/` | Deployment, tuning, and measurement scripts *(session 7 — not yet present)* |
 
 ## Setup
@@ -169,7 +169,7 @@ has no way to clear one.
 | 1 | Repo + toolchain + CLAUDE.md | ✅ done |
 | 2 | Fixed-point design doc | ✅ reviewed 2026-08-26 |
 | 3 | Python float reference model (`model/`) | ✅ 29 tests green (`pytest`) |
-| 4 | cocotb testbench (`sim/`) | next |
-| 5 | PI core + flip FSM Verilog (`cores/`) | — |
+| 4 | cocotb testbench (`sim/`) | ✅ decimator + PI benches green under Icarus |
+| 5 | PI core + flip FSM Verilog (`cores/`) | PI + decimator ✅ (bit-exact vs model); flip FSM / safety / mux next |
 | 6 | Vivado build of the full design | — (first hardware build; stub Tcl is unverified until then) |
 | 7 | HIL scripts (`host/`), dummy-load first | — |
