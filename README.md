@@ -54,7 +54,7 @@ Vocabulary used throughout the repo:
 | `projects/playground/` | Known-good upstream demo; used to smoke-test a new Vivado install |
 | `scripts/`, `Makefile`, `cfg/` | Build machinery and pin constraints (from pavel-demin/red-pitaya-notes, tag `20251012`, MIT) |
 | `docs/` | Design doc and register map |
-| `model/` | Python floating-point reference model *(session 3 — not yet present)* |
+| `model/` | Python reference model: plant + float PI (trusted) + bit-exact fixed-point mirror. Run its tests with `pytest` after `pip install -e .` |
 | `sim/` | cocotb testbenches *(session 4 — not yet present)* |
 | `host/` | Deployment, tuning, and measurement scripts *(session 7 — not yet present)* |
 
@@ -168,8 +168,8 @@ has no way to clear one.
 |---|---|---|
 | 1 | Repo + toolchain + CLAUDE.md | ✅ done |
 | 2 | Fixed-point design doc | ✅ reviewed 2026-08-26 |
-| 3 | Python float reference model (`model/`) | next |
-| 4 | cocotb testbench (`sim/`) | — |
+| 3 | Python float reference model (`model/`) | ✅ 29 tests green (`pytest`) |
+| 4 | cocotb testbench (`sim/`) | next |
 | 5 | PI core + flip FSM Verilog (`cores/`) | — |
 | 6 | Vivado build of the full design | — (first hardware build; stub Tcl is unverified until then) |
 | 7 | HIL scripts (`host/`), dummy-load first | — |

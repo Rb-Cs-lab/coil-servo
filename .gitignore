@@ -10,3 +10,7 @@ tmp
 uImage
 .vscode
 .Xil
+
+.venv
+__pycache__
+*.egg-info
