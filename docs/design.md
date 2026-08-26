@@ -152,10 +152,15 @@ i      = sat24( acc >>> Ki_shift )             → s24, Q3.20
 - **Anti-windup (three mechanisms, all in fabric):**
   1. *Conditional integration:* skip the accumulate when the output clamp
      (Node E) is engaged **and** sign(e) would push further into the clamp.
-  2. *Hold input:* external `int_hold` (from the safety core) freezes the
-     accumulator — asserted whenever bridge enable is low or the FSM is in
-     any state other than RUN. Covers "during the clamp phase and while the
-     bridge is disabled".
+  2. *Hold input:* external `int_hold` (from the flip FSM) freezes the
+     accumulator — asserted exactly while the bridge is open (IDLE, DISABLE,
+     FLIP), because then the loop cannot actuate and would wind up. It is
+     deliberately NOT asserted in RAMP_DOWN/SETTLE/TIMEOUT_HOLD: there the
+     loop is actively servoing the current to zero and a frozen (stale,
+     positive) integrator would fight the ramp-down. Covers "during the
+     clamp phase and while the bridge is disabled". (Refined from an earlier
+     draft that held in every non-RUN state — that version was wrong for
+     RAMP_DOWN.)
   3. *Clear input:* `int_clear` (from FSM on re-enable after a flip, and
      from CFG for tuning) zeroes the accumulator.
 
@@ -268,6 +273,13 @@ ENABLE: bridge enable high, pulse int_clear ─▶ wait SETTLE (u32 ticks,
      placeholder for chamber eddy settling — genuinely unmeasured)
 RUN: release setpoint mux back to IN2/register
 ```
+
+**Graceful stop:** `servo_enable` 1→0 must never drop the bridge at current
+(that dumps the coil's stored energy into body diodes — the exact event the
+FSM exists to prevent). Instead it enters RAMP_DOWN with a stop flag: servo
+to zero, qualify the window, open the bridge after the dead time, park in
+IDLE — no polarity toggle. The software "off switch" is therefore always a
+controlled ramp.
 
 Timeout guard: RAMP_DOWN not reaching the zero window within `FLIP_TIMEOUT`
 (u32 ticks) → FSM goes to FAULT-ish HOLD state (bridge stays in its current

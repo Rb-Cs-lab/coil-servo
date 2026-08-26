@@ -10,7 +10,7 @@ SIM_DIR = Path(__file__).resolve().parent
 ROOT = SIM_DIR.parent
 
 
-def run_bench(toplevel: str, test_module: str):
+def run_bench(toplevel: str, test_module: str, parameters=None):
     runner = get_runner("icarus")
     build_dir = SIM_DIR / "sim_build" / toplevel
     runner.build(
@@ -18,6 +18,7 @@ def run_bench(toplevel: str, test_module: str):
         hdl_toplevel=toplevel,
         build_dir=build_dir,
         build_args=["-g2012"],
+        parameters=parameters or {},
         always=True,
     )
     # the simulator-embedded Python must find the tb_* modules
@@ -33,3 +34,20 @@ def test_servo_decimator():
 
 def test_servo_pi():
     run_bench("servo_pi", "tb_servo_pi")
+
+
+def test_servo_output_mux():
+    run_bench("servo_output_mux", "tb_servo_output_mux")
+
+
+def test_servo_error():
+    run_bench("servo_error", "tb_servo_error")
+
+
+def test_servo_heartbeat():
+    # DIV_LOG2=6 (toggle every 64 clocks) so the bench sees many periods fast
+    run_bench("servo_heartbeat", "tb_servo_heartbeat", parameters={"DIV_LOG2": 6})
+
+
+def test_servo_flip_fsm():
+    run_bench("servo_flip_fsm", "tb_servo_flip_fsm")

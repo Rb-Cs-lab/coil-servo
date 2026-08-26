@@ -115,9 +115,28 @@ class FixedPI:
 
 def output_mux_fixed(u14: int, deadband_counts: int):
     """Node F in counts. Returns (out1, out2) DAC codes, both >= 0,
-    never both nonzero."""
+    never both nonzero. out2 saturates at 8191: -(-8192) does not fit s14
+    (unreachable through the PI clamp, but the mux is safe standalone)."""
     if u14 > deadband_counts:
         return u14, 0
     if u14 < -deadband_counts:
-        return 0, -u14
+        return 0, min(-u14, 8191)
     return 0, 0
+
+
+def drive_frame_error(meas_code: int, in2_code: int, sp_reg: int,
+                      sp_source: int, sp_force_zero: int, polarity: int):
+    """design.md Node B: setpoint mux + bridge-frame rotation, in s14 codes.
+
+    Returns (e_fast s15, sp_active s14, sp_sign_mismatch). The mismatch flag
+    reports a setpoint whose sign disagrees with the bridge polarity by more
+    than MISMATCH_THR counts (a safe condition -- the loop drives to zero --
+    but one the host should warn about loudly).
+    """
+    MISMATCH_THR = 64
+    sp = 0 if sp_force_zero else (sp_reg if sp_source else in2_code)
+    e = sp - meas_code
+    if polarity:
+        e = -e
+    mismatch = (sp > MISMATCH_THR) if polarity else (sp < -MISMATCH_THR)
+    return e, sp, int(mismatch)

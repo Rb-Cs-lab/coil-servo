@@ -170,6 +170,6 @@ has no way to clear one.
 | 2 | Fixed-point design doc | ✅ reviewed 2026-08-26 |
 | 3 | Python float reference model (`model/`) | ✅ 29 tests green (`pytest`) |
 | 4 | cocotb testbench (`sim/`) | ✅ decimator + PI benches green under Icarus |
-| 5 | PI core + flip FSM Verilog (`cores/`) | PI + decimator ✅ (bit-exact vs model); flip FSM / safety / mux next |
-| 6 | Vivado build of the full design | — (first hardware build; stub Tcl is unverified until then) |
+| 5 | PI core + flip FSM Verilog (`cores/`) | ✅ all six servo cores benched (PI, decimator, error path, output mux, flip FSM, heartbeat) |
+| 6 | Vivado build of the full design | next (first hardware build; stub Tcl is unverified until then) |
 | 7 | HIL scripts (`host/`), dummy-load first | — |
