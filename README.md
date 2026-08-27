@@ -93,8 +93,10 @@ and AMD supports 2025.1 only on Ubuntu 22.04/24.04.
    is needed only if the removed device-tree/FSBL make targets are ever
    restored from git history, so on a disk-constrained machine you can
    skip it.
-2. `sudo apt install make python3`, plus the `libtinfo5` library Vivado
-   needs. On Ubuntu 22.04 that's just `sudo apt install libtinfo5`; on
+2. `sudo apt install make python3 locales && sudo locale-gen en_US.UTF-8`
+   (Vivado crashes at startup with a `locale ... not valid` abort on
+   minimal/WSL installs that haven't generated that locale), plus the
+   `libtinfo5` library Vivado needs. On Ubuntu 22.04 that's just `sudo apt install libtinfo5`; on
    24.04 the package was removed from the archive (a well-known Vivado
    gotcha), so install it from the 22.04 pool:
 
