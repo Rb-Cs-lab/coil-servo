@@ -245,5 +245,5 @@ heartbeat/monostable and the hardware interlock chain, never the network.
 | 3 | Python float reference model (`model/`) | ✅ 29 tests green (`pytest`) |
 | 4 | cocotb testbench (`sim/`) | ✅ every core plus the integrated servo benched under Icarus |
 | 5 | PI core + flip FSM Verilog (`cores/`) | ✅ all six servo cores benched (PI, decimator, error path, output mux, flip FSM, heartbeat) |
-| 6 | Vivado build of the full design | Tcl written; integration top simulated ✅ — needs the first `make bit` on the Ubuntu machine |
-| 7 | Hardware-in-the-loop scripts (`host/`), dummy-load first | ✅ written + protocol/config/math tested without hardware; first real run follows [docs/bringup.md](docs/bringup.md). Still pending: AOUT0 offset trim, XADC temperature/rail readout tool |
+| 6 | Vivado build of the full design | ✅ built 2026-08-27 (WSL on the lab NUC), timing met after one pipeline fix |
+| 7 | Hardware-in-the-loop scripts (`host/`), dummy-load first | ✅ first deploy 2026-08-27: heartbeat advancing at exactly 125 MHz, LED walk, safe IDLE state, ~1.3 mV ADC offset. Next: board-only I/O tests ([bringup.md](docs/bringup.md) §3b). Still pending: AOUT0 offset trim, XADC readout tool |
