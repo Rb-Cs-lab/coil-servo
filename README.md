@@ -99,8 +99,12 @@ and AMD supports 2025.1 only on Ubuntu 22.04/24.04.
    gotcha), so install it from the 22.04 pool:
 
    ```bash
-   wget http://mirrors.kernel.org/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.1_amd64.deb && sudo apt install ./libtinfo5_6.3-2ubuntu0.1_amd64.deb
+   wget http://mirrors.edge.kernel.org/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.2_amd64.deb && sudo apt install ./libtinfo5_6.3-2ubuntu0.2_amd64.deb
    ```
+
+   (If that 404s, the package was revised again: browse
+   <http://mirrors.edge.kernel.org/ubuntu/pool/universe/n/ncurses/> and take
+   the newest `libtinfo5_6.3-*_amd64.deb`.)
 3. Smoke-test with the known-good demo project before trusting anything:
 
    ```bash
