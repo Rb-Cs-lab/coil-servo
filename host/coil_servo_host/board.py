@@ -31,7 +31,14 @@ class Board:
         self.sock = socket.create_connection((host, port), timeout=timeout)
         self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.max_clamp = max_clamp
-        self._cfg = 0            # local shadow of the full 512-bit CFG block
+        # Local shadow of the full 512-bit CFG block, synced FROM THE
+        # HARDWARE at connect: a fresh connection that guessed zeros would
+        # clobber every field its first write_cfg didn't mention (this bit
+        # us live: a new REPL's write_cfg(open_loop=1) cleared servo_enable
+        # and gracefully stopped the servo mid-measurement).
+        self._cfg = 0
+        for k, w in enumerate(self.read_words(CFG_BASE, 16)):
+            self._cfg |= w << (32 * k)
 
     def close(self):
         self.sock.close()

@@ -52,6 +52,21 @@ def test_cfg_shadow_preserves_other_bits(server):
         assert b.read_words(CFG_BASE, 1)[0] & 1 == 1
 
 
+def test_cfg_shadow_syncs_from_hardware_on_connect(server):
+    """A FRESH connection must inherit the live config, not assume zeros --
+    the zeros assumption cleared servo_enable live on the bench."""
+    with Board("127.0.0.1", port=server) as b:
+        b.write_cfg(servo_enable=1, setpoint=-1000, kp_mant=-1234)
+    with Board("127.0.0.1", port=server) as b2:   # new session, new shadow
+        b2.write_cfg(open_loop=1)                 # shares word 0 with enable
+        w0 = b2.read_words(CFG_BASE, 1)[0]
+        assert w0 & 1 == 1, "servo_enable clobbered by a fresh connection"
+        assert w0 & (1 << 16), "open_loop not set"
+        expected = cfg_words(servo_enable=1, setpoint=-1000, kp_mant=-1234)
+        assert b2.read_words(CFG_BASE + 4, 1)[0] == expected[1]
+        assert b2.read_words(CFG_BASE + 8, 1)[0] == expected[2]
+
+
 def test_pop_reads_same_address(server):
     with Board("127.0.0.1", port=server) as b:
         b.write_words(0x4200_0000, [42])

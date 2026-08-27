@@ -62,9 +62,16 @@
 <h2>6. dio_invert register (software input-polarity flips)</h2>
 <p>All jumpers removed; each input's sense inverted in software and the corresponding effect observed with no wire attached: fault-bit inversion set/cleared the <code>fault</code> flag; arm-bit inversion armed the board (state RUN); and toggling the flip-bit inversion 0→1 created rising edges the FSM treated as real flip requests — polarity stepped 0 → 1 → 0 across two such edges, with the falling edge correctly ignored. Register restored to 0 afterwards (normal sense). This confirms that if the real level-shifted wiring turns out inverted (e.g. an active-low interlock line), the fix is one config value, not an FPGA rebuild.</p>
 
+<h2>7. Analog loopback (SMA OUT1 → IN1, unterminated)</h2>
+<p><b>First closed feedback loop on hardware.</b> With the loop closed (setpoint 655 counts ≡ 10.0 "A"), <code>i_meas</code> regulated onto the setpoint exactly, silently compensating the chain's gain and offset errors — the drive settled at u<sub>14</sub> = 605 counts, precisely what the calibration below demands (2.03 × 605 − 574 = 654). Residual fluctuation ±30 mA ≈ ±2 ADC counts: raw ADC noise plus the loop hunting ±1 DAC step (the loopback passes DAC steps straight through; a real coil low-passes them). ±30 mA is ±0.024 % of the 125 A scale, inside the 0.1 % stability budget.</p>
+<p><b>Raw-path calibration of this board</b> (uncalibrated converters — the factory EEPROM corrections are not applied in our FPGA path). Three operating points — open-loop (drive 1000 → read 1455), closed-loop (605 → 655), and outputs-off (0 → −574) — lie on one line:</p>
+<p><b>read = 2.03 × drive − 574 counts</b></p>
+<p>i.e. the textbook 2× high-impedance doubling (output calibrated for 50 Ω, IN1 is 1 MΩ), times ordinary converter gain spread, plus a DAC-referred zero offset of ≈ −35 mV (−574 read counts ≈ −70 mV at IN1 after doubling). A single-point measurement earlier had conflated these into an apparent "1.455× factor"; a scope cross-check at drive 1000 read 206 mV at OUT1. Absolute calibration folds into I<sub>FS</sub> per channel later and the closed loop is insensitive to all of it — this exercise characterizes the instrument so converter quirks are never mistaken for sensor physics on the real coil.</p>
+<p><b>Tooling bug found and fixed during this session:</b> a fresh <code>Board</code> connection began with an empty local copy of the config block, so its first register write cleared unmentioned fields sharing the same word — observed live as <code>write_cfg(open_loop=1)</code> from a new session clearing <code>servo_enable</code> (graceful stop, outputs to zero: the failure was at least safe). Fixed: the client now reads the FPGA's actual config into its local copy at connect. Regression test added; suite 56 passed.</p>
+
 <h2>Remaining on the board-only checklist (bringup.md §3b)</h2>
 <ul>
-  <li><b>Analog loopback:</b> SMA OUT1 → IN1 — scaling check, first genuinely closed loop, then <code>step</code> and <code>sweep</code> tool validation.</li>
+  <li>Loopback: <code>step</code> capture and <code>sweep</code> (function generator) tool validation; optional scope-at-drive-0 check to split the −35 mV offset between DAC and ADC.</li>
   <li>Monostable build + heartbeat-loss test (section 2 above).</li>
 </ul>
 
