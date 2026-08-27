@@ -6,11 +6,11 @@ build-backend = "setuptools.build_meta"
 name = "coil-servo"
 version = "0.1.0"
 description = "Reference model, simulation, and host tools for the Rb-Cs coil current servo"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["numpy>=1.24"]
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "cocotb>=1.9", "matplotlib"]
+dev = ["pytest>=7", "cocotb>=2.0", "matplotlib"]
 
 [tool.setuptools.packages.find]
 where = ["model", "host"]

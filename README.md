@@ -49,7 +49,7 @@ Vocabulary used throughout the repo:
 
 | Path | What it is |
 |---|---|
-| `cores/*.v` | Verilog building blocks (each becomes a Vivado IP block). `coil_servo_top.v` is the whole servo |
+| `cores/*.v` | Verilog building blocks (each is packaged as a Vivado "IP block" — a reusable circuit component). `coil_servo_top.v` is the whole servo and the only one we wrote; the `axi_hub.v`/`axis_*.v` files are unmodified upstream infrastructure you are not expected to read |
 | `modules/*.v` | The servo submodules (PI, decimator, error path, output mux, flip FSM, heartbeat) instantiated by `coil_servo_top` |
 | `projects/coil_servo/` | The servo's block design (Tcl script — text, diffable, no GUI) |
 | `projects/playground/` | Known-good upstream demo; used to smoke-test a new Vivado install |
@@ -57,7 +57,7 @@ Vocabulary used throughout the repo:
 | `docs/` | Design doc and register map |
 | `model/` | Python reference model: plant + float PI (trusted) + bit-exact fixed-point mirror. Run its tests with `pytest` after `pip install -e .` |
 | `sim/` | cocotb testbenches: each servo core is simulated with Icarus Verilog and compared bit-for-bit against the Python fixed-point model. Runs as part of `pytest` |
-| `host/` | Lab-PC tools: `deploy` (bitstream + register server onto the board), `check` (sanity), `step` and `sweep` (measurements → CSV), `config/channels.toml` (every provisional value, per board). Boards are reached over **wired Ethernet only** — see [docs/bringup.md](docs/bringup.md) |
+| `host/` | Lab-PC tools: `deploy` (bitstream + register server onto the board), `check` (sanity), `watch` (live current/state display), `step` and `sweep` (measurements → CSV), `config/channels.toml` (every provisional value, per board). Boards are reached over **wired Ethernet only** — see [docs/bringup.md](docs/bringup.md) |
 
 ## Setup
 
@@ -69,8 +69,12 @@ Needed by anyone touching the loop design; no Vivado required.
 2. Install [Icarus Verilog](https://steveicarus.github.io/iverilog/)
    (the free simulator cocotb drives): Ubuntu `sudo apt install iverilog`;
    Windows: the bundled installer from the Icarus site works fine.
-3. From the repo root: `pip install cocotb pytest numpy scipy matplotlib`
-   (a `pyproject.toml` will pin these once `model/` lands).
+3. From the repo root: `pip install -e .[dev]` — this installs the repo's
+   own Python packages (`coil_servo_model`, `coil_servo_host`) plus pytest,
+   cocotb, and matplotlib. Without the `-e .` part, `pytest` fails with
+   import errors.
+4. Check everything: `pytest` from the repo root should end in
+   "51 passed" (model tests + simulated-hardware tests + host-tool tests).
 
 ### B. FPGA build machine (Ubuntu 24.04 or 22.04 only)
 
@@ -85,7 +89,14 @@ and AMD supports 2025.1 only on Ubuntu 22.04/24.04.
    it covers our Zynq-7010 chip) and install to the default `/opt/Xilinx/`.
    Also install **Vitis 2025.1** (same installer, tick the box) — the OS 3.x
    toolchain expects the pair.
-2. `sudo apt install libtinfo5 make python3` (Vivado needs the first).
+2. `sudo apt install make python3`, plus the `libtinfo5` library Vivado
+   needs. On Ubuntu 22.04 that's just `sudo apt install libtinfo5`; on
+   24.04 the package was removed from the archive (a well-known Vivado
+   gotcha), so install it from the 22.04 pool:
+
+   ```bash
+   wget http://mirrors.kernel.org/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.1_amd64.deb && sudo apt install ./libtinfo5_6.3-2ubuntu0.1_amd64.deb
+   ```
 3. Smoke-test with the known-good demo project before trusting anything:
 
    ```bash
@@ -115,20 +126,24 @@ On the Ubuntu machine:
 source /opt/Xilinx/Vivado/2025.1/settings64.sh
 make bit                    # builds tmp/coil_servo.bit  (NAME defaults to coil_servo)
 make coil_servo.bit.bin     # byte-swapped copy the board's loader accepts
-scp coil_servo.bit.bin root@rp-xxxxxx.local:/root/
 ```
 
-On the board:
+Then copy `coil_servo.bit.bin` to the lab PC and use the deploy tool — it
+copies the bitstream and the register server to the board, loads the FPGA,
+and starts the server, all in one command:
 
 ```bash
-fpgautil -b /root/coil_servo.bit.bin
+python -m coil_servo_host.deploy mot --bitstream coil_servo.bit.bin
 ```
 
+(The manual equivalent, useful for debugging: `scp` the file to the board,
+then `fpgautil -b /root/coil_servo.bit.bin` on the board.)
+
 Loading a bitstream is instant and non-persistent: a power cycle reverts to
-the stock Red Pitaya image until you load again (deployment scripts in
-`host/` will automate load-on-boot later). All four boards run the *same*
-bitstream — per-channel differences (full-scale current, gains, limits,
-timings) are runtime register settings from `host/config/channels.toml`.
+the stock Red Pitaya image until you deploy again. All four boards run the
+*same* bitstream — per-channel differences (full-scale current, gains,
+limits, timings) are runtime register settings from
+`host/config/channels.toml`.
 
 ## Changing things later — what's a knob vs. what's a rebuild
 
@@ -163,6 +178,12 @@ kill the bridge if the FPGA hangs. The hardware interlock chain does not go
 through the Red Pitaya at all — the firmware can *report* a fault (DIO5) but
 has no way to clear one.
 
+Losing the network does **not** stop the loop: if the Ethernet cable is
+pulled or the lab PC crashes, the servo keeps running in the FPGA at its
+last register settings. That is deliberate (a network glitch must not drop
+a field mid-experiment) — protection against a genuinely hung board is the
+heartbeat/monostable and the hardware interlock chain, never the network.
+
 ## Project status
 
 | # | Deliverable | State |
@@ -170,7 +191,7 @@ has no way to clear one.
 | 1 | Repo + toolchain + CLAUDE.md | ✅ done |
 | 2 | Fixed-point design doc | ✅ reviewed 2026-08-26 |
 | 3 | Python float reference model (`model/`) | ✅ 29 tests green (`pytest`) |
-| 4 | cocotb testbench (`sim/`) | ✅ decimator + PI benches green under Icarus |
+| 4 | cocotb testbench (`sim/`) | ✅ every core plus the integrated servo benched under Icarus |
 | 5 | PI core + flip FSM Verilog (`cores/`) | ✅ all six servo cores benched (PI, decimator, error path, output mux, flip FSM, heartbeat) |
 | 6 | Vivado build of the full design | Tcl written; integration top simulated ✅ — needs the first `make bit` on the Ubuntu machine |
-| 7 | HIL scripts (`host/`), dummy-load first | ✅ written + protocol/config/math tested without hardware; first real run follows [docs/bringup.md](docs/bringup.md) |
+| 7 | Hardware-in-the-loop scripts (`host/`), dummy-load first | ✅ written + protocol/config/math tested without hardware; first real run follows [docs/bringup.md](docs/bringup.md). Still pending: AOUT0 offset trim, XADC temperature/rail readout tool |

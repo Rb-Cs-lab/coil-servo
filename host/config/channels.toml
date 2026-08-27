@@ -6,8 +6,17 @@
 # model/coil_servo_model/channels.py.
 #
 # board_host: address of the board on the WIRED Ethernet lab network
-# (mDNS name from the sticker on the Ethernet jack, or a static IP).
-# The boards are never to be attached via WiFi -- latency and dropouts.
+# (the rp-xxxxxx.local name from the sticker on the Ethernet jack, or a
+# static IP). The boards are never to be attached via WiFi -- latency and
+# dropouts.
+#
+# UNITS -- two different "ticks" appear here, don't mix them up:
+#   * zero_holdoff_ticks counts DECIMATED samples (1.024 us each);
+#   * deadtime_us / settle_us / flip_timeout_us are given in MICROSECONDS
+#     and converted to 8 ns fabric clock ticks by config.py.
+# deadband_counts is in raw DAC counts (1 count = I_FS/8192 amps, i.e.
+# ~15.3 mA on the MOT channel, ~9.2 mA on the shims) because it is a
+# handoff hysteresis at the digital output, not a physical current limit.
 
 [mot]
 board_host = "rp-mot.local"     # PLACEHOLDER -- set to the real board
@@ -18,7 +27,8 @@ kp = 0.5                        # normalized -- PROVISIONAL, from the model;
 ki = 15080.0                    # 1/s        -- retune from measured step
 deadband_counts = 8             # PROVISIONAL
 zero_win_amps = 0.5             # flip zero window -- PROVISIONAL
-zero_holdoff_ticks = 16         # decimated samples (~16 us of quiet)
+zero_holdoff_ticks = 64         # decimated samples (~66 us of quiet;
+                                # matches design.md section 3)
 deadtime_us = 1.0               # PROVISIONAL
 settle_us = 100.0               # chamber eddy PLACEHOLDER -- unmeasured
 flip_timeout_us = 20000.0       # 20 ms then TIMEOUT_HOLD

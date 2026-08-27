@@ -44,7 +44,8 @@ Bitstream loading on the board: `fpgautil -b coil_servo.bit.bin`
 - `make xpr` — project from `projects/coil_servo/block_design.tcl` (`scripts/project.tcl`)
 - `make bit` — bitstream to `tmp/coil_servo.bit`
 - `make coil_servo.bit.bin` — byte-swapped for fpgautil / OS ≥ 2.0
-- Simulation (this machine): `sim/` cocotb + Icarus; `model/` pytest. (Added in later sessions.)
+- Simulation (any machine, no Vivado): `pytest` from the repo root runs
+  `model/` + `sim/` (cocotb + Icarus) + `host/tests/`.
 
 ## Register map
 
@@ -54,10 +55,12 @@ Bitstream loading on the board: `fpgautil -b coil_servo.bit.bin`
   — port 0 = CFG register word (write), port 1 = STS register word (read),
   ports 2+ = BRAM/AXI-Stream. Bits [23:2] address 32-bit words within a port.
   So CFG = 0x40000000, STS = 0x41000000, port n = 0x4n000000.
-- CFG/STS words are sliced into named fields with `port_slicer`. The field
-  layout will live in `docs/register_map.md` (single source of truth) and be
-  mirrored in `host/registers.py`. **Never invent register offsets — read
-  `docs/register_map.md`; if it doesn't exist yet, the map isn't defined yet.**
+- Field layout: `docs/register_map.md` is the single source of truth,
+  mirrored in `model/coil_servo_model/registers.py` (used by both the
+  testbench and the host tools) and implemented by the CFG/STS slicing in
+  `cores/coil_servo_top.v`. **Never invent register offsets — read
+  `docs/register_map.md` and change it first.**
+- Capture FIFO pops at 0x42000000 (stream port 2); XADC BRAM at 0x44000000.
 
 ## Port assignment
 

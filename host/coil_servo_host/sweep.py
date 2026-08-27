@@ -14,9 +14,10 @@ this script.
 
 Workflow: start this script, then step the function generator through the
 frequencies you care about (10 Hz .. ~100 kHz; a few seconds per point).
-Each time a clean new frequency is detected, a CSV row is appended:
-frequency, |H|, phase in degrees, stimulus amplitude in amps. Ctrl-C ends
-the sweep. The board must be armed (DIO4).
+Each time a clean new frequency is detected, a CSV row is appended and
+flushed: frequency in Hz, |H| (dimensionless: measured amps per commanded
+amp), phase in degrees, stimulus amplitude in amps. Ctrl-C ends the sweep.
+The board must be armed (DIO4).
 """
 
 import argparse
@@ -39,7 +40,12 @@ def main():
     ch = load_channel(args.channel)
     scale = ch["i_fs"] / 16384       # amps per captured LSB
 
-    rows = []
+    # the CSV is written incrementally and flushed per row, so a crash or a
+    # pulled cable can't lose an hour of sweeping
+    out = open(args.out, "w", newline="")
+    writer = csv.writer(out)
+    writer.writerow(["f_hz", "mag", "phase_deg", "stim_amps"])
+    n_rows = 0
     last_f = None
     with Board(ch["host"]) as b:
         b.apply_config(ch["cfg"])
@@ -61,22 +67,21 @@ def main():
                     time.sleep(0.2)
                     continue                    # same point as last time
                 last_f = f0
-                rows.append([f0, abs(h), math.degrees(math.atan2(h.imag, h.real)),
-                             amp * scale])
+                phase = math.degrees(math.atan2(h.imag, h.real))
+                writer.writerow([f0, abs(h), phase, amp * scale])
+                out.flush()
+                n_rows += 1
                 print(f"f = {f0:9.1f} Hz   |H| = {abs(h):7.4f}   "
-                      f"phase = {rows[-1][2]:+7.1f} deg   "
-                      f"stim = {rows[-1][3]:.3f} A")
+                      f"phase = {phase:+7.1f} deg   "
+                      f"stim = {amp * scale:.3f} A")
         except KeyboardInterrupt:
             pass
         finally:
             b.write_cfg(servo_enable=0, open_loop=0)
+            out.close()
 
-    rows.sort()
-    with open(args.out, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["f_hz", "mag", "phase_deg", "stim_amps"])
-        w.writerows(rows)
-    print(f"wrote {args.out} ({len(rows)} points)")
+    print(f"wrote {args.out} ({n_rows} points; rows in sweep order -- "
+          f"sort by the f_hz column when plotting)")
 
 
 if __name__ == "__main__":

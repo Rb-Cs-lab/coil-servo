@@ -122,7 +122,9 @@ constant in the safety core plus a rebuild — by design.
 
 ### Node D — PI arithmetic (runs at 976.6 kHz)
 
-DSP48-friendly: every product is (≤25-bit) × (≤18-bit).
+Every product is (≤25-bit) × (≤18-bit) so it fits one DSP48 — the FPGA's
+hardwired multiplier block, whose native size is 25×18 bits; staying inside
+it keeps the arithmetic fast and cheap.
 
 **P path**
 ```
@@ -305,15 +307,27 @@ it stops only if the fabric clock stops.
 ## 4. Loop-dynamics sanity check (float model verifies this, session 3)
 
 MOT: L = 16 µH, R_loop ≈ 12 mΩ (provisional) → pole at R/2πL ≈ 119 Hz.
-Target crossover f_c = 2–5 kHz → |plant| there ≈ R·(f_pole/f_c)…: with
-G_pass ≈ I_FS per volt normalized plant ≈ f_pole/f (above pole), so
-Kp ≈ f_c/f_pole ≈ 17–42 — comfortably inside the s18+shift gain range with
-~10⁻⁵ relative resolution. Ki ≈ 2π f_c Kp /10 places the PI zero a decade
-below crossover. Digital delay budget (0.51 µs decimator + ≤3 PI ticks +
-DAC) ≈ 3.6 µs → 6.5° at 5 kHz: the digital path is not the phase budget;
-the analog chain is, as BOOTSTRAP states. PI gains remain an Open Unknown —
-set from the measured step response; the numbers above only show the
-formats don't constrain them.
+The gains needed depend on which of two regimes the composite plant is in
+— unknown until measured:
+
+- **Voltage-mode regime** (the loop sees the L/R pole): plant ≈ f_pole/f
+  above the pole, so Kp ≈ f_c/f_pole ≈ 17–42 for crossover at 2–5 kHz,
+  with Ki ≈ 2π f_c Kp/10 placing the PI zero a decade below crossover.
+- **Transconductance regime** (the pass bank's local source-sense loops
+  make the plant flat with unity normalized gain): the crossover is set by
+  the integrator instead — Ki ≈ 2π f_c and Kp ≈ 0.5 for phase lead. This
+  is what the reference model in `model/` assumes, and it is why the
+  shipped provisional defaults in `channels.toml` are kp = 0.5 and
+  ki ≈ 15,000 s⁻¹ rather than 17–42 — the two documents are consistent,
+  they just describe different regimes.
+
+Both regimes sit comfortably inside the s18+shift gain range with ~10⁻⁵
+relative resolution — which is all this section needs to establish.
+Digital delay budget (0.51 µs decimator + ≤3 PI ticks + DAC) ≈ 3.6 µs →
+6.5° at 5 kHz: the digital path is not the phase budget; the analog chain
+is, as BOOTSTRAP states. PI gains remain an Open Unknown — set from the
+measured open-loop step response; the numbers above only show the formats
+don't constrain them.
 
 ---
 
