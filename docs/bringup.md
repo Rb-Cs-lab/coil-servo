@@ -100,6 +100,69 @@ python -c "from coil_servo_host import Board, load_channel; ch = load_channel('m
 `setpoint=-1000`: OUT1 returns to 0, OUT2 shows 122 mV. Check a setpoint of
 8000 gives only 800 mV (= 6554 counts: the 100 %-of-rated clamp).
 
+## 3b. Board-only I/O tests (no power stage, no load — just the board)
+
+Everything in this section needs only the Red Pitaya, jumper wires, two
+SMA cables, and a scope. It verifies every input and output the servo
+uses. Take all 3.3 V for the jumper tests **from the board's own E1 3V3
+pins (pins 1/2)** — never from a 5 V source; E1 is not 5 V tolerant.
+
+**Digital inputs.** Run `python -m coil_servo_host.watch mot` in one
+terminal and touch jumpers while watching it:
+
+- 3V3 → pin 11 (arm): `armed` goes 1; with `servo_enable=1` the state
+  goes IDLE → RUN and bridge enable (pin 5) goes high on the scope.
+- 3V3 → pin 13 (fault): the `fault` flag appears. Remove it: flag clears
+  (the *firmware* flag follows the pin; only the hardware interlock
+  latches).
+- 3V3 → pin 9 (flip request), while in RUN: the FSM runs a full flip.
+  With nothing on IN1 the measured current is already ~0, inside the zero
+  window, so the sequence completes immediately — watch polarity (pin 3)
+  toggle and bridge enable (pin 5) drop and return on the scope, with the
+  dead time visible between the edges.
+- Also confirm `dio_invert` (CFG word 13) flips each input's sense.
+
+**Digital outputs.** Heartbeat (pin 15) free-runs at ~954 Hz from power-on
+with zero configuration. Bridge enable / polarity are exercised by the
+arm-and-flip test above. Boost (pin 7): set `boost_mode=0` and toggle
+`boost_manual` from Python, watch the pin follow.
+
+**Analog loopback — close a real feedback loop with one cable.** Connect
+OUT1 → IN1 with an SMA cable. The board is now its own plant: a flat,
+instant, unity-ish "coil". One impedance caveat: the fast outputs are
+calibrated for a 50 Ω load, and IN1 is high-impedance, so the looped-back
+signal reads about **2×** nominal. Put a 50 Ω feed-through terminator at
+IN1 to get 1:1, or simply expect the factor of two.
+
+1. *Scaling end-to-end (open loop):* `open_loop=1`, `setpoint=1000` →
+   `watch` should read ≈ 1000 counts × the loopback factor on `i_meas`
+   (in amps: setpoint amps × factor). This verifies the DAC chain, the
+   ADC chain, and every scale factor in between with one number.
+2. *Closed loop:* `open_loop=0`, `servo_enable=1`, setpoint a few "amps":
+   the loop should regulate `i_meas` exactly onto the setpoint (the
+   shipped kp/ki defaults are stable on a flat plant). You are now
+   running the real servo, on real hardware, end to end.
+3. *Tools for real:* `step` (closed-loop) should show a clean fast step;
+   `sweep` with the function generator into IN2 and `open_loop=1` should
+   return a flat |H| ≈ the loopback factor with a small linear phase
+   (~6°/5 kHz from the 3.6 µs digital delay). This validates the entire
+   measurement toolchain before any power hardware exists.
+4. Move the cable to OUT2 → IN1 and repeat step 1 with a negative
+   setpoint to verify the clamp output path the same way.
+
+**Slow analog (AIN0/AIN1).** Feed a known 0–3.5 V DC level to AIN0 and
+read the raw XADC words at 0x4400_0000 (`Board.read_words(0x4400_0000, 8)`)
+— a dedicated readout tool with calibration is still on the to-do list,
+so this is only a "does it move" check for now. AOUT0 is not wired in the
+current bitstream.
+
+**What this can't tell you:** anything about the real plant — LEM/burden
+scaling, pass-bank transconductance, loop dynamics with the coil, the
+interlock chain. Those need the dummy load (section 4) and beyond. Also
+note the board's factory ADC/DAC calibration is not applied in our signal
+path, so expect a few mV of offset; that folds into the `I_FS` calibration
+later anyway.
+
 ## 4. Dummy resistive load
 
 Connect the pass bank to the dummy load per the power-stage documentation
