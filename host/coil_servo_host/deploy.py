@@ -78,7 +78,10 @@ def main():
     refuse_if_running(host, args.port, args.force)
 
     run(["scp", str(bit), str(SERVER_SRC), f"{target}:/root/"])
-    run(["ssh", target, f"fpgautil -b /root/{bit.name}"])
+    # non-interactive ssh doesn't load the profile that puts Red Pitaya's
+    # tools on PATH, so name fpgautil's directory explicitly
+    run(["ssh", target,
+         f"PATH=/opt/redpitaya/bin:$PATH fpgautil -b /root/{bit.name}"])
     run(["ssh", target,
          "pkill -f coil_servo_server.py; "
          f"nohup python3 /root/coil_servo_server.py --port {args.port} "
