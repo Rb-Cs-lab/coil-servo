@@ -19,7 +19,7 @@
 # handoff hysteresis at the digital output, not a physical current limit.
 
 [mot]
-board_host = "rp-mot.local"     # PLACEHOLDER -- set to the real board
+board_host = "192.168.0.65"     # first board, fixed IP on the wired lab net
 I_rated = 100.0                 # amps
 I_FS = 125.0                    # amps at +1.000 V on IN1 -- PROVISIONAL
                                 # (fixed by the burden resistor choice)
