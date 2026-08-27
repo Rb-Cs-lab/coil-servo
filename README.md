@@ -86,9 +86,13 @@ and AMD supports 2025.1 only on Ubuntu 22.04/24.04.
 1. Download the "Vivado ML" 2025.1 installer from
    [amd.com](https://www.xilinx.com/support/download.html) (free AMD account
    required). During install select **Vivado ML Standard** (free edition —
-   it covers our Zynq-7010 chip) and install to the default `/opt/Xilinx/`.
-   Also install **Vitis 2025.1** (same installer, tick the box) — the OS 3.x
-   toolchain expects the pair.
+   it covers our Zynq-7010 chip), and under device support tick only
+   **SoCs → Zynq-7000** (saves tens of GB). Install to the default
+   `/opt/Xilinx/`. Red Pitaya's docs pair OS 3.x with Vivado **and** Vitis
+   2025.1, but this repo's build targets only ever invoke `vivado` — Vitis
+   is needed only if the removed device-tree/FSBL make targets are ever
+   restored from git history, so on a disk-constrained machine you can
+   skip it.
 2. `sudo apt install make python3`, plus the `libtinfo5` library Vivado
    needs. On Ubuntu 22.04 that's just `sudo apt install libtinfo5`; on
    24.04 the package was removed from the archive (a well-known Vivado
@@ -105,6 +109,42 @@ and AMD supports 2025.1 only on Ubuntu 22.04/24.04.
    ```
 
    ~10–20 min. If this succeeds, the toolchain is good.
+
+#### B-alt: Ubuntu inside a Windows laptop (WSL2)
+
+No dedicated Ubuntu machine? WSL2 (Microsoft's built-in "run Ubuntu inside
+Windows") works for this repo because our build is pure command-line.
+Caveat: AMD doesn't officially support WSL — if you hit inexplicable
+failures, fall back to a real Ubuntu install. Needs ~100 GB free disk and
+ideally 16 GB RAM.
+
+1. In an **administrator** PowerShell: `wsl --install -d Ubuntu-24.04`,
+   reboot, and create a Linux username/password when prompted.
+2. Inside the Ubuntu terminal, install the prerequisites from step 2 above
+   (including the libtinfo5 workaround — WSL's Ubuntu 24.04 has the same
+   issue).
+3. Download the Linux "Unified Installer" for 2025.1 on the Windows side,
+   then from Ubuntu:
+
+   ```bash
+   sudo mkdir -p /opt/Xilinx && sudo chown $USER /opt/Xilinx
+   cd /mnt/c/Users/<you>/Downloads
+   chmod +x FPGAs_AdaptiveSoCs_Unified_2025.1_*.bin && ./FPGAs_AdaptiveSoCs_Unified_2025.1_*.bin
+   ```
+
+   (The installer's window appears via WSL's built-in graphics support.)
+   Select Vivado ML Standard, Zynq-7000 device support only, no Vitis.
+4. Clone the repo **inside the Linux filesystem** (`~/coil-servo`, not
+   `/mnt/c/...` — building on the Windows-mounted disk is painfully slow)
+   and build per the section above.
+5. Copy the result back where you need it:
+   `cp coil_servo.bit.bin /mnt/c/Users/<you>/Desktop/` — or run the deploy
+   tool directly from WSL (if `rp-xxxxxx.local` doesn't resolve inside
+   WSL, use the board's IP address in channels.toml).
+
+If a build dies with an out-of-memory kill, give WSL more RAM: create
+`C:\Users\<you>\.wslconfig` containing `[wsl2]` and `memory=12GB`, then
+`wsl --shutdown` and retry.
 
 ### C. The Red Pitaya board
 
