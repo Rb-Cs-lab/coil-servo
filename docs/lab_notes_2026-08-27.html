@@ -1,0 +1,57 @@
+<h1>Coil servo — first hardware bring-up (MOT board)</h1>
+<p><b>Date:</b> 2026-08-27 &nbsp;|&nbsp; <b>Board:</b> Red Pitaya STEMlab 125-14 ("mot" channel), 192.168.0.65 (wired) &nbsp;|&nbsp; <b>Bitstream:</b> coil_servo.bit.bin, built on lab NUC (WSL2, Vivado 2025.1), timing MET &nbsp;|&nbsp; <b>Setup:</b> nothing connected to SMAs or power stage; E1 jumper wires only; scope on SMA outputs and E1 pins.</p>
+
+<h2>Summary</h2>
+<p>First deploy of the servo FPGA design onto real hardware. Verified: register link, fabric clock, safe power-on state, watchdog heartbeat (including deliberate cut-out), arm input, hard output clamp + anti-windup, OUT1/OUT2 mutual exclusion, and the complete H-bridge flip sequence with dead time — the key safety behavior — captured on the scope. All results matched the simulated design exactly.</p>
+
+<h2>1. Deploy and register link</h2>
+<p><code>deploy mot</code> loaded the FPGA ("BIN FILE loaded through FPGA manager successfully", 66 ms); <code>check mot</code> reported:</p>
+<ul>
+  <li><b>Heartbeat counter ADVANCING</b> — delta between two polls ≈ 6.49 M ticks in ~52 ms = <b>fabric clock confirmed at 125 MHz</b>.</li>
+  <li>LED walk on the board → register <i>writes</i> work.</li>
+  <li>State IDLE, armed 0, fault 0, bridge_en 0, polarity 0 → <b>safe power-on state as designed</b> (bridge open, DACs zero).</li>
+  <li>Measured current +0.164 A with nothing connected = ~11 ADC counts ≈ 1.3 mV input offset (uncalibrated ADC; folds into I_FS calibration later).</li>
+</ul>
+
+<h2>2. Watchdog heartbeat and cut-out test</h2>
+<ul>
+  <li>DIO6 (E1 pin 15): ~954 Hz square wave, ~3.3 V, exactly as designed (125 MHz / 2<sup>17</sup>).</li>
+  <li><b>Cut-out test:</b> <code>ssh reboot</code> → heartbeat goes flat within seconds (factory FPGA image has no heartbeat) and stays flat until redeploy, when it returns immediately. This flatline is the "controller dead" signature the external monostable must act on.</li>
+  <li><b>Still to do:</b> build/wire the monostable and repeat this test watching it drop bridge enable.</li>
+</ul>
+
+<h2>3. Arm input and clamp/anti-windup observation</h2>
+<p><i>[INSERT SCREENSHOT 1 HERE — the 1 ms/div capture: square wave + two flat traces]</i></p>
+<p>Jumper E1 pin 1 (3V3) → pin 11 (arm): <code>armed</code> flag set; with <code>servo_enable=1</code>, state IDLE → RUN and bridge enable went high. With setpoint 0 and the ~11-count phantom offset on the open IN1 input, the loop railed the clamp output — as expected with no plant to respond:</p>
+<table border="1" cellpadding="4">
+  <tr><th>Trace</th><th>Signal</th><th>Observation</th><th>Meaning</th></tr>
+  <tr><td>CH4</td><td>Heartbeat (pin 15)</td><td>954 Hz square wave</td><td>fabric alive</td></tr>
+  <tr><td>CH2</td><td>OUT2 (clamp cmd)</td><td>flat at maximum (~1.9 V unloaded)</td><td><b>hard clamp caught the wound-up integrator</b>; anti-windup holds it exactly at the limit</td></tr>
+  <tr><td>CH1</td><td>OUT1 (pass bank cmd)</td><td>exactly 0 V</td><td><b>mutual exclusion</b>: never both outputs active</td></tr>
+</table>
+
+<h2>4. Flip sequence — the safety-critical capture</h2>
+<p><i>[INSERT SCREENSHOT 2 HERE — the 4-channel, ~500 ns/div single-shot capture]</i></p>
+<p>Jumper touch 3V3 → E1 pin 9 (flip request) while in RUN. Single-shot capture (note: CH3 = pin 3 polarity, CH4 = pin 5 bridge enable):</p>
+<table border="1" cellpadding="4">
+  <tr><th>Time</th><th>Event</th><th>Verifies</th></tr>
+  <tr><td>t = 0</td><td>Bridge enable (CH4) drops; OUT1 (CH1) snaps to zero simultaneously</td><td>outputs are gated off the instant the bridge opens</td></tr>
+  <tr><td>t = 1 µs</td><td>Polarity (CH3) toggles — single edge, all four bridge FETs off on both sides</td><td>dead time #1 = 125 ticks × 8 ns, as configured</td></tr>
+  <tr><td>t = 2 µs</td><td>Bridge enable returns</td><td>dead time #2; total bridge-open window 2.00 µs</td></tr>
+</table>
+<p><b>Conclusion: the polarity edge sits strictly inside the enable-low window with dead time on both sides — the bridge can never be flipped while conducting.</b> (Safety invariant #4; this is what protects the bridge FETs from absorbing the coil's stored energy.) Successive flips also swap which of OUT1/OUT2 rails, confirming the drive-frame polarity rotation. Edge ringing on the capture is probe/ground-lead artifact.</p>
+
+<h2>Remaining on the board-only checklist (bringup.md §3b)</h2>
+<ul>
+  <li>Fault input: 3V3 → pin 13, confirm <code>fault</code> flag follows the pin (report-only by design).</li>
+  <li><code>dio_invert</code> register check (software inversion of each input's sense).</li>
+  <li><b>Analog loopback:</b> SMA OUT1 → IN1 — scaling check, first genuinely closed loop, then <code>step</code> and <code>sweep</code> tool validation.</li>
+  <li>Monostable build + heartbeat-loss test (section 2 above).</li>
+</ul>
+
+<h2>Reference</h2>
+<ul>
+  <li>Repo: github.com/Rb-Cs/coil-servo (docs/bringup.md is the checklist; docs/design.md the loop design).</li>
+  <li>Config: channels.toml defaults — clamp 6554 counts (100 % of 100 A rated), dead time 1 µs, zero window 0.5 A, all PROVISIONAL values pending measurement.</li>
+  <li>Live display used throughout: <code>python -m coil_servo_host.watch mot</code>.</li>
+</ul>
