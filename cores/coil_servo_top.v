@@ -204,7 +204,13 @@ module coil_servo_top #
   wire signed [13:0] sp_clamped =
       (sp_active > clamp_pos_ol)  ? clamp_pos_ol :
       (sp_active < -clamp_pos_ol) ? -clamp_pos_ol : sp_active;
-  wire signed [13:0] u_drive = open_loop ? sp_clamped : u14;
+  // Registered: the CFG-regs -> clamp compare -> source select -> output
+  // mux chain fails 125 MHz timing as one combinational cone (measured
+  // -2 ns on the first hardware build). One pipeline flop here splits it;
+  // the extra 8 ns is nothing against the 128-cycle PI tick.
+  reg signed [13:0] u_drive;
+  always @(posedge aclk)
+    u_drive <= !aresetn ? 14'sd0 : (open_loop ? sp_clamped : u14);
 
   wire signed [13:0] out1, out2;
 
