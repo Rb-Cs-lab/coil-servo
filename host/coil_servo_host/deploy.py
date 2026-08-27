@@ -13,9 +13,44 @@ import subprocess
 import sys
 from pathlib import Path
 
+from .board import Board
 from .config import load_channel
 
 SERVER_SRC = Path(__file__).resolve().parents[1] / "board" / "coil_servo_server.py"
+
+# decimated counts (/128) of measured current above which we consider
+# current to be flowing (~1% of full scale)
+I_QUIET_COUNTS = 64
+
+
+def refuse_if_running(host: str, port: int, force: bool) -> None:
+    """Loading a bitstream reprograms the FPGA instantly, dropping every
+    output with no graceful stop -- at nonzero current that dumps the
+    coil's stored energy into the bridge body diodes. So: if a register
+    server is already answering, refuse to reload while the bridge is
+    enabled or current is flowing. No server answering = fresh board,
+    proceed."""
+    try:
+        b = Board(host, port=port, timeout=2.0)
+    except OSError:
+        return
+    try:
+        s = b.sts()
+    finally:
+        b.close()
+    quiet = abs(s["i_meas"]) // 128 <= I_QUIET_COUNTS
+    if s["bridge_en"] or not quiet:
+        msg = (f"REFUSING to reload: the servo on {host} looks ACTIVE "
+               f"(bridge_en={s['bridge_en']}, "
+               f"i_meas={s['i_meas'] / 128:.0f} counts, "
+               f"state={s['fsm_state_name']}). Stop it first "
+               f"(servo_enable=0 performs a graceful ramp-to-zero). "
+               f"If these readings are garbage because the board is "
+               f"running a stale/foreign bitstream, re-run with --force.")
+        if force:
+            print("--force given; overriding:\n" + msg)
+            return
+        raise SystemExit(msg)
 
 
 def run(cmd):
@@ -29,6 +64,9 @@ def main():
     p.add_argument("--bitstream", default="coil_servo.bit.bin",
                    help="byte-swapped bitstream (make coil_servo.bit.bin)")
     p.add_argument("--port", type=int, default=9001)
+    p.add_argument("--force", action="store_true",
+                   help="reload even if the servo looks active (see "
+                        "refuse_if_running)")
     args = p.parse_args()
 
     host = load_channel(args.channel)["host"]
@@ -36,6 +74,8 @@ def main():
     bit = Path(args.bitstream)
     if not bit.exists():
         sys.exit(f"{bit} not found -- build it on the Vivado machine first")
+
+    refuse_if_running(host, args.port, args.force)
 
     run(["scp", str(bit), str(SERVER_SRC), f"{target}:/root/"])
     run(["ssh", target, f"fpgautil -b /root/{bit.name}"])

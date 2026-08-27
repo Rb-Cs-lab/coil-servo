@@ -9,7 +9,8 @@ from pathlib import Path
 import pytest
 
 from coil_servo_host.board import Board
-from coil_servo_model.registers import CFG_BASE, cfg_words
+from coil_servo_host.deploy import refuse_if_running
+from coil_servo_model.registers import CFG_BASE, STS_BASE, cfg_words
 
 SERVER = Path(__file__).resolve().parents[1] / "board" / "coil_servo_server.py"
 
@@ -67,6 +68,28 @@ def test_out_clamp_guard(server):
             b.write_cfg(out_clamp=6555)
     with Board("127.0.0.1", port=server, max_clamp=None) as b:
         b.write_cfg(out_clamp=8191)                 # explicit opt-out
+
+
+def test_deploy_refuses_while_running(server):
+    """The deploy guard: refuse to reload the FPGA while the bridge is
+    enabled or current flows; allow when quiet, with --force, or when no
+    server answers (fresh board)."""
+    with Board("127.0.0.1", port=server) as b:
+        # stage an ACTIVE board in the mock: bridge_en (bit 5 of flags)
+        # set, current flowing (word 1)
+        b.write_words(STS_BASE, [1 << 5])
+        b.write_words(STS_BASE + 4, [50 * 128])
+    with pytest.raises(SystemExit):
+        refuse_if_running("127.0.0.1", server, force=False)
+    refuse_if_running("127.0.0.1", server, force=True)   # override allowed
+
+    with Board("127.0.0.1", port=server) as b:           # quiet board: fine
+        b.write_words(STS_BASE, [0])
+        b.write_words(STS_BASE + 4, [0])
+    refuse_if_running("127.0.0.1", server, force=False)
+
+    # nothing listening = fresh board: fine
+    refuse_if_running("127.0.0.1", 1, force=False)
 
 
 def test_out_of_range_refused(server):

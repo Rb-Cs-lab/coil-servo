@@ -9,7 +9,7 @@ need to be a software engineer or an FPGA developer to work here; the
 documentation is written for physicists and defines its jargon as it goes.
 
 **Project status:** everything is written and verified in simulation
-(53 automated tests). Nothing has run on real hardware yet — the first
+(54 automated tests). Nothing has run on real hardware yet — the first
 Vivado build and the dummy-load bring-up are the next milestones.
 
 ## Your first hour
@@ -27,7 +27,7 @@ Vivado build and the dummy-load bring-up are the next milestones.
    pytest
    ```
 
-   You should see **53 passed** in ~15 s (you'll need Icarus Verilog
+   You should see **54 passed** in ~15 s (you'll need Icarus Verilog
    installed for the FPGA simulations — see README "Setup A").
 
 3. Read, in this order:
