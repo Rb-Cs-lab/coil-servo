@@ -15,7 +15,7 @@
 <p><b>Date:</b> 2026-08-27 &nbsp;|&nbsp; <b>Board:</b> Red Pitaya STEMlab 125-14 ("mot" channel), 192.168.0.65 (wired) &nbsp;|&nbsp; <b>Bitstream:</b> coil_servo.bit.bin, built on lab NUC (WSL2, Vivado 2025.1), timing MET &nbsp;|&nbsp; <b>Setup:</b> nothing connected to SMAs or power stage; E1 jumper wires only; scope on SMA outputs and E1 pins.</p>
 
 <h2>Summary</h2>
-<p>First deploy of the servo FPGA design onto real hardware. Verified: register link, fabric clock, safe power-on state, watchdog heartbeat (including deliberate cut-out), arm input, hard output clamp + anti-windup, OUT1/OUT2 mutual exclusion, and the complete H-bridge flip sequence with dead time — the key safety behavior — captured on the scope. All results matched the simulated design exactly.</p>
+<p>First deploy of the servo FPGA design onto real hardware. Verified: register link, fabric clock, safe power-on state, watchdog heartbeat (including deliberate cut-out), arm input, fault input, hard output clamp + anti-windup, OUT1/OUT2 mutual exclusion, and the complete H-bridge flip sequence with dead time — the key safety behavior — captured on the scope. All results matched the simulated design exactly.</p>
 
 <h2>1. Deploy and register link</h2>
 <p><code>deploy mot</code> loaded the FPGA ("BIN FILE loaded through FPGA manager successfully", 66 ms); <code>check mot</code> reported:</p>
@@ -56,9 +56,11 @@
 </table>
 <p><b>Conclusion: the polarity edge sits strictly inside the enable-low window with dead time on both sides — the bridge can never be flipped while conducting.</b> (Safety invariant #4; this is what protects the bridge FETs from absorbing the coil's stored energy, ½LI<sup>2</sup>, at up to 100 A.) Successive flips also swap which of OUT1/OUT2 rails, confirming the drive-frame polarity rotation. Edge ringing on the capture is probe/ground-lead artifact.</p>
 
+<h2>5. Fault input (DIO5)</h2>
+<p>3V3 → E1 pin 13: the <code>fault</code> flag appeared in the live status display while the jumper was touching and cleared on removal — the input path (pin → synchronizer → status bit) works. As designed, nothing else reacts: this pin is where the hardware interlock chain reports a trip; the firmware only <i>reports</i> it (and the measurement tools warn loudly if it is set), while enforcement and latching stay entirely in the interlock hardware.</p>
+
 <h2>Remaining on the board-only checklist (bringup.md §3b)</h2>
 <ul>
-  <li>Fault input: 3V3 → pin 13, confirm <code>fault</code> flag follows the pin (report-only by design).</li>
   <li><code>dio_invert</code> register check (software inversion of each input's sense).</li>
   <li><b>Analog loopback:</b> SMA OUT1 → IN1 — scaling check, first genuinely closed loop, then <code>step</code> and <code>sweep</code> tool validation.</li>
   <li>Monostable build + heartbeat-loss test (section 2 above).</li>
