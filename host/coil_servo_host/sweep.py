@@ -36,6 +36,10 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("channel")
     p.add_argument("-o", "--out", default="tf.csv")
+    p.add_argument("--min-stim", type=float, default=0.05,
+                   help="ignore detections with stimulus amplitude below "
+                        "this many amps (rejects mains-hum pickup on an "
+                        "undriven input; default 0.05)")
     args = p.parse_args()
     ch = load_channel(args.channel)
     scale = ch["i_fs"] / 16384       # amps per captured LSB
@@ -63,6 +67,9 @@ def main():
                     time.sleep(0.2)
                     continue
                 f0, h, amp = result
+                if amp * scale < args.min_stim:
+                    time.sleep(0.2)
+                    continue                    # noise-floor pickup, not a drive
                 if last_f is not None and abs(f0 - last_f) < 0.02 * last_f:
                     time.sleep(0.2)
                     continue                    # same point as last time
