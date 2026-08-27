@@ -58,6 +58,17 @@ def test_pop_reads_same_address(server):
         assert list(popped) == [42, 42, 42, 42]   # mock: same word each pop
 
 
+def test_out_clamp_guard(server):
+    """The host refuses to raise the hard clamp above rated unless the
+    guard is explicitly disabled (fabric still clamps either way)."""
+    with Board("127.0.0.1", port=server, max_clamp=6554) as b:
+        b.write_cfg(out_clamp=6554)                 # 100% of rated: fine
+        with pytest.raises(ValueError):
+            b.write_cfg(out_clamp=6555)
+    with Board("127.0.0.1", port=server, max_clamp=None) as b:
+        b.write_cfg(out_clamp=8191)                 # explicit opt-out
+
+
 def test_out_of_range_refused(server):
     with Board("127.0.0.1", port=server) as b:
         with pytest.raises(IOError):

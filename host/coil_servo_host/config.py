@@ -26,6 +26,23 @@ def load_channel(name: str, path: Path = CONFIG_PATH) -> dict:
         table = tomllib.load(f)[name]
 
     i_fs = float(table["I_FS"])
+    i_rated = float(table["I_rated"])
+
+    # sanity rails on values that would silently defeat safety behavior
+    if not 0 < i_rated <= i_fs:
+        raise ValueError(
+            f"[{name}] needs 0 < I_rated <= I_FS: the 100%-of-rated clamp "
+            f"must be representable inside the ADC/DAC range "
+            f"(I_rated={i_rated}, I_FS={i_fs})")
+    if float(table["zero_win_amps"]) <= 0:
+        raise ValueError(
+            f"[{name}] zero_win_amps must be > 0, or a flip can never "
+            f"qualify its zero-current window")
+    if float(table["flip_timeout_us"]) <= 0:
+        raise ValueError(
+            f"[{name}] flip_timeout_us must be > 0: the timeout is the "
+            f"safety net that parks an unreachable flip in TIMEOUT_HOLD "
+            f"(see docs/register_map.md)")
     kp_mant, kp_shift = encode_gain(float(table["kp"]), shift_bits=5)
     ki_mant, ki_shift = encode_gain(float(table["ki"]) * T_S, shift_bits=6)
 

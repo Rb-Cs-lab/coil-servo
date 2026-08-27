@@ -47,10 +47,10 @@ def main():
     writer.writerow(["f_hz", "mag", "phase_deg", "stim_amps"])
     n_rows = 0
     last_f = None
-    with Board(ch["host"]) as b:
+    with Board(ch["host"], max_clamp=ch["cfg"]["out_clamp"]) as b:
         b.apply_config(ch["cfg"])
         b.write_cfg(sp_source=0, open_loop=1, servo_enable=1)  # IN2 drives
-        if not b.sts()["armed"]:
+        if not b.warn_flags()["armed"]:
             raise SystemExit("board is not armed (DIO4) -- nothing will drive")
         print("open-loop mode; sweep the function generator now (Ctrl-C to stop)")
         try:

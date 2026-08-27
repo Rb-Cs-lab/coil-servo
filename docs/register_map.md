@@ -42,7 +42,7 @@ their word; unused high bits read/write as 0.
 | 3 | `kp_shift` | u5 | 0 | P gain right-shift |
 | 4 | `ki_mant` | s18 | 0 | I gain mantissa (per-tick) |
 | 5 | `ki_shift` | u6 | 0 | I accumulator right-shift |
-| 6 | `out_clamp` | u14 Q1.13 | 0 | hard output clamp, counts (= 100 % of rated current; review decision 2026-08-26). Reset 0 ⇒ outputs forced 0 until configured — safe. |
+| 6 | `out_clamp` | u14 Q1.13 | 0 | hard output clamp, counts (= 100 % of rated current; review decision 2026-08-26). Reset 0 ⇒ outputs forced 0 until configured — safe. The host `Board` class additionally refuses to write a value above rated unless constructed with `max_clamp=None` (a typo rail; the fabric clamp is the real enforcement). |
 | 7 | `deadband` | u14 Q1.13 | 0 | OUT1/OUT2 handoff deadband |
 | 8 | `zero_win` | u14 Q1.13 | 0 | flip zero-current window (counts) — PROVISIONAL |
 | 9 | `zero_holdoff` | u16 | 0 | decimated samples the window must hold |

@@ -20,7 +20,7 @@ def main():
     args = p.parse_args()
     ch = load_channel(args.channel)
 
-    with Board(ch["host"]) as b:
+    with Board(ch["host"], max_clamp=ch["cfg"]["out_clamp"]) as b:
         s0 = b.sts()
         time.sleep(0.05)
         s1 = b.sts()

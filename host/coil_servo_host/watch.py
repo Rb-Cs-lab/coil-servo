@@ -18,7 +18,7 @@ def main():
     args = p.parse_args()
     ch = load_channel(args.channel)
 
-    with Board(ch["host"]) as b:
+    with Board(ch["host"], max_clamp=ch["cfg"]["out_clamp"]) as b:
         try:
             while True:
                 s = b.sts()

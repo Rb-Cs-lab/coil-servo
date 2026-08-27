@@ -33,12 +33,18 @@ def main():
     # one captured LSB = 2^6/128 = 0.5 ADC code = i_fs/16384 amps
     scale = ch["i_fs"] / 16384
 
+    if abs(args.amps) > ch["i_rated"]:
+        raise SystemExit(
+            f"--amps {args.amps} exceeds this channel's rated current "
+            f"({ch['i_rated']} A); the fabric clamp would cap the drive at "
+            f"rated anyway, so this is almost certainly a typo")
+
     sp_counts = round(args.amps / ch["i_fs"] * 8192)
-    with Board(ch["host"]) as b:
+    with Board(ch["host"], max_clamp=ch["cfg"]["out_clamp"]) as b:
         b.apply_config(ch["cfg"])
         b.write_cfg(sp_source=1, setpoint=0,
                     open_loop=1 if args.open_loop else 0, servo_enable=1)
-        s = b.sts()
+        s = b.warn_flags()
         if not s["armed"]:
             raise SystemExit("board is not armed (DIO4) -- nothing will drive")
         time.sleep(0.05)
