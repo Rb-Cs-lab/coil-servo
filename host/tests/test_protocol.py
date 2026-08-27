@@ -70,6 +70,17 @@ def test_out_clamp_guard(server):
         b.write_cfg(out_clamp=8191)                 # explicit opt-out
 
 
+def test_two_clients_concurrently(server):
+    """watch holds one connection while another tool works -- the server
+    must service both (single-client serving deadlocked this live)."""
+    with Board("127.0.0.1", port=server) as watcher:
+        watcher.read_words(CFG_BASE, 1)          # watcher connection active
+        with Board("127.0.0.1", port=server) as worker:
+            worker.write_words(CFG_BASE + 8, [77])
+            assert worker.read_words(CFG_BASE + 8, 1) == [77]
+        assert watcher.read_words(CFG_BASE + 8, 1) == [77]
+
+
 def test_deploy_refuses_while_running(server):
     """The deploy guard: refuse to reload the FPGA while the bridge is
     enabled or current flows; allow when quiet, with --force, or when no

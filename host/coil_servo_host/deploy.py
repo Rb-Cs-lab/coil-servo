@@ -36,6 +36,14 @@ def refuse_if_running(host: str, port: int, force: bool) -> None:
         return
     try:
         s = b.sts()
+    except OSError:
+        msg = (f"a register server on {host} accepted the connection but "
+               f"didn't answer -- can't verify the servo is stopped. "
+               f"Close other host tools (watch?) and retry, or --force.")
+        if force:
+            print("--force given; overriding: " + msg)
+            return
+        raise SystemExit(msg)
     finally:
         b.close()
     quiet = abs(s["i_meas"]) // 128 <= I_QUIET_COUNTS

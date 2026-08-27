@@ -25,6 +25,7 @@ import mmap
 import socket
 import struct
 import sys
+import threading
 
 HUB_BASE = 0x4000_0000
 HUB_SPAN = 0x0800_0000        # ports 0-7, 16 MiB each
@@ -85,37 +86,48 @@ def valid(addr, count):
             and addr % 4 == 0 and 1 <= count <= MAX_WORDS)
 
 
-def serve(mem, port):
-    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.bind(("0.0.0.0", port))
-    srv.listen(1)
-    print(f"LISTENING {srv.getsockname()[1]}", flush=True)
-    while True:
-        conn, peer = srv.accept()
-        conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        try:
-            while True:
-                cmd, addr, count = HEADER.unpack(recv_exact(conn, HEADER.size))
-                if cmd == b"WRIT":
-                    data = recv_exact(conn, 4 * count)
+def handle_client(conn, mem, lock):
+    """One thread per client (watch + another tool run concurrently); the
+    lock keeps each request/response atomic against the shared memory."""
+    try:
+        while True:
+            cmd, addr, count = HEADER.unpack(recv_exact(conn, HEADER.size))
+            if cmd == b"WRIT":
+                data = recv_exact(conn, 4 * count)
+                with lock:
                     if valid(addr, count):
                         mem.write(addr, data)
                         conn.sendall(b"OK  ")
                     else:
                         conn.sendall(b"ERR ")
-                elif cmd in (b"READ", b"POPS"):
+            elif cmd in (b"READ", b"POPS"):
+                with lock:
                     if valid(addr, count):
                         conn.sendall(b"OK  " + mem.read(addr, count,
                                                         cmd == b"POPS"))
                     else:
                         conn.sendall(b"ERR ")
-                else:
+            else:
+                with lock:
                     conn.sendall(b"ERR ")
-        except (ConnectionError, OSError):
-            pass
-        finally:
-            conn.close()
+    except (ConnectionError, OSError):
+        pass
+    finally:
+        conn.close()
+
+
+def serve(mem, port):
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("0.0.0.0", port))
+    srv.listen(4)
+    print(f"LISTENING {srv.getsockname()[1]}", flush=True)
+    lock = threading.Lock()
+    while True:
+        conn, peer = srv.accept()
+        conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        threading.Thread(target=handle_client, args=(conn, mem, lock),
+                         daemon=True).start()
 
 
 def main():
