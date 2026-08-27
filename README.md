@@ -108,7 +108,7 @@ and AMD supports 2025.1 only on Ubuntu 22.04/24.04.
 3. Smoke-test with the known-good demo project before trusting anything:
 
    ```bash
-   source /opt/Xilinx/Vivado/2025.1/settings64.sh
+   source /opt/Xilinx/2025.1/Vivado/settings64.sh
    make NAME=playground bit
    ```
 
@@ -127,17 +127,23 @@ ideally 16 GB RAM.
 2. Inside the Ubuntu terminal, install the prerequisites from step 2 above
    (including the libtinfo5 workaround — WSL's Ubuntu 24.04 has the same
    issue).
-3. Download the Linux "Unified Installer" for 2025.1 on the Windows side,
-   then from Ubuntu:
+3. Download the Linux "Unified Installer" for 2025.1 on the Windows side
+   (the file is named like
+   `FPGAs_AdaptiveSoCs_Unified_SDI_2025.1_<date>_Lin64.bin`), then from
+   Ubuntu, copy it into the Linux home first — `chmod` doesn't work on the
+   Windows-mounted drive:
 
    ```bash
    sudo mkdir -p /opt/Xilinx && sudo chown $USER /opt/Xilinx
-   cd /mnt/c/Users/<you>/Downloads
-   chmod +x FPGAs_AdaptiveSoCs_Unified_2025.1_*.bin && ./FPGAs_AdaptiveSoCs_Unified_2025.1_*.bin
+   cp "/mnt/c/Users/<you>/Downloads/FPGAs_AdaptiveSoCs_Unified_SDI_2025.1_"*.bin ~/ && cd ~
+   chmod +x FPGAs_AdaptiveSoCs_Unified_SDI_2025.1_*.bin && ./FPGAs_AdaptiveSoCs_Unified_SDI_2025.1_*.bin
    ```
 
    (The installer's window appears via WSL's built-in graphics support.)
-   Select Vivado ML Standard, Zynq-7000 device support only, no Vitis.
+   Select Vivado ML Standard, Zynq-7000 device support only, no Vitis
+   (the bundled "Vitis HLS" inside Vivado is fine and can't be removed).
+   The installer creates `/opt/Xilinx/2025.1/Vivado/` — that layout is
+   where the `settings64.sh` in the build commands lives.
 4. Clone the repo **inside the Linux filesystem** (`~/coil-servo`, not
    `/mnt/c/...` — building on the Windows-mounted disk is painfully slow)
    and build per the section above.
@@ -167,7 +173,7 @@ If a build dies with an out-of-memory kill, give WSL more RAM: create
 On the Ubuntu machine:
 
 ```bash
-source /opt/Xilinx/Vivado/2025.1/settings64.sh
+source /opt/Xilinx/2025.1/Vivado/settings64.sh
 make bit                    # builds tmp/coil_servo.bit  (NAME defaults to coil_servo)
 make coil_servo.bit.bin     # byte-swapped copy the board's loader accepts
 ```
