@@ -15,7 +15,7 @@
 <p><b>Date:</b> 2026-08-27 &nbsp;|&nbsp; <b>Board:</b> Red Pitaya STEMlab 125-14 ("mot" channel), 192.168.0.65 (wired) &nbsp;|&nbsp; <b>Bitstream:</b> coil_servo.bit.bin, built on lab NUC (WSL2, Vivado 2025.1), timing MET &nbsp;|&nbsp; <b>Setup:</b> nothing connected to SMAs or power stage; E1 jumper wires only; scope on SMA outputs and E1 pins.</p>
 
 <h2>Summary</h2>
-<p>First deploy of the servo FPGA design onto real hardware. Verified: register link, fabric clock, safe power-on state, watchdog heartbeat (including deliberate cut-out), arm input, fault input, hard output clamp + anti-windup, OUT1/OUT2 mutual exclusion, and the complete H-bridge flip sequence with dead time — the key safety behavior — captured on the scope. All results matched the simulated design exactly.</p>
+<p>First deploy of the servo FPGA design onto real hardware. Verified: register link, fabric clock, safe power-on state, watchdog heartbeat (including deliberate cut-out), arm input, fault input, per-input polarity inversion (dio_invert), hard output clamp + anti-windup, OUT1/OUT2 mutual exclusion, and the complete H-bridge flip sequence with dead time — the key safety behavior — captured on the scope. All results matched the simulated design exactly.</p>
 
 <h2>1. Deploy and register link</h2>
 <p><code>deploy mot</code> loaded the FPGA ("BIN FILE loaded through FPGA manager successfully", 66 ms); <code>check mot</code> reported:</p>
@@ -59,9 +59,11 @@
 <h2>5. Fault input (DIO5)</h2>
 <p>3V3 → E1 pin 13: the <code>fault</code> flag appeared in the live status display while the jumper was touching and cleared on removal — the input path (pin → synchronizer → status bit) works. As designed, nothing else reacts: this pin is where the hardware interlock chain reports a trip; the firmware only <i>reports</i> it (and the measurement tools warn loudly if it is set), while enforcement and latching stay entirely in the interlock hardware.</p>
 
+<h2>6. dio_invert register (software input-polarity flips)</h2>
+<p>All jumpers removed; each input's sense inverted in software and the corresponding effect observed with no wire attached: fault-bit inversion set/cleared the <code>fault</code> flag; arm-bit inversion armed the board (state RUN); and toggling the flip-bit inversion 0→1 created rising edges the FSM treated as real flip requests — polarity stepped 0 → 1 → 0 across two such edges, with the falling edge correctly ignored. Register restored to 0 afterwards (normal sense). This confirms that if the real level-shifted wiring turns out inverted (e.g. an active-low interlock line), the fix is one config value, not an FPGA rebuild.</p>
+
 <h2>Remaining on the board-only checklist (bringup.md §3b)</h2>
 <ul>
-  <li><code>dio_invert</code> register check (software inversion of each input's sense).</li>
   <li><b>Analog loopback:</b> SMA OUT1 → IN1 — scaling check, first genuinely closed loop, then <code>step</code> and <code>sweep</code> tool validation.</li>
   <li>Monostable build + heartbeat-loss test (section 2 above).</li>
 </ul>
