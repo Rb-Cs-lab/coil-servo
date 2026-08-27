@@ -82,8 +82,11 @@ def main():
     # tools on PATH, so name fpgautil's directory explicitly
     run(["ssh", target,
          f"PATH=/opt/redpitaya/bin:$PATH fpgautil -b /root/{bit.name}"])
+    # the [s] keeps pkill's pattern from matching the ssh-spawned shell
+    # whose own command line contains this text (it would kill itself and
+    # drop the connection)
     run(["ssh", target,
-         "pkill -f coil_servo_server.py; "
+         "pkill -f 'coil_servo_[s]erver.py'; "
          f"nohup python3 /root/coil_servo_server.py --port {args.port} "
          ">/dev/null 2>&1 & sleep 0.5"])
     print(f"deployed to {host}; verify with: python -m coil_servo_host.check "
