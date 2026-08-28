@@ -333,20 +333,10 @@ don't constrain them.
 
 ## 4b. Shelved options — considered, not needed now
 
-Larger shelved upgrade paths (ppm-class stability, eddy-current
-pre-emphasis feedforward) live in
-[future_upgrades.md](future_upgrades.md).
-
-**Setpoint slew-rate limiter** (decision 2026-08-27: not needed). Today a
-setpoint step ramps the current as fast as the rail allows (V/L — that
-speed is the requirement, and the boost cap exists to provide it). If a
-*physical* reason to ramp slower ever appears — mechanical impulse on the
-coil mounts from fast dB/dt, or eddy heating in chamber metal — the right
-fix is a ramp generator in fabric between the setpoint mux and the error
-subtraction (Node B), with the rate as a CFG register (word 15 is
-reserved for it). It must NOT be done in Python (can't time µs) or by
-detuning the loop (ruins disturbance rejection). Small, well-contained
-addition; revisit only if the hardware people raise dB/dt as a concern.
+All shelved options live in [future_upgrades.md](future_upgrades.md):
+the setpoint slew-rate limiter (CFG word 15 reserved), ppm-class
+stability tiers, eddy-current pre-emphasis feedforward, and smaller
+items.
 
 ## 5. Open items blocking nothing, tracked in channels.toml
 

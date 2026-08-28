@@ -51,7 +51,7 @@ their word; unused high bits read/write as 0.
 | 12 | `flip_timeout` | u32 | 0 | RAMP_DOWN timeout, 8 ns ticks. 0 = disabled — but on a real coil always set it nonzero: it is the safety net that parks a flip that can't reach zero current in TIMEOUT_HOLD instead of waiting forever |
 | 13 | `dio_invert` | bits | 0 | invert sense of E1 *inputs*: b0 flip request (DIO3), b1 arm (DIO4), b2 fault (DIO5). Reset 0 = as listed in the port table. Output polarities are fixed in HDL on purpose (reset state must be safe unconfigured). |
 | 14 | — | u12 | 0 | reserved for `aout0_trim` (transducer offset trim via slow PWM output; wired up in session 7 when it can be validated against a voltmeter) |
-| 15 | — | | | reserved (earmarked for a setpoint slew-rate limit if ever needed — see design.md section 4b "Shelved options") |
+| 15 | — | | | reserved (earmarked for a setpoint slew-rate limit if ever needed — see future_upgrades.md section 3) |
 
 ## STS (0x4100_0000 + 4·word)
 

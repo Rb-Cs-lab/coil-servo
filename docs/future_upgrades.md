@@ -11,8 +11,6 @@ A guiding fact for all of these: the FPGA loop, the flip state machine,
 the safety invariants, and the host tooling carry over **unchanged**.
 Every upgrade below happens at the edges of the loop.
 
-Related, documented elsewhere: the setpoint slew-rate limiter is shelved
-in [design.md §4b](design.md) (CFG word 15 reserved for it).
 
 ## 1. ppm-class current stability (discussed 2026-08-28)
 
@@ -93,7 +91,21 @@ mu-metal or other ferromagnetic hardware nearby responds hysteretically
 and won't pre-emphasize away. Validate with atoms, not just the pickup
 coil.
 
-## 3. Smaller shelved items (one-liners, for completeness)
+## 3. Setpoint slew-rate limiter (decision 2026-08-27: not needed)
+
+Moved here from design.md §4b. Today a setpoint step ramps the current
+as fast as the rail allows (V/L — that speed is the requirement, and the
+boost cap exists to provide it). If a *physical* reason to ramp slower
+ever appears — mechanical impulse on the coil mounts from fast dB/dt, or
+eddy heating in chamber metal — the right fix is a ramp generator in
+fabric between the setpoint mux and the error subtraction (design.md
+Node B), with the rate as a CFG register (**word 15 is reserved for
+it** — see [register_map.md](register_map.md)). It must NOT be done in
+Python (can't time µs) or by detuning the loop (ruins disturbance
+rejection). Small, well-contained addition; revisit only if the hardware
+people raise dB/dt as a concern.
+
+## 4. Smaller shelved items (one-liners, for completeness)
 
 - **Auto-boost mid-run re-trigger:** today auto boost arms only at servo
   enable and post-flip re-enable; a large mid-run setpoint step slews on
