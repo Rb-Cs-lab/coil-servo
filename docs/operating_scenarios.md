@@ -44,9 +44,16 @@ MOT pair), so slow, small ramps need nothing special.
 ### S3 — Fast ramp (boost engaged)
 
 When the requested slew exceeds what the hold rail can push
-(dI/dt > (V_rail − I·R)/L), the board switches in the boost cap (pin 7) —
-automatically when the loop error is large, or under manual software
-control, per config. The coil then charges at roughly dI/dt ≈ V_boost/L.
+(dI/dt > (V_rail − I·R)/L), the boost cap (pin 7) provides the headroom.
+In auto mode (the config default) the board closes the boost switch at the
+start of each ramp-up from zero — at servo enable and at post-flip
+re-enable — and opens it once the measured current first reaches ~87.5 %
+of the setpoint; it never engages on ramp-*downs* (setpoint forced to
+zero → boost forced off). **A large setpoint step in mid-run does not
+re-engage auto boost** — such a ramp slews on the hold rail unless the
+sequence switches to manual boost control around it (`boost_mode = 0`,
+pin follows the `boost_manual` register bit). While boosted, the coil
+charges at roughly dI/dt ≈ V_boost/L.
 The hard clamp guarantees the *command* never exceeds 100 % of rated
 current no matter how aggressive the setpoint ramp is; the loop simply
 rides the clamp until the setpoint comes back within range (anti-windup
