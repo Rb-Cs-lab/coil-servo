@@ -98,5 +98,5 @@ bandwidth, not the digital side.*
   expectations (our pin 7 output).
 
 *Full technical record: [docs/design.md](design.md) (loop design, every
-number) and [docs/lab_notes_2026-08-27.html](lab_notes_2026-08-27.html)
+number) and [docs/lab_notes_2026-08-27.md](lab_notes_2026-08-27.md)
 (commissioning data and scope captures).*
