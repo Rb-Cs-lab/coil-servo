@@ -333,6 +333,10 @@ don't constrain them.
 
 ## 4b. Shelved options — considered, not needed now
 
+Larger shelved upgrade paths (ppm-class stability, eddy-current
+pre-emphasis feedforward) live in
+[future_upgrades.md](future_upgrades.md).
+
 **Setpoint slew-rate limiter** (decision 2026-08-27: not needed). Today a
 setpoint step ramps the current as fast as the rail allows (V/L — that
 speed is the requirement, and the boost cap exists to provide it). If a
