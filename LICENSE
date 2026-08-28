@@ -1,6 +1,10 @@
 The MIT License (MIT)
 
 Copyright (c) 2014-2025 Pavel Demin
+    (upstream FPGA build framework and cores: pavel-demin/red-pitaya-notes)
+Copyright (c) 2026 The Rb-Cs Lab (Ni group), Harvard University
+    (coil-servo additions: servo FPGA modules, reference model, host tools,
+    documentation)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of
 this software and associated documentation files (the "Software"), to deal in

@@ -247,3 +247,12 @@ heartbeat/monostable and the hardware interlock chain, never the network.
 | 5 | PI core + flip FSM Verilog (`cores/`) | ✅ all six servo cores benched (PI, decimator, error path, output mux, flip FSM, heartbeat) |
 | 6 | Vivado build of the full design | ✅ built 2026-08-27 (WSL on the lab NUC), timing met after one pipeline fix |
 | 7 | Hardware-in-the-loop scripts (`host/`), dummy-load first | ✅ first deploy 2026-08-27: heartbeat advancing at exactly 125 MHz, LED walk, safe IDLE state, ~1.3 mV ADC offset. Next: board-only I/O tests ([bringup.md](docs/bringup.md) §3b). Still pending: AOUT0 offset trim, XADC readout tool |
+
+## License
+
+MIT, with two copyright holders (see [LICENSE](LICENSE)): the FPGA build
+framework and infrastructure cores come from Pavel Demin's
+[red-pitaya-notes](https://github.com/pavel-demin/red-pitaya-notes)
+(merged at tag `20251012`, history preserved); everything coil-servo
+specific — the servo FPGA modules, reference model, host tools, and
+documentation — is © 2026 The Rb-Cs Lab (Ni group), Harvard University.
