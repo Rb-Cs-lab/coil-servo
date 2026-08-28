@@ -45,6 +45,27 @@ bandwidth, not the digital side.*
 | Heartbeat (15) | out | ~954 Hz square wave, running unconditionally from power-on; **stops only if the FPGA is dead** (verified on the bench, including deliberate kill/recovery) | **Requirement: a retriggerable monostable** (suggest 5–10 ms timeout) that gates bridge enable off when the heartbeat stops, and does not re-enable on its own when it returns. This is the protection against a dead/hung/mid-reprogram controller — it must live outside the Red Pitaya. Needs building; we can discuss ownership. |
 | 3V3 (1, 2) / GND (25, 26) | — | Available on the header | All logic referenced to board ground. |
 
+### Field-reversal choreography (contract for the control computer)
+
+IN2 carries the **full signed setpoint** (magnitude and direction), but the
+sign does not command a flip — it must *agree with* the bridge polarity that
+the flip line has established. To reverse the field from +I to −I, the
+control computer does two things:
+
+1. **Pulse the flip request line** (E1 pin 9, ≥ 1 µs). The servo ramps the
+   current to zero, verifies it, reverses the bridge with dead time, and
+   resumes — ignoring the setpoint throughout (internally forced to zero).
+2. **Swap the analog setpoint sign** (+I → −I) any time while the flip is
+   in progress.
+
+If the setpoint sign and bridge polarity ever disagree, the hardware cannot
+produce that current direction; the servo sits safely at zero and raises
+the `sp_sign_mismatch` status flag until they agree — a sequencing mistake
+costs field, never hardware. Flips are deliberately *never* triggered by
+the setpoint changing sign: a reversal is a disruptive, milliseconds-long
+event the experiment must schedule explicitly, not a side effect of a
+setpoint ramp passing through zero.
+
 ## 4. What the box guarantees (enforced in the FPGA, verified in test + on the bench)
 
 - **Power-on/reset state is fully off:** both analog outputs at code zero,
