@@ -1,0 +1,166 @@
+<svg viewBox="0 0 1060 790" xmlns="http://www.w3.org/2000/svg" font-family="Calibri, sans-serif">
+  <defs>
+    <marker id="ab" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+      <polygon points="0 0, 9 3.5, 0 7" fill="#1F497D"/>
+    </marker>
+    <marker id="ar" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+      <polygon points="0 0, 9 3.5, 0 7" fill="#C00000"/>
+    </marker>
+    <marker id="ak" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+      <polygon points="0 0, 9 3.5, 0 7" fill="#333333"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="1060" height="790" fill="#FFFFFF"/>
+
+  <!-- ============ POWER PATH (thick dark) ============ -->
+  <!-- hold supply -->
+  <rect x="60" y="60" width="100" height="50" fill="#DDEBF7" stroke="#1F497D" stroke-width="1.5"/>
+  <text x="110" y="80" font-size="12" text-anchor="middle" fill="#1F497D" font-weight="bold">hold supply</text>
+  <text x="110" y="97" font-size="12" text-anchor="middle">~3 V (P)</text>
+  <!-- boost cap -->
+  <rect x="60" y="150" width="100" height="50" fill="#DDEBF7" stroke="#1F497D" stroke-width="1.5"/>
+  <text x="110" y="170" font-size="12" text-anchor="middle" fill="#1F497D" font-weight="bold">boost cap</text>
+  <text x="110" y="187" font-size="12" text-anchor="middle">~15 V (P)</text>
+  <!-- wires to rail node -->
+  <path d="M160,85 H250 V130" fill="none" stroke="#333333" stroke-width="3"/>
+  <path d="M160,175 H182" fill="none" stroke="#333333" stroke-width="3"/>
+  <!-- boost switch -->
+  <circle cx="186" cy="175" r="3" fill="#333333"/>
+  <circle cx="216" cy="175" r="3" fill="#333333"/>
+  <line x1="187" y1="174" x2="214" y2="160" stroke="#333333" stroke-width="2.5"/>
+  <path d="M219,175 H250 V130" fill="none" stroke="#333333" stroke-width="3"/>
+  <circle cx="250" cy="130" r="4" fill="#333333"/>
+  <path d="M250,130 H296" fill="none" stroke="#333333" stroke-width="3" marker-end="url(#ak)"/>
+  <!-- pass bank -->
+  <rect x="300" y="90" width="120" height="80" fill="#DDEBF7" stroke="#1F497D" stroke-width="1.5"/>
+  <text x="360" y="122" font-size="12" text-anchor="middle" fill="#1F497D" font-weight="bold">pass bank</text>
+  <text x="360" y="139" font-size="11" text-anchor="middle">(linear FETs,</text>
+  <text x="360" y="153" font-size="11" text-anchor="middle">sources current)</text>
+  <path d="M420,130 H556" fill="none" stroke="#333333" stroke-width="3" marker-end="url(#ak)"/>
+  <circle cx="480" cy="130" r="4" fill="#333333"/>
+  <!-- active clamp branch -->
+  <path d="M480,130 V220" fill="none" stroke="#333333" stroke-width="3"/>
+  <rect x="440" y="220" width="80" height="80" fill="#DDEBF7" stroke="#1F497D" stroke-width="1.5"/>
+  <text x="480" y="252" font-size="12" text-anchor="middle" fill="#1F497D" font-weight="bold">active clamp</text>
+  <text x="480" y="269" font-size="11" text-anchor="middle">~30 V (P)</text>
+  <text x="480" y="283" font-size="11" text-anchor="middle">(sinks current)</text>
+  <path d="M480,300 V460" fill="none" stroke="#333333" stroke-width="3"/>
+  <!-- H-bridge -->
+  <rect x="560" y="60" width="220" height="240" fill="none" stroke="#1F497D" stroke-width="1.5"/>
+  <text x="670" y="80" font-size="13" text-anchor="middle" fill="#1F497D" font-weight="bold">H-bridge</text>
+  <text x="585" y="103" font-size="11">Q1</text>
+  <text x="742" y="103" font-size="11">Q2</text>
+  <text x="585" y="290" font-size="11">Q3</text>
+  <text x="742" y="290" font-size="11">Q4</text>
+  <!-- coil -->
+  <path d="M622,195 a12,12 0 0 1 24,0 a12,12 0 0 1 24,0 a12,12 0 0 1 24,0 a12,12 0 0 1 24,0" fill="none" stroke="#333333" stroke-width="2.5"/>
+  <text x="670" y="222" font-size="11" text-anchor="middle">coil pair (L, R)</text>
+  <!-- bridge out, LEM, to return -->
+  <path d="M780,130 H1000 V456" fill="none" stroke="#333333" stroke-width="3" marker-end="url(#ak)"/>
+  <circle cx="840" cy="130" r="16" fill="none" stroke="#1F497D" stroke-width="2"/>
+  <text x="840" y="115" font-size="10" text-anchor="middle" fill="#1F497D">LEM</text>
+  <!-- return line -->
+  <path d="M1000,460 H480" fill="none" stroke="#333333" stroke-width="3"/>
+  <path d="M740,460 V472 M728,472 H752 M733,478 H747 M738,484 H742" stroke="#333333" stroke-width="2" fill="none"/>
+  <text x="770" y="480" font-size="10">return</text>
+
+  <!-- ============ SENSING CHAIN ============ -->
+  <path d="M840,146 V195" fill="none" stroke="#1F497D" stroke-width="1.5"/>
+  <rect x="812" y="195" width="56" height="30" fill="#DDEBF7" stroke="#1F497D" stroke-width="1.5"/>
+  <text x="840" y="214" font-size="11" text-anchor="middle">burden R</text>
+  <path d="M840,225 V250" fill="none" stroke="#1F497D" stroke-width="1.5"/>
+  <rect x="800" y="250" width="80" height="40" fill="#DDEBF7" stroke="#1F497D" stroke-width="1.5"/>
+  <text x="840" y="274" font-size="11" text-anchor="middle">in-amp</text>
+  <path d="M880,270 H915 V551" fill="none" stroke="#1F497D" stroke-width="1.5" marker-end="url(#ab)"/>
+
+  <!-- ============ INTERLOCK ============ -->
+  <rect x="900" y="30" width="150" height="70" fill="#FBE4E4" stroke="#C00000" stroke-width="1.5"/>
+  <text x="975" y="52" font-size="12" text-anchor="middle" fill="#C00000" font-weight="bold">hardware interlock</text>
+  <text x="975" y="68" font-size="11" text-anchor="middle" fill="#C00000">chain (thermal</text>
+  <text x="975" y="82" font-size="11" text-anchor="middle" fill="#C00000">switches, etc.)</text>
+  <path d="M900,65 H786" fill="none" stroke="#C00000" stroke-width="2.5" stroke-dasharray="7,4" marker-end="url(#ar)"/>
+  <text x="835" y="55" font-size="10" fill="#C00000" text-anchor="middle">kills power stage directly</text>
+  <path d="M975,100 V520 H720 V551" fill="none" stroke="#C00000" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#ar)"/>
+  <text x="850" y="513" font-size="10" fill="#C00000">fault report only</text>
+
+  <!-- ============ GATE DRIVERS + MONOSTABLE ============ -->
+  <rect x="540" y="380" width="200" height="70" fill="#DDEBF7" stroke="#1F497D" stroke-width="1.5"/>
+  <text x="640" y="405" font-size="12" text-anchor="middle" fill="#1F497D" font-weight="bold">gate drivers + buffers</text>
+  <text x="640" y="422" font-size="10" text-anchor="middle">(pull-downs: floating = OFF)</text>
+  <text x="640" y="437" font-size="10" text-anchor="middle">enable = pin 5 AND heartbeat-OK</text>
+  <path d="M600,380 V304" fill="none" stroke="#1F497D" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#ab)"/>
+  <path d="M660,380 V304" fill="none" stroke="#1F497D" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#ab)"/>
+  <rect x="770" y="350" width="120" height="60" fill="#FFF2CC" stroke="#BF8F00" stroke-width="1.5"/>
+  <text x="830" y="371" font-size="11" text-anchor="middle" fill="#7F6000" font-weight="bold">retriggerable</text>
+  <text x="830" y="385" font-size="11" text-anchor="middle" fill="#7F6000" font-weight="bold">monostable</text>
+  <text x="830" y="400" font-size="10" text-anchor="middle" fill="#7F6000">5–10 ms — to be built</text>
+  <path d="M770,395 H744" fill="none" stroke="#BF8F00" stroke-width="1.5" marker-end="url(#ab)"/>
+
+  <!-- ============ SIGNAL ROUTES FROM/TO RP ============ -->
+  <!-- pin7 boost -->
+  <path d="M300,555 V470 H200 V192" fill="none" stroke="#1F497D" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#ab)"/>
+  <!-- IN2 from divider -->
+  <rect x="60" y="495" width="90" height="40" fill="#DDEBF7" stroke="#1F497D" stroke-width="1.5"/>
+  <text x="105" y="512" font-size="11" text-anchor="middle">÷10 divider</text>
+  <text x="105" y="526" font-size="10" text-anchor="middle">(±10 V → ±1 V)</text>
+  <path d="M100,560 V535" fill="none" stroke="#1F497D" stroke-width="1.5" marker-end="url(#ab)"/>
+  <path d="M110,495 V480 H340 V551" fill="none" stroke="#1F497D" stroke-width="1.5" marker-end="url(#ab)"/>
+  <!-- OUT1 -->
+  <path d="M380,555 V174" fill="none" stroke="#1F497D" stroke-width="1.5" marker-end="url(#ab)"/>
+  <!-- OUT2 -->
+  <path d="M430,555 V260 H436" fill="none" stroke="#1F497D" stroke-width="1.5" marker-end="url(#ab)"/>
+  <!-- pin15 heartbeat to monostable -->
+  <path d="M520,555 V540 H970 V380 H894" fill="none" stroke="#1F497D" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#ab)"/>
+  <!-- pin3 / pin5 -->
+  <path d="M560,555 V454" fill="none" stroke="#1F497D" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#ab)"/>
+  <path d="M600,555 V454" fill="none" stroke="#1F497D" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#ab)"/>
+  <!-- level shifter -->
+  <rect x="400" y="500" width="100" height="45" fill="#DDEBF7" stroke="#1F497D" stroke-width="1.5"/>
+  <text x="450" y="519" font-size="10" text-anchor="middle">3.3 V level</text>
+  <text x="450" y="532" font-size="10" text-anchor="middle">shifter</text>
+  <!-- flip / arm through shifter -->
+  <path d="M160,560 V530 H400" fill="none" stroke="#1F497D" stroke-width="1.5" stroke-dasharray="5,3"/>
+  <path d="M500,530 H640 V551" fill="none" stroke="#1F497D" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#ab)"/>
+  <path d="M210,560 V512 H400" fill="none" stroke="#1F497D" stroke-width="1.5" stroke-dasharray="5,3"/>
+  <path d="M500,512 H680 V551" fill="none" stroke="#1F497D" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#ab)"/>
+
+  <!-- ============ RED PITAYA BOX ============ -->
+  <rect x="280" y="560" width="660" height="130" fill="#DDEBF7" stroke="#1F497D" stroke-width="2"/>
+  <!-- port labels -->
+  <g font-size="9" text-anchor="middle">
+    <text x="300" y="574" font-weight="bold">7</text><text x="300" y="586">boost</text>
+    <text x="340" y="574" font-weight="bold">IN2</text><text x="340" y="586">setpt</text>
+    <text x="380" y="574" font-weight="bold">OUT1</text><text x="380" y="586">pass</text>
+    <text x="430" y="574" font-weight="bold">OUT2</text><text x="430" y="586">clamp</text>
+    <text x="520" y="574" font-weight="bold">15</text><text x="520" y="586">hb</text>
+    <text x="560" y="574" font-weight="bold">3</text><text x="560" y="586">pol</text>
+    <text x="600" y="574" font-weight="bold">5</text><text x="600" y="586">en</text>
+    <text x="640" y="574" font-weight="bold">9</text><text x="640" y="586">flip</text>
+    <text x="680" y="574" font-weight="bold">11</text><text x="680" y="586">arm</text>
+    <text x="720" y="574" font-weight="bold">13</text><text x="720" y="586">fault</text>
+    <text x="915" y="574" font-weight="bold">IN1</text><text x="915" y="586">meas</text>
+  </g>
+  <text x="610" y="628" font-size="15" text-anchor="middle" fill="#1F497D" font-weight="bold">Red Pitaya STEMlab 125-14 — coil servo (one per channel)</text>
+  <text x="610" y="650" font-size="12" text-anchor="middle">PI loop @ 976.6 kS/s · flip FSM · hard clamp 100 % rated · heartbeat 954 Hz</text>
+  <text x="610" y="670" font-size="12" text-anchor="middle">Ethernet (config/diagnostics only — loop runs without it)</text>
+
+  <!-- control computer -->
+  <rect x="40" y="560" width="220" height="130" fill="#EAEAEA" stroke="#666666" stroke-width="1.5"/>
+  <text x="150" y="600" font-size="13" text-anchor="middle" font-weight="bold" fill="#333333">control computer</text>
+  <text x="150" y="620" font-size="11" text-anchor="middle">±10 V setpoint (signed)</text>
+  <text x="150" y="636" font-size="11" text-anchor="middle">flip pulse ≥ 1 µs · arm level</text>
+
+  <!-- ============ LEGEND + NOTES ============ -->
+  <g font-size="11">
+    <line x1="60" y1="720" x2="105" y2="720" stroke="#333333" stroke-width="3"/>
+    <text x="112" y="724">high-current path</text>
+    <line x1="240" y1="720" x2="285" y2="720" stroke="#1F497D" stroke-width="1.5"/>
+    <text x="292" y="724">analog signal</text>
+    <line x1="400" y1="720" x2="445" y2="720" stroke="#1F497D" stroke-width="1.5" stroke-dasharray="5,3"/>
+    <text x="452" y="724">digital 3.3 V</text>
+    <line x1="560" y1="720" x2="605" y2="720" stroke="#C00000" stroke-width="2" stroke-dasharray="7,4"/>
+    <text x="612" y="724">interlock (independent of the Red Pitaya)</text>
+  </g>
+  <text x="60" y="752" font-size="10" fill="#555555">Supply returns, AIN0 coil-temperature and AIN1 rail-monitor wiring omitted for clarity. Values marked (P) provisional.</text>
+  <text x="60" y="768" font-size="10" fill="#555555">OUT1/OUT2 are mutually exclusive by construction; polarity (pin 3) only changes while enable (pin 5) is low.</text>
+</svg>

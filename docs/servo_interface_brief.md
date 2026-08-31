@@ -17,6 +17,12 @@ enforces the safety rules below in silicon. A computer connects only over
 Ethernet for configuration and diagnostics; if the network dies, the loop
 keeps running.
 
+![System schematic: supplies and boost switch, pass bank, H-bridge with coil, active clamp, LEM sensing chain, gate drivers, interlock chain, heartbeat monostable, and every servo I/O](img/system_schematic.svg)
+
+*System schematic. Thick dark lines: high-current path; solid blue:
+analog signals; dashed blue: 3.3 V digital; red: the interlock chain,
+which acts on the power stage directly and only reports to the board.*
+
 ## 1b. Capabilities at a glance
 
 Numbers marked (P) are PROVISIONAL — they assume the ~15 V boost rail,
