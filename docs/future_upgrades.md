@@ -105,7 +105,40 @@ Python (can't time µs) or by detuning the loop (ruins disturbance
 rejection). Small, well-contained addition; revisit only if the hardware
 people raise dB/dt as a concern.
 
-## 4. Smaller shelved items (one-liners, for completeness)
+## 4. Firmware supervisory temperature soft-stop (discussed 2026-08-31)
+
+**Why:** unattended long runs at rated current (e.g. MOT characterization
+at 100 A CW). A firmware layer that watches the coil temperature and ends
+the run *politely* — before the hardware interlock has to end it
+abruptly.
+
+**What it is — and is not:** a *supervisory* layer at a conservative
+threshold, on top of (never instead of) the hardware interlock chain's
+thermal switches. Protection must not depend on the FPGA being alive and
+correctly programmed; that principle stands. Building this formally
+revises the earlier "no firmware overtemperature action" decision — the
+new wording should be: no firmware *protection* role; a lower-threshold
+supervisory soft-stop is allowed.
+
+**Design sketch:** coil temperature already enters on AIN0 (XADC,
+0–3.5 V, 12 bit; currently logging-only). Add a fabric comparator: AIN0
+above a CFG threshold triggers the existing graceful-stop path (ramp to
+zero via the clamp, then bridge disable), latches a status flag, and
+requires operator acknowledgment to restart (same pattern as
+TIMEOUT_HOLD — no auto-restart, to avoid thermal cycling). XADC's slow
+sample rate is fine; thermal timescales are seconds.
+
+**Design choices when built (all config, PROVISIONAL like everything
+else):** sensor calibration (volts → °C) and threshold; fail-safe sensor
+wiring so a broken wire reads *hot*, not cold (e.g. NTC with pull-up
+arranged so open circuit crosses the threshold).
+
+**Scope:** one proper session — comparator + CFG threshold word + status
+flag in HDL, model mirror, cocotb tests (fully simulable; bench-testable
+with a voltage divider into AIN0), register map + docs. Pairs naturally
+with the pending XADC readout tool (§5).
+
+## 5. Smaller shelved items (one-liners, for completeness)
 
 - **Auto-boost mid-run re-trigger:** today auto boost arms only at servo
   enable and post-flip re-enable; a large mid-run setpoint step slews on

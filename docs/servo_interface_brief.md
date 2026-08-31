@@ -114,6 +114,14 @@ setpoint ramp passing through zero.
 - **Gate-driver logic:** confirm enable/polarity input thresholds, that
   floating inputs default to off, and buffering of our weak 3.3 V outputs.
 - **Interlock fault line:** output polarity and level.
+- **Thermal protection:** the interlock chain currently has no thermal
+  input. Continuous running at rated current is a real use case
+  (characterization runs: ~64 W in the MOT coil pair, order ~120 W in the
+  linear pass bank at 100 A CW, provisional resistances) — we'd like
+  thermal switches on the coil and pass bank in the interlock chain
+  (type, thresholds, mounting?). A lower-threshold *graceful* soft-stop
+  inside the servo may be added later, but hardware protection must not
+  depend on the board.
 - **Heartbeat monostable:** who builds it, and the timeout choice.
 - **Rails:** confirm ~3 V hold / ~15 V boost, and boost switch control
   expectations (our pin 7 output).
