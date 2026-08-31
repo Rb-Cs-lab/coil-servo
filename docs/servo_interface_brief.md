@@ -17,6 +17,40 @@ enforces the safety rules below in silicon. A computer connects only over
 Ethernet for configuration and diagnostics; if the network dies, the loop
 keeps running.
 
+## 1b. Capabilities at a glance
+
+Numbers marked (P) are PROVISIONAL — they assume the ~15 V boost rail,
+the illustrative ~30 V clamp, and resistances pending Kelvin measurement.
+
+| Channel | Rated current | Resolution (1 ADC count) | Boost ramp 0 → rated (P) | Clamp ramp rated → 0 (P) | Full reversal, electrical (P) |
+|---|---|---|---|---|---|
+| MOT anti-Helmholtz | 100 A (bipolar) | 15 mA | ~120 µs (0.9 A/µs) | ~55 µs | ~0.25 ms |
+| Z shim | 60 A (bipolar) | 9 mA | ~120 µs (0.5 A/µs) | ~60 µs | ~0.25 ms |
+| X / Y shim | 60 A (bipolar) | 9 mA | ~230 µs (0.26 A/µs) | ~115 µs | ~0.4 ms |
+
+- **Command clamp at 100 % of rated** (unexceedable in software);
+  measurement range extends to 125 % of rated, so overshoot is still seen.
+  DC resolution is finer than one count — the loop dithers/averages
+  through the quantization (bench: held setpoint to 0.04 %).
+- **Loop:** PI at 976.6 kS/s (1.02 µs per correction), ~3.6 µs digital
+  latency; target crossover 2–5 kHz; commissioned closed-loop bandwidth
+  ≈ 3.5 kHz (loopback), 10–90 % rise 102 µs, ±1 % in 259 µs, no
+  overshoot. Spec: settle to 0.1 % in < 1 ms.
+- **Ramp shapes:** the loop tracks an arbitrary analog setpoint up to its
+  bandwidth — shaped (adiabatic) ramps are programmed at the control
+  computer; a setpoint step slews at the physical maximum (boost up,
+  clamp down). Snap-off to zero does not open the bridge.
+- **Stability:** spec < 0.1 % of rated; bench 17 mA rms / on-target to
+  0.04 % (worst-case unfiltered plant). Estimated real-system floor
+  ~0.01 %, set by the sensor/burden/setpoint chain, not the servo.
+- **Reversal:** explicit-trigger only (≥ 1 µs pulse); ramp to zero →
+  ±0.5 A window held ~66 µs → 2 µs bridge-open with 1 µs dead time each
+  side of the polarity edge → resume. Chamber eddy settling (unmeasured)
+  adds on top of the electrical time.
+- **Continuous duty:** indefinite hold at rated current from the servo's
+  side; the limits are thermal, outside the board (see section 6). Loop
+  runs autonomously in the FPGA — network loss changes nothing.
+
 ## 2. Analog interfaces (SMA)
 
 | Port | Function | Electrical | Requirements on the connecting circuit |
