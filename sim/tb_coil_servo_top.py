@@ -24,7 +24,8 @@ A pin-level safety monitor runs under every test (MVP safety invariants):
 import cocotb
 from cocotb.triggers import ClockCycles, RisingEdge
 
-from coil_servo_model import CHANNELS, Plant, adc_quantize, encode_gain
+from coil_servo_model import (CHANNELS, Plant, adc_quantize, encode_gain,
+                              slew_rate_code)
 from coil_servo_model.analysis import overshoot_frac, settling_time, suggest_gains
 from coil_servo_model.loop import T_S
 from coil_servo_model.registers import parse_sts, pack_cfg
@@ -44,6 +45,8 @@ FSM_CFG = dict(zero_win=41, zero_holdoff=3, deadtime=20, settle=400,
                flip_timeout=0)
 TRIP_CFG = dict(trip_level=counts(100.0), trip_ticks=4,
                 trip_timeout=375_000)            # 3 ms
+SLEW_CFG = dict(slew_up=slew_rate_code(200e3, MOT.I_FS),      # 200 A/ms
+                slew_down=slew_rate_code(50e3, MOT.I_FS))     # 50 A/ms
 
 
 def gains():
@@ -55,7 +58,8 @@ def gains():
 
 def run_cfg(**over):
     base = dict(servo_enable=1, sp_source=1, out_clamp=MOT.clamp_counts,
-                deadband=8, u_floor=FLOOR, **gains(), **FSM_CFG, **TRIP_CFG)
+                deadband=8, u_floor=FLOOR, **gains(), **FSM_CFG, **TRIP_CFG,
+                **SLEW_CFG)
     base.update(over)
     return pack_cfg(**base)
 
@@ -235,6 +239,38 @@ async def closed_loop_step_settles(dut):
 
 
 @cocotb.test()
+async def slew_limited_steps_neither_overshoot_nor_undershoot(dut):
+    """The control computer STEPS the setpoint 0 -> 70 A, then 70 -> 20 A
+    (the cases that overshoot ~20 % / undershoot as raw steps on the MVP
+    plant). The firmware limiter turns them into 200 A/ms and 50 A/ms
+    ramps: no overshoot, no undershoot, settled ~1 ms after each ramp."""
+    await setup(dut, run_cfg(setpoint=0))
+    await arm(dut)
+
+    world = World(dut, sp_amps=70.0)
+    t0, tr_t, tr_i = world.t, [], []
+    for _ in range(1400):                       # 0.35 ms ramp + ~1 ms
+        await world.tick()
+        tr_t.append(world.t - t0)
+        tr_i.append(world.plant.I)
+    assert overshoot_frac(tr_i, 70.0) < 0.01, f"overshoot {max(tr_i):.1f} A"
+    ts = settling_time(tr_t, tr_i, 70.0)
+    assert ts is not None and ts < 0.35e-3 + 1e-3, f"settled in {ts}"
+
+    world.sp_amps = 20.0
+    t0, tr_t, tr_i = world.t, [], []
+    for _ in range(2100):                       # 1.0 ms ramp + ~1 ms
+        await world.tick()
+        tr_t.append(world.t - t0)
+        tr_i.append(world.plant.I)
+    assert min(tr_i) > 0.99 * 20.0, f"undershoot to {min(tr_i):.2f} A"
+    # band +-0.1 A (0.1 % of rated): +-0.1 % of 20 A is 20 mA, below one
+    # OUT1 count of the gain-8 stage (test_actuator_resolution_dither)
+    ts = settling_time(tr_t, tr_i, 20.0, tol_frac=0.1 / 20.0)
+    assert ts is not None and ts < 1.0e-3 + 1e-3, f"settled in {ts}"
+
+
+@cocotb.test()
 async def flip_sequence_through_the_pins(dut):
     """Run at 30 A, request a flip on the DIO3 pin, and follow the whole
     sequence via the external pins only: the current freewheels down with
@@ -378,11 +414,11 @@ async def open_loop_drives_output_through_clamp(dut):
 async def capture_sel_streams_decimated_pairs(dut):
     """capture_sel=1: the monitor stream emits one {e[21:6], i[21:6]} word
     per PI tick instead of raw ADC samples."""
-    await setup(dut, run_cfg(capture_sel=1, setpoint=2000))
+    await setup(dut, run_cfg(capture_sel=1, setpoint=2000, slew_up=65535))
     await arm(dut)
     meas = 500
     dut.s_axis_tdata.value = pack_adc(meas, 0)
-    await ClockCycles(dut.aclk, 5)
+    await ClockCycles(dut.aclk, 600)     # setpoint ramp (4 counts/clock)
 
     words = []
     for _ in range(3 * 128 + 10):

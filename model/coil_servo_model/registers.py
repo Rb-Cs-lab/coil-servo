@@ -33,10 +33,12 @@ CFG_FIELDS = {
     "settle":         (11, 0, 32, False),
     "flip_timeout":   (12, 0, 32, False),
     "dio_invert":     (13, 0, 3, False),
+    "slew_up":        (15, 0, 16, False),
     "u_floor":        (16, 0, 14, False),
     "trip_level":     (17, 0, 14, False),
     "trip_ticks":     (18, 0, 16, False),
     "trip_timeout":   (19, 0, 32, False),
+    "slew_down":      (20, 0, 16, False),
 }
 
 CFG_WORDS = 32      # CFG_DATA_WIDTH = 1024 bits

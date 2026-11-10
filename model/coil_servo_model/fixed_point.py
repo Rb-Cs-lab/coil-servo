@@ -156,6 +156,49 @@ def output_mux_fixed(u14: int, deadband_counts: int, out2_enable: bool = True):
     return 0, 0
 
 
+class SlewLimiter:
+    """Setpoint slew-rate limiter, one step() per 8 ns fabric clock.
+    Bit-exact mirror of modules/servo_slew.v (see its header).
+
+    acc holds the setpoint in counts << 14; rates are in 2^-14 counts per
+    clock. "Up" = away from zero, "down" = toward zero. hold_zero forces 0,
+    bypass passes the target through; a rate of 0 freezes the setpoint."""
+
+    FRAC = 14
+
+    def __init__(self):
+        self.acc = 0
+
+    @property
+    def sp(self) -> int:
+        return self.acc >> self.FRAC
+
+    def step(self, target: int, rate_up: int, rate_down: int,
+             hold_zero: bool = False, bypass: bool = False) -> int:
+        t = target << self.FRAC
+        if hold_zero:
+            self.acc = 0
+        elif bypass:
+            self.acc = t
+        else:
+            delta = t - self.acc
+            away = (self.acc >= 0 and delta > 0) or (self.acc <= 0 and delta < 0)
+            r = rate_up if away else rate_down
+            if delta > r:
+                self.acc += r
+            elif delta < -r:
+                self.acc -= r
+            else:
+                self.acc = t
+        return self.sp
+
+
+def slew_rate_code(amps_per_s: float, i_fs: float, clk_hz: float = 125e6) -> int:
+    """Physical ramp rate -> slew register value (2^-14 counts per clock).
+    200 A/ms at I_FS = 200 A -> 1074."""
+    return round(amps_per_s / clk_hz / i_fs * 8192 * (1 << SlewLimiter.FRAC))
+
+
 def drive_frame_error(meas_code: int, in2_code: int, sp_reg: int,
                       sp_source: int, sp_force_zero: int, polarity: int):
     """design.md Node B: setpoint mux + bridge-frame rotation, in s14 codes.

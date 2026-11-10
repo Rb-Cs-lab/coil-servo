@@ -40,6 +40,10 @@ def test_servo_output_mux():
     run_bench("servo_output_mux", "tb_servo_output_mux")
 
 
+def test_servo_slew():
+    run_bench("servo_slew", "tb_servo_slew")
+
+
 def test_servo_error():
     run_bench("servo_error", "tb_servo_error")
 

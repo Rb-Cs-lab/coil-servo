@@ -86,10 +86,12 @@ module coil_servo_top #
   wire        [31:0] settle       = cfg_data[383:352];  // W11
   wire        [31:0] flip_timeout = cfg_data[415:384];  // W12
   wire        [2:0]  dio_invert   = cfg_data[418:416];  // W13
+  wire        [15:0] slew_up      = cfg_data[495:480];  // W15
   wire        [13:0] u_floor      = cfg_data[525:512];  // W16
   wire        [13:0] trip_level   = cfg_data[557:544];  // W17
   wire        [15:0] trip_ticks   = cfg_data[591:576];  // W18
   wire        [31:0] trip_timeout = cfg_data[639:608];  // W19
+  wire        [15:0] slew_down    = cfg_data[655:640];  // W20
 
   assign fifo_resetn = aresetn & ~fifo_rst;
 
@@ -129,10 +131,22 @@ module coil_servo_top #
   wire signed [13:0] sp_active;
   wire sp_sign_mismatch;
 
+  // setpoint slew limiter between the source mux and the error path
+  // (servo_slew.v); servo_error then always takes the limited value
+  wire signed [13:0] sp_sel = sp_source ? sp_reg : in2_code;
+  wire signed [13:0] sp_lim;
+
+  servo_slew slew_0 (
+    .aclk(aclk), .aresetn(aresetn),
+    .target(sp_sel), .hold_zero(sp_force_zero), .bypass(open_loop),
+    .rate_up(slew_up), .rate_down(slew_down),
+    .sp_out(sp_lim)
+  );
+
   servo_error err_0 (
     .aclk(aclk), .aresetn(aresetn),
-    .meas(meas_code), .in2(in2_code), .sp_reg(sp_reg),
-    .sp_source(sp_source), .sp_force_zero(sp_force_zero),
+    .meas(meas_code), .in2(in2_code), .sp_reg(sp_lim),
+    .sp_source(1'b1), .sp_force_zero(sp_force_zero),
     .polarity(polarity),
     .e_fast(e_fast), .sp_active(sp_active),
     .sp_sign_mismatch(sp_sign_mismatch)

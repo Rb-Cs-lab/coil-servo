@@ -53,12 +53,13 @@ their word; unused high bits read/write as 0.
 | 12 | `flip_timeout` | u32 | 0 | RAMP_DOWN timeout, 8 ns ticks. 0 = disabled — but on a real coil always set it nonzero: it is the safety net that parks a flip that can't reach zero current in TIMEOUT_HOLD instead of waiting forever |
 | 13 | `dio_invert` | bits | 0 | invert sense of E1 *inputs*: b0 flip request (DIO3), b1 arm (DIO4), b2 fault (DIO5). Reset 0 = as listed in the port table. Output polarities are fixed in HDL on purpose (reset state must be safe unconfigured). |
 | 14 | — | u12 | 0 | reserved for `aout0_trim` (transducer offset trim via slow PWM output; wired up in session 7 when it can be validated against a voltmeter) |
-| 15 | — | | | reserved (earmarked for a setpoint slew-rate limit if ever needed — see future_upgrades.md section 3) |
+| 15 | `slew_up` | u16 | 0 | setpoint slew-rate limit **away from zero** (\|setpoint\| growing), in 2<sup>−14</sup> counts per 8 ns clock (= 2<sup>−7</sup> counts per PI tick). MOT: 200 A/ms → **1074** at I_FS = 200 A (`slew_rate_code()` in fixed_point.py). Applies to IN2 and the `setpoint` register in closed loop; bypassed in `open_loop`; an FSM-forced zero (IDLE, ramp-down, flip, trip) drops the setpoint to 0 at once and it ramps up from 0 afterwards. Reset 0 = the setpoint cannot move (servo does nothing until configured — fail-safe). Why: large steps overshoot/undershoot on the MVP plant (mvp_architecture.md 3.1). |
 | 16 | `u_floor` | u14 Q1.13 | 0 | PI lower bound **in RUN only** (MVP, `out2_enable` = 0): the PI output and integrator never go below this many OUT1 counts, so OUT1 rests just below the pass-bank dead zone instead of at 0. Set to ~90 % of the *measured* dead zone (mvp_architecture.md 3.1). Outside RUN the lower bound is 0. Must be < `out_clamp` (the clamp wins if not). Reset 0 = plain zero floor. |
 | 17 | `trip_level` | u14 Q1.13 | 0 | over-current trip level, counts **of the IN1 sensor scale** (1 count = I_FS/8192, 24.4 mA at I_FS = 200 A). Trips when \|measured current\| > level for `trip_ticks` consecutive PI ticks, in every state except IDLE. Reset 0 = trips on the first nonzero reading — the servo cannot run until this is configured (fail-safe). MOT: 100 A. |
 | 18 | `trip_ticks` | u16 | 0 | consecutive decimated samples (1.024 µs each) above `trip_level` before tripping; 0 and 1 both mean "first sample". |
 | 19 | `trip_timeout` | u32 | 0 | after a trip, the longest the bridge stays closed (OUT1 = 0, coil freewheeling) waiting for the current to fall inside `zero_win`, in 8 ns ticks. Then the bridge opens regardless (e.g. a shorted pass FET keeps current flowing). 0 = open the bridge at once (pushes the coil energy into the supply; mvp_architecture.md 3.3). MOT: ~3 ms, comfortably above the 1.3 ms freewheel from 100 A. |
-| 20–31 | — | | 0 | reserved |
+| 20 | `slew_down` | u16 | 0 | setpoint slew-rate limit **toward zero**, same units as word 15. MOT: 50 A/ms → **268**. A move across zero uses this rate down to 0, then `slew_up`. |
+| 21–31 | — | | 0 | reserved |
 
 ## STS (0x4100_0000 + 4·word)
 
@@ -69,7 +70,7 @@ from the stated width (`registers.parse_sts` does this).
 |---|---|---|---|
 | 0 | `flags` | bits | b3:0 `fsm_state`; b4 `fault` (DIO5, read-only, no clear path); b5 `bridge_en`; b6 `polarity`; b7 `armed` (DIO4); b8 `out_sat` (hard clamp ±`out_clamp` engaged); b9 `int_railed`; b10 `sp_sign_mismatch`; b11 `timeout_hold`; b12 `u_floor` (PI output sits on its lower bound — in the MVP: OUT1 at the floor, current can only decay); b13 `tripped` (FSM in TRIP or TRIPPED) |
 | 1 | `i_meas` | s22 Q2.20 | decimated measured current (board frame) |
-| 2 | `sp_active` | s14 | setpoint after mux (what the loop sees) |
+| 2 | `sp_active` | s14 | setpoint after mux and slew limiter (what the loop sees) |
 | 3 | `u14` | s14 | PI output after the hard clamp |
 | 4 | `heartbeat` | u32 | free-running counter (liveness readback) |
 | 5 | `fifo_count` | u32 | ADC capture FIFO fill (added at the block-design level) |
