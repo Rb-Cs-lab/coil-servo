@@ -9,6 +9,10 @@ model/coil_servo_model/channels.py; I_FS, the OUT1 command clamp and the
 dead-zone floor are DERIVED from that model (so a new bench measurement in
 channels.toml flows straight into the registers), unless overridden by a
 directly measured value (out_clamp_counts, u_floor_counts).
+
+mot_bench is the MOT channel's low-current test profile (bench supply with a
+current limit, LEM wound N times; docs/bench_supply_test.md). Its supply
+limit I_supply_max adds checks: rated current and trip level below it.
 """
 
 import argparse
@@ -16,20 +20,22 @@ import tomllib
 from dataclasses import replace
 from pathlib import Path
 
-from coil_servo_model.channels import CHANNELS, Channel
+from coil_servo_model.channels import BENCH_CHANNELS, CHANNELS, Channel
 from coil_servo_model.fixed_point import encode_gain, slew_rate_code
 from coil_servo_model.loop import T_S
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "channels.toml"
 TICK_NS = 8.0
 
-# fixed requirement (CLAUDE.md): MOT rail <= 6 V, shim rails <= 10 V
-RAIL_LIMIT = {"mot": 6.0}
+# fixed requirement (CLAUDE.md): MOT rail <= 6 V, shim rails <= 10 V.
+# mot_bench is the MOT coil on a bench supply: same limit.
+RAIL_LIMIT = {"mot": 6.0, "mot_bench": 6.0}
 RAIL_LIMIT_DEFAULT = 10.0
 
 # channels.toml keys that override model Channel fields
 PHYSICS_KEYS = ("I_rated", "V_rail", "V_th", "g_fs", "gain_opamp",
-                "out1_terminated", "R_burden", "G_inamp")
+                "out1_terminated", "R_burden", "G_inamp", "lem_turns",
+                "I_supply_max")
 
 
 def amps_to_counts(amps: float, i_fs: float) -> int:
@@ -39,16 +45,27 @@ def amps_to_counts(amps: float, i_fs: float) -> int:
 
 def build_model(name: str, table: dict) -> Channel:
     """The model Channel for this channel, with channels.toml's physics."""
-    base = CHANNELS.get(name) or Channel(name=name, L=16e-6, R_coil=6.4e-3,
-                                         I_rated=float(table["I_rated"]))
+    base = (CHANNELS.get(name) or BENCH_CHANNELS.get(name)
+            or Channel(name=name, L=16e-6, R_coil=6.4e-3,
+                       I_rated=float(table["I_rated"])))
     over = {k: table[k] for k in PHYSICS_KEYS if k in table}
     if "V_th" in over:
         over["V_th"] = tuple(float(v) for v in over["V_th"])
-    for k in ("I_rated", "V_rail", "g_fs", "gain_opamp", "R_burden", "G_inamp"):
+    for k in ("I_rated", "V_rail", "g_fs", "gain_opamp", "R_burden", "G_inamp",
+              "I_supply_max"):
         if k in over:
             over[k] = float(over[k])
     if "out1_terminated" in over:
         over["out1_terminated"] = bool(over["out1_terminated"])
+    if "lem_turns" in over:
+        n = over["lem_turns"]
+        if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+            raise ValueError(f"[{name}] lem_turns = {n!r} must be a whole "
+                             f"number of turns >= 1")
+    # the clamp override lives in this file only: without the key the clamp
+    # is derived from the model (I_rated), whatever the model's default
+    over["out_clamp_counts"] = (int(table["out_clamp_counts"])
+                                if "out_clamp_counts" in table else None)
     return replace(base, name=name, **over)
 
 
@@ -79,6 +96,21 @@ def load_channel(name: str, path: Path = CONFIG_PATH) -> dict:
     trip_amps = float(table["trip_amps"])
     if not 0 < trip_amps < i_fs:
         refuse(f"trip_amps = {trip_amps} must be inside 0 .. I_FS = {i_fs:g} A")
+    i_sup = model.I_supply_max
+    if i_sup is not None:
+        # current-limited (bench) supply: its CC limit is the hard limit, and
+        # the firmware trip must sit below it -- otherwise the supply holds
+        # the current at its limit, the trip never fires, and the PI winds up
+        # to the clamp (slow recovery). Rated must sit below both.
+        if i_sup <= 0:
+            refuse(f"I_supply_max = {i_sup} A must be > 0")
+        if not i_rated < i_sup:
+            refuse(f"I_rated = {i_rated} A must be below the supply current "
+                   f"limit I_supply_max = {i_sup} A")
+        if not trip_amps < i_sup:
+            refuse(f"trip_amps = {trip_amps} A must be below the supply current "
+                   f"limit I_supply_max = {i_sup} A, or the firmware trip can "
+                   f"never fire (the supply holds the current at its limit)")
     if float(table["zero_win_amps"]) <= 0:
         refuse("zero_win_amps must be > 0, or a flip can never qualify its "
                "zero-current window")
@@ -97,10 +129,7 @@ def load_channel(name: str, path: Path = CONFIG_PATH) -> dict:
                    f"in the MVP")
 
     # --- derived register values ---
-    if "out_clamp_counts" in table:
-        out_clamp = int(table["out_clamp_counts"])
-    else:
-        out_clamp = model.clamp_counts
+    out_clamp = model.clamp_counts     # out_clamp_counts if set, else derived
     if "u_floor_counts" in table:
         u_floor = int(table["u_floor_counts"])
     else:
@@ -150,13 +179,21 @@ def summary(ch: dict) -> str:
     def rate(code):                    # slew code -> A/ms
         return code / 2**14 * m.amps_per_lsb * 125e6 / 1e3
 
+    turns = f", LEM {m.lem_turns} primary turns" if m.lem_turns != 1 else ""
     lines = [
         f"channel {m.name}: rail {m.V_rail:g} V, rated {m.I_rated:g} A",
+    ]
+    if m.I_supply_max is not None:
+        lines.append(
+            f"  supply limit       = {m.I_supply_max:g} A (current-limited "
+            f"supply: the hard limit; the firmware trip sits below it)")
+    lines += [
         f"  sensor scale I_FS  = {m.I_FS:g} A at +1 V on IN1 "
-        f"({m.amps_per_lsb * 1e3:.1f} mA per ADC count)",
+        f"({m.amps_per_lsb * 1e3:.2f} mA per ADC count{turns})",
         f"  pass bank G_pass   = {m.G_pass / f:.0f} A per volt at OUT1 "
         f"(OUT1 {'terminated' if m.out1_terminated else 'UNterminated'}; "
-        f"plant gain {m.G_pass / m.I_FS:.2f})",
+        f"plant gain {m.G_pass / m.I_FS:.2f}; one OUT1 count "
+        f"~ {m.G_pass / 8192 * 1e3:.0f} mA)",
         f"  dead zone          = {m.dead_zone * f:.3f} V at OUT1 "
         f"({min(m.V_th):.2f} V gate, {m.dead_zone * 8192:.0f} counts)",
         f"  RUN floor          = {c['u_floor']} counts "
@@ -164,8 +201,11 @@ def summary(ch: dict) -> str:
         f"  OUT1 command clamp = {c['out_clamp']} counts "
         f"({c['out_clamp'] / 8192 * f:.3f} V at OUT1; limits the command, "
         f"not the current)",
-        f"  over-current trip  = {c['trip_level'] * m.amps_per_lsb:.1f} A "
+        f"  over-current trip  = {c['trip_level'] * m.amps_per_lsb:.4g} A "
         f"({c['trip_level']} counts) for {c['trip_ticks']} samples",
+        f"  flip zero window   = {c['zero_win'] * m.amps_per_lsb:.3g} A "
+        f"({c['zero_win']} counts); freewheel from rated "
+        f"~ {m.freewheel_time * 1e6:.0f} us",
         f"  setpoint ramps     = {rate(c['slew_up']):.0f} A/ms up, "
         f"{rate(c['slew_down']):.0f} A/ms down "
         f"(codes {c['slew_up']} / {c['slew_down']})",

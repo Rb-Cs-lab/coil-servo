@@ -4,7 +4,8 @@ register values, unit conversions, and refusal of unsafe files."""
 import pytest
 
 from coil_servo_host.config import load_channel, summary
-from coil_servo_model import CHANNELS, decode_gain, slew_rate_code
+from coil_servo_model import (BENCH_CHANNELS, CHANNELS, decode_gain,
+                              slew_rate_code)
 from coil_servo_model.analysis import suggest_gains
 from coil_servo_model.channels import VTH_INSTALLED
 from coil_servo_model.loop import T_S
@@ -130,6 +131,78 @@ def test_measured_overrides_win(tmp_path):
     assert ch["cfg"]["out_clamp"] == 4300
     assert ch["cfg"]["u_floor"] == 3100
     assert ch["model"].V_th == (3.4, 3.4)
+
+
+def test_bench_profile_loads_and_matches_the_model():
+    ch = load_channel("mot_bench")
+    cfg, m = ch["cfg"], ch["model"]
+    assert m == BENCH_CHANNELS["mot_bench"]
+    assert ch["host"] == load_channel("mot")["host"]      # same board
+    assert ch["i_fs"] == pytest.approx(20.0)               # 10 LEM turns
+    assert m.lem_turns == 10 and m.I_supply_max == 3.0
+
+    # current ordering: rated < trip < supply limit < I_FS
+    trip_amps = cfg["trip_level"] * m.amps_per_lsb
+    assert m.I_rated < trip_amps < m.I_supply_max < ch["i_fs"]
+    assert cfg["trip_level"] == round(2.8 / 20.0 * 8192) == 1147
+
+    # clamp set directly (4000), floor still 90 % of the dead zone
+    assert cfg["out_clamp"] == 4000 == m.clamp_counts
+    assert cfg["u_floor"] == round(0.9 * m.dead_zone * 8192) == 3234
+
+    # same physical ramp rates, so 10x the codes at I_FS = 20 A
+    assert cfg["slew_up"] == slew_rate_code(200e3, 20.0) == 10737
+    assert cfg["slew_down"] == slew_rate_code(50e3, 20.0) == 2684
+    assert cfg["zero_win"] == round(0.1 / 20.0 * 8192) == 41
+    assert cfg["trip_timeout"] == 375_000
+
+    # gains: suggest_gains on the bench plant (plant gain ~48)
+    kp, ki_tick = suggest_gains(m)
+    assert decode_gain(cfg["kp_mant"], cfg["kp_shift"]) == pytest.approx(kp, rel=1e-3)
+    assert decode_gain(cfg["ki_mant"], cfg["ki_shift"]) == pytest.approx(ki_tick, rel=1e-3)
+
+    assert cfg["dither_enable"] == 1
+    assert cfg["out2_enable"] == 0 and cfg["boost_mode"] == 0
+    assert "servo_enable" not in cfg
+    text = summary(ch)
+    assert "supply limit" in text and "LEM 10 primary turns" in text
+
+
+BENCH_EXTRA = "I_supply_max = {sup}\nlem_turns = {turns}\n"
+
+
+def bench_toml(tmp_path, sup=3.0, turns=10, i_rated=2.5, trip=2.8, **kw):
+    extra = BENCH_EXTRA.format(sup=sup, turns=turns) + kw.pop("extra", "")
+    return write_toml(tmp_path, name="mot_bench", i_rated=i_rated, trip=trip,
+                      extra=extra, **kw)
+
+
+def test_loader_accepts_a_valid_bench_file(tmp_path):
+    ch = load_channel("mot_bench", path=bench_toml(tmp_path))
+    assert ch["i_fs"] == pytest.approx(20.0)
+    # no out_clamp_counts in this file -> the clamp is derived from I_rated
+    assert ch["cfg"]["out_clamp"] == ch["model"].clamp_counts
+    assert ch["model"].out_clamp_counts is None
+
+
+@pytest.mark.parametrize("kw", [
+    dict(trip=3.0),                    # trip at the supply limit: never fires
+    dict(trip=3.2),                    # trip above the supply limit
+    dict(i_rated=3.0, trip=2.9),       # rated at the supply limit
+    dict(sup=0.0, i_rated=2.5, trip=2.8),   # nonsense limit
+    dict(turns=0),                     # no turn through the LEM
+    dict(turns=2.5),                   # turns must be whole
+    dict(v_rail=6.5),                  # the MOT coil's 6 V rail limit
+])
+def test_loader_rejects_unsafe_bench_configs(tmp_path, kw):
+    with pytest.raises(ValueError):
+        load_channel("mot_bench", path=bench_toml(tmp_path, **kw))
+
+
+def test_lem_turns_change_the_scale(tmp_path):
+    ch = load_channel("mot_bench", path=bench_toml(tmp_path, turns=5))
+    assert ch["i_fs"] == pytest.approx(40.0)
+    assert ch["cfg"]["trip_level"] == round(2.8 / 40.0 * 8192)
 
 
 def test_in_amp_gain_changes_the_scale(tmp_path):
