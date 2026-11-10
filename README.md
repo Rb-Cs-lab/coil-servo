@@ -12,7 +12,8 @@ no control decisions are made in software.
 
 - New to the project (or to FPGAs)? Read *How the pieces fit* and *Setup*
   below.
-- Full requirements and lab context: [BOOTSTRAP.md](BOOTSTRAP.md)
+- Hardware being built (MVP, Nov 2026): [docs/mvp_architecture.md](docs/mvp_architecture.md);
+  original requirements and lab context: [docs/history/BOOTSTRAP.md](docs/history/BOOTSTRAP.md)
 - Hardware facts, pinout, toolchain versions: [CLAUDE.md](CLAUDE.md)
 - The control-loop design (every number in the loop, and why):
   [docs/design.md](docs/design.md)

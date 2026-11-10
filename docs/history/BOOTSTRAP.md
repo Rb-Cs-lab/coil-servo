@@ -1,3 +1,14 @@
+> **Historical document (superseded 2026-11-10).** This is the original
+> project brief from August 2026. It describes the *full architecture* —
+> ~3 V hold rail + ~15 V boost capacitor, per-FET source-sense pass bank,
+> active clamp on OUT2, relay interlock chain — which is **not** what is
+> being built. The hardware actually being built (the MVP) is described in
+> [../mvp_architecture.md](../mvp_architecture.md); the deferred parts of
+> this design are in [../future_upgrades.md](../future_upgrades.md). The
+> firmware requirements here (PI in fabric, flip FSM, safety invariants,
+> verification approach) still hold. Older code comments that cite
+> "BOOTSTRAP" refer to this file.
+
 # Bootstrap prompt — Red Pitaya coil current servo codebase
 
 *Paste this into a fresh Claude Code session with the project folder attached. Everything below is context plus the task; the "Open unknowns" section is deliberately unresolved and must stay parameterised in code.*

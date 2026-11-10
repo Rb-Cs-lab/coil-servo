@@ -5,8 +5,20 @@ ultracold atoms machine. **Hybrid architecture (decided): PI loop and H-bridge
 flip FSM in FPGA fabric; Python for tuning, sweeps, diagnostics, config only.**
 Never propose a Linux userspace control loop.
 
-Full context and requirements: [BOOTSTRAP.md](BOOTSTRAP.md). This file is the
+**The hardware being built is the MVP (Nov 2026), MOT channel only:**
+[docs/mvp_architecture.md](docs/mvp_architecture.md) is the plant/power-stage
+reference. The original full-architecture brief is
+[docs/history/BOOTSTRAP.md](docs/history/BOOTSTRAP.md) (superseded for the
+power stage; its firmware requirements still hold). The plan for bringing the
+rest of the repo in line is [docs/mvp_rewrite_brief.md](docs/mvp_rewrite_brief.md)
+§11 — work it in order, one step per session. This file is the
 quick-reference facts; if they conflict, flag it — don't silently pick one.
+
+**Rewrite status (2026-11-10): step 1 of 6 done (this file + mvp_architecture.md).**
+The model, HDL, host config and remaining docs still describe the full
+architecture (active clamp, boost rail, I_FS = 125 A) until steps 2–5 land.
+Before step 2, resolve the ⚠ REVIEW items in mvp_architecture.md — above all
+the turn-down physics (§3.3), which changes the model tests the brief lists.
 
 ## Board
 
@@ -67,62 +79,122 @@ Bitstream loading on the board: `fpgautil -b coil_servo.bit.bin`
 | Port | Dir | Signal |
 |---|---|---|
 | IN1 | in | Measured coil current (signed); same scaling as IN2 |
-| IN2 | in | Setpoint from control system analog out, ÷10 to ±1 V |
-| OUT1 | out | Pass bank command (current up / hold) |
-| OUT2 | out | Active clamp command (current down) |
-| DIO0_P | out | Bridge polarity |
-| DIO1_P | out | Bridge enable (low = all four FETs off = safe) |
-| DIO2_P | out | Boost-cap switch enable |
+| IN2 | in | Setpoint from control system analog out, ÷10 to ±1 V (at I_FS = 200 A: 20 A per computer volt) |
+| OUT1 | out | Pass bank command → op-amp (gain ≈ 8) → pass-FET gates |
+| OUT2 | out | Active clamp command — **unused in the MVP, must sit at 0 V** |
+| DIO0_P | out | Bridge polarity (via logic board → UCC5350 drivers) |
+| DIO1_P | out | Bridge enable (low = all four FETs off = safe), ANDed on the logic board with heartbeat-OK and latch-not-tripped |
+| DIO2_P | out | Boost-cap switch enable — **unused in the MVP, must sit low** |
 | DIO3_P | in | Flip request (TTL, level-shifted) |
 | DIO4_P | in | Shot trigger / arm |
-| DIO5_P | in | Fault flag from hardware interlock — READ ONLY, no clear path |
-| DIO6_P | out | Watchdog heartbeat (toggles unconditionally) |
+| DIO5_P | in | Fault flag — READ ONLY, no clear path; **not wired in the MVP** |
+| DIO6_P | out | Watchdog heartbeat (toggles unconditionally) → logic-board monostable + latch |
 | AIN0 | in | Coil temperature (logging only) |
 | AIN1 | in | Rail voltage monitor |
 | AOUT0 | out | Transducer offset trim |
 
-## Plant (per channel; resistances PROVISIONAL — Kelvin measurement pending)
+## Plant (MVP — details and analysis in docs/mvp_architecture.md)
 
-| Channel | L (pair) | R (pair) | I max |
-|---|---|---|---|
-| MOT anti-Helmholtz | 16 µH | 6.4 mΩ | 100 A |
-| Z shim (Helmholtz) | 29 µH | 11.6 mΩ | 60 A |
-| X shim (racetrack) | 57 µH | 14.2 mΩ | 60 A |
-| Y shim (racetrack) | 57 µH | 14.2 mΩ | 60 A |
+Coils (Radia-computed; resistances PROVISIONAL — Kelvin measurement pending).
+MVP builds the MOT channel only; shim rows are kept for later.
 
-Total loop R ≈ coil + 10–15 mΩ (pass bank + cabling); MOT open-loop pole
-≈ 100 Hz. Rail ~3 V hold, ~15 V boost cap for ramps. Sensors: LEM LF 310-S
-(MOT), LF 205-S (shims), burden resistor + in-amp into IN1.
+| Channel | L (pair) | R (pair) | I max | Coil constant |
+|---|---|---|---|---|
+| MOT anti-Helmholtz | 16 µH | 6.4 mΩ | 100 A | 0.524 G/cm/A |
+| Z shim (Helmholtz) | 29 µH | 11.6 mΩ | 60 A | 0.663 G/A |
+| X shim (racetrack) | 57 µH | 14.2 mΩ | 60 A | 0.155 G/A |
+| Y shim (racetrack) | 57 µH | 14.2 mΩ | 60 A | 0.155 G/A |
+
+(X/Y racetracks are rotated 45° from the beamline — drive them with
+rotation-matrix currents.)
+
+Power stage as built:
+
+- **Single fixed rail**, no boost: Mean Well SE-600-5, **5 V / 100 A**
+  (limits: MOT ≤ 6 V, shims ≤ 10 V). 4/0 cabling.
+- **H-bridge** (4 × IXFN420N10T, isolated UCC5350 drivers) on the high side,
+  coils in series inside it, LEM on the lead between the coils.
+- **Pass bank LOW-SIDE**, after the bridge: 6 × IXTN200N10L2 in linear mode,
+  0.03 Ω ballast each, gates from OUT1 through an OPA994 non-inverting
+  gain ≈ 8 stage. **No per-FET source-sense loops, no active clamp.** It is a
+  voltage-controlled current source with a **dead zone** (measured
+  V_th ≈ 3.53 V → OUT1 ≈ 0.44 V) and up to ~1600 A/V at OUT1. The coil L/R
+  pole is not in the loop; L only appears as slew limits at the compliance
+  edges. Normalized plant gain up to ~8 (loopback was 2.03), so the
+  commissioned PI gains must be rescaled before real-load tuning.
+- **Unipolar actuator:** the bank only sources current or sources less.
+  Turn-down path is ⚠ REVIEW (mvp_architecture.md §3.3): the analysis there
+  finds the bridge body diodes freewheel the coil (~1 ms L/R-type decay at
+  100 A) rather than the 5KP12CA TVS across the bank setting a 0.2 ms ramp.
+  Settle with a scope capture before modelling it.
+- **Sensing:** LEM LF 310-S → 10 Ω burden → AD8421 (G = 1, PROVISIONAL) →
+  IN1: **I_FS = 200 A** at +1 V, 24.4 mA per ADC count.
+- **Safety logic board** (built, tested 2026-11-03): heartbeat → CD74HC123
+  monostable → 74HC74 latch with manual reset (powers up tripped) → NAND
+  with DIO1_P → driver DISABLE. The only automatic trip in the MVP; no relay
+  interlock chain, no fault feedback to the Pitaya.
+- **Cooling:** both FET plates water-cooled (~47–53 W per pass FET at 100 A
+  CW); **first test round runs without water** — short pulses, reduced
+  current, explicit duty limit.
 
 **Loop targets:** crossover 2–5 kHz, settle to 0.1 % in < 1 ms, stability
-< 0.1 %. PI decimated to ~1 MS/s (ratio 128 → 976.6 kS/s). Do not optimise
-firmware for speed — the analog side sets the bandwidth.
+< 0.1 %. Large steps are compliance-limited, not loop-limited (0 → 100 A
+≈ 0.4 ms on 5 V). PI decimated to ~1 MS/s (ratio 128 → 976.6 kS/s). Do not
+optimise firmware for speed — the analog side sets the bandwidth.
 
 ## Safety invariants (in FPGA fabric, asserted in every testbench)
 
 1. Hard fixed-point clamp on OUT1/OUT2 at **100 %** of channel rated current
    (review decision 2026-08-26; supersedes BOOTSTRAP's "~110 %").
-2. Reset state is off: all DIO outputs low, both DACs zero.
-3. OUT1 and OUT2 mutually exclusive at all times (deadband handoff).
+   **MVP caveat (⚠ REVIEW, mvp_architecture.md §3.5):** the clamp limits the
+   OUT1 *command*; the current that command produces depends on G_pass, the
+   dead zone and FET temperature, so the clamp value must be calibrated from
+   measured G_pass and is not by itself a current limit. The SE-600-5's
+   overcurrent protection is the real hard limit until a measured-current
+   trip exists. Never derive the clamp from the sensor scale (I_FS).
+2. Reset state is off: all DIO outputs low, both DACs zero, integrator
+   cleared, FSM in IDLE. In the MVP, leaving IDLE also needs an arm *edge*
+   (a level already high at load doesn't count) — rewrite step 3.
+3. OUT1 and OUT2 mutually exclusive at all times (deadband handoff); in the
+   MVP OUT2 ≡ 0 (`out2_enable` = 0, rewrite step 3).
 4. Bridge enable requires active assertion; enable-low is safe in both
-   polarity states.
+   polarity states. The logic board generates no dead time — the FSM's
+   enable-low window is the only shoot-through protection.
 5. Heartbeat (DIO6) toggles unconditionally while the fabric runs.
-6. Integrator anti-windup, including during clamp phase and bridge-disabled.
+6. Integrator anti-windup, including during clamp phase and bridge-disabled
+   — and, in the MVP, at the lower bound (PI output ≤ 0, OUT1 = 0).
 
-The hardware interlock chain does not pass through the Pitaya. Firmware only
-*reads* DIO5_P; never write code that tries to clear a fault.
+The hardware protection does not pass through the Pitaya. In the MVP it is
+only the heartbeat latch on the logic board; DIO5_P is unwired. Firmware
+never writes code that tries to clear a fault. **Operating rule: disarm
+(DIO4 low) before pressing the latch reset** — if the heartbeat dropped while
+the Pitaya kept running, the integrator may be wound up and reset would
+re-close the bridge with OUT1 at the clamp.
 
 ## Open unknowns — config values only, never hardcoded
 
 Each of these must be a named, commented-provisional parameter
 (`host/config/channels.toml` + `model/coil_servo_model/channels.py`):
 
-- Actual coil resistance (Kelvin measurement outstanding; PI gains depend on it)
+- Coil R and L (Kelvin + LCR outstanding) and 4/0 cable + contact
+  resistance → R_total, compliance at 100 A
+- Pass bank: g_fs, measured G_pass and dead zone (and their temperature
+  dependence), OUT1 50 Ω termination yes/no → also sets the OUT1 clamp value
+- OPA994 supply rail (undocumented; must exceed the max gate command)
+- In-amp gain (1 vs 2) → I_FS 200 A vs 100 A
+- Turn-down path: bridge freewheel vs bank TVS (one scope capture decides)
+- Bridge-open-at-current energy path: SE-600-5 output-cap overvoltage / OVP
+- Actuator resolution and ground noise at a steady hold vs the 0.1 % spec
+  (gain-8 stage: one OUT1 count ≈ 0.14–0.4 % of rated)
+- Monostable timeout (notes say ~5 ms; scaling from 68 kΩ predicts ~3.6 ms)
+- IN1 offset (~1.4 mV ≈ 0.29 A at I_FS = 200 A — calibrate before trusting
+  the ±0.5 A flip zero window)
+- Hold capacitor across the rail (C_hold) yes/no
 - Chamber eddy-current settling time (limits post-flip field settling; FSM
   delay constants are placeholders)
-- Burden resistor value (10 Ω → 0.5 V @ 100 A; 20 Ω → 1.0 V)
-- Clamp voltage (~30 V figure is illustrative)
-- PI gains (to be set from measured open-loop step response)
+- Uncooled duty-cycle limit for the first test round
+- PI gains (loopback values; rescale by measured plant gain, then set from
+  the measured step response)
 
 If a design decision depends on one of these, flag it explicitly.
 
