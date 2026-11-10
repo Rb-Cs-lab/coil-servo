@@ -28,7 +28,7 @@ from coil_servo_model import (CHANNELS, Plant, adc_quantize, encode_gain,
                               slew_rate_code)
 from coil_servo_model.analysis import overshoot_frac, settling_time, suggest_gains
 from coil_servo_model.loop import T_S
-from coil_servo_model.registers import parse_sts, pack_cfg
+from coil_servo_model.registers import MAP_REV, parse_sts, pack_cfg
 from tb_util import reset, start_clock
 
 MOT = CHANNELS["mot"]
@@ -184,6 +184,7 @@ async def reset_state_is_off(dut):
     s = sts(dut)
     assert s["fsm_state_name"] == "IDLE"
     assert s["tripped"] == 0
+    assert s["map_rev"] == MAP_REV, "STS map revision != registers.MAP_REV"
     # heartbeat (DIV_LOG2=6 in sim) must toggle regardless of configuration
     v0 = int(dut.heartbeat_o.value)
     await ClockCycles(dut.aclk, 100)

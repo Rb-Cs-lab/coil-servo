@@ -318,7 +318,10 @@ module coil_servo_top #
   assign sts_data[11]      = timeout_hold;
   assign sts_data[12]      = at_floor;
   assign sts_data[13]      = tripped;
-  assign sts_data[31:14]   = 18'd0;
+  assign sts_data[23:14]   = 10'd0;
+  // register-map revision (docs/register_map.md; registers.MAP_REV): the
+  // host refuses to write CFG to a bitstream whose layout it doesn't know
+  assign sts_data[31:24]   = 8'd3;
   assign sts_data[53:32]   = i_dec;          // W1, s22 (host sign-extends)
   assign sts_data[63:54]   = 10'd0;
   assign sts_data[77:64]   = sp_active;      // W2, s14 (host sign-extends)

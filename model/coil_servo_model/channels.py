@@ -2,10 +2,11 @@
 
 This is the single Python source for plant and scaling numbers. Values marked
 PROVISIONAL are computed/assumed, not measured; MEASURED values cite their
-source. The runtime configuration the boards actually receive lives in
-host/config/channels.toml and is brought in line with this file in MVP
-rewrite step 4 (until then it still holds the full-architecture values --
-see fullarch.py).
+source. host/config/channels.toml overrides the measurable ones per board
+(host/coil_servo_host/config.py builds a Channel from it and derives the
+register values); host/tests/test_config.py keeps the two in agreement.
+The superseded full-architecture model is in git history (removed in MVP
+rewrite step 4).
 
 MVP actuator, per channel: one fixed low-voltage rail, an H-bridge on the
 high side, and a LOW-SIDE linear pass bank of N MOSFETs (each with its own

@@ -1,16 +1,15 @@
-"""Channel table integrity: coil values, MVP derived quantities, and the
-legacy full-architecture table the HDL benches still use."""
+"""Channel table integrity: coil values and MVP derived quantities."""
 
 import pytest
 
-from coil_servo_model import CHANNELS, FULLARCH_CHANNELS
+from coil_servo_model import CHANNELS
 from coil_servo_model.channels import VTH_INSTALLED
 
 MOT = CHANNELS["mot"]
 
 
 def test_coil_table():
-    for table in (CHANNELS, FULLARCH_CHANNELS):
+    for table in (CHANNELS,):
         assert table["mot"].L == 16e-6
         assert table["mot"].R_coil == 6.4e-3
         assert table["mot"].I_rated == 100.0
@@ -66,12 +65,3 @@ def test_freewheel_turnoff_times():
     assert CHANNELS["mot"].freewheel_time == pytest.approx(1.28e-3, rel=0.05)
     assert CHANNELS["z_shim"].freewheel_time == pytest.approx(1.44e-3, rel=0.05)
     assert CHANNELS["x_shim"].freewheel_time == pytest.approx(2.70e-3, rel=0.05)
-
-
-def test_fullarch_scaling_rule():
-    # legacy: I_FS = 1.25 * rated, clamp 6554 counts (still what channels.toml
-    # uses until MVP rewrite step 4)
-    for ch in FULLARCH_CHANNELS.values():
-        assert ch.I_FS == pytest.approx(1.25 * ch.I_rated)
-        assert ch.clamp_counts == 6554
-    assert 80 < FULLARCH_CHANNELS["mot"].f_pole < 160

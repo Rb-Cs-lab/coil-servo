@@ -47,10 +47,9 @@ def run_loop(channel, controller, deadband_counts: int,
     clocks and hand the plant the tick-average OUT1 (the gate averages
     over ~0.6 us, longer than a tick, so this is what it sees).
     """
-    from .fullarch import FullArchChannel, FullArchPlant
     from .plant import Plant
     if plant is None:
-        plant = (FullArchPlant if isinstance(channel, FullArchChannel) else Plant)(channel)
+        plant = Plant(channel)
     if boost_fn is None:
         boost_fn = lambda t: False
     fixed = isinstance(controller, FixedPI)

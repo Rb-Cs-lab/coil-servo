@@ -14,20 +14,26 @@ rest of the repo in line is [docs/mvp_rewrite_brief.md](docs/mvp_rewrite_brief.m
 §11 — work it in order, one step per session. This file is the
 quick-reference facts; if they conflict, flag it — don't silently pick one.
 
-**Rewrite status (2026-11-10): steps 1–3 of 6 done.** Model, fixed-point
-mirror, HDL and cocotb benches describe the MVP (all benches close the loop
-around the MVP plant). Step 3 added (register_map.md): CFG widened to 32
+**Rewrite status (2026-11-10): steps 1–4 of 6 done.** Model, fixed-point
+mirror, HDL, cocotb benches and host tools describe the MVP (all benches
+close the loop around the MVP plant). Step 3 added (register_map.md): CFG widened to 32
 words; `out2_enable` (OUT2 ≡ 0), RUN-only PI floor `u_floor` (W16),
 over-current trip `trip_level`/`trip_ticks`/`trip_timeout` (W17–19) +
 `trip_ack`, FSM states TRIP/TRIPPED, arm *edge* required to leave IDLE
 (so: set `servo_enable` first, then raise arm), setpoint slew limiter
 `slew_up`/`slew_down` (W15/W20).
-**Host config (step 4) does not yet write the new registers** — with the
-step-3 bitstream and the old host, `trip_level` = 0 trips on entering RUN
-and slew rates of 0 freeze the setpoint (both fail-safe), so do step 4
-before using a rebuilt bitstream (step 6). The
-legacy `model/coil_servo_model/fullarch.py` is kept only for the
-channels.toml test until step 4.
+Step 4: `host/config/channels.toml` holds the measurable physics (V_th,
+g_fs, op-amp gain, termination, burden, in-amp gain, rail); `config.py`
+builds the model `Channel` from it and DERIVES I_FS, the OUT1 clamp and the
+floor (overridable by measured counts), writes trip/slew/dither, refuses
+unsafe files (rail > 6 V MOT / 10 V shims, slew 0, OUT2/boost ≠ 0 …);
+`python -m coil_servo_host.config mot` prints the derived values. Tools wait
+for the arm edge (`Board.wait_for_run`). The full-architecture model is
+deleted (git history). **The board still runs the 2026-08-27 bitstream,
+whose register map differs** (16 CFG words: words 16–20 would alias onto
+0–4) — STS word 0 bits 31:24 now carry the register-map revision (3) and
+`Board` refuses CFG writes to any other revision, so rebuild first
+(step 6).
 Model findings (see the `model/tests/test_float_loop.py` docstring): raw
 setpoint steps undershoot going down and overshoot up to ~20 % on
 compliance-limited up-steps of ~55–95 A, so **the firmware enforces ramps

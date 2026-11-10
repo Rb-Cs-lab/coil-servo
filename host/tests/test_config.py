@@ -1,82 +1,139 @@
-"""channels.toml loader: unit conversions and consistency with the model.
-
-channels.toml still holds the full-architecture values until MVP rewrite
-step 4, so it is checked against the legacy channel table for now.
-"""
+"""channels.toml loader: physics consistency with the model, derived
+register values, unit conversions, and refusal of unsafe files."""
 
 import pytest
 
-from coil_servo_host.config import load_channel
-from coil_servo_model import FULLARCH_CHANNELS as CHANNELS
-from coil_servo_model import decode_gain
+from coil_servo_host.config import load_channel, summary
+from coil_servo_model import CHANNELS, decode_gain, slew_rate_code
+from coil_servo_model.analysis import suggest_gains
+from coil_servo_model.channels import VTH_INSTALLED
 from coil_servo_model.loop import T_S
 
 
 @pytest.mark.parametrize("name", ["mot", "z_shim", "x_shim", "y_shim"])
-def test_loads_and_converts(name):
+def test_loads_and_derives_from_the_model(name):
     ch = load_channel(name)
-    cfg = ch["cfg"]
-    model = CHANNELS[name]
+    cfg, m = ch["cfg"], ch["model"]
 
-    # scaling rule and clamp: 100% of rated = 6554 counts on every channel
-    assert ch["i_fs"] == pytest.approx(model.I_FS)
-    assert cfg["out_clamp"] == model.clamp_counts == 6554
+    # channels.toml physics == the model's (one source of numbers)
+    assert m == CHANNELS[name]
+    assert m.V_th == VTH_INSTALLED
+    assert ch["i_fs"] == pytest.approx(200.0)
+
+    # derived values: clamp asks for rated current, floor at 90 % of dead zone
+    assert cfg["out_clamp"] == m.clamp_counts
+    assert cfg["u_floor"] == round(0.9 * m.dead_zone * 8192)
+    assert 0 < cfg["u_floor"] < cfg["out_clamp"]
+
+    # protection
+    assert cfg["trip_level"] == round(m.I_rated / 200.0 * 8192)
+    assert cfg["slew_up"] == slew_rate_code(200e3, 200.0) == 1074
+    assert cfg["slew_down"] == slew_rate_code(50e3, 200.0) == 268
+
+    # MVP: nothing on OUT2 / boost; dither on
+    assert cfg["out2_enable"] == 0 and cfg["boost_mode"] == 0
+    assert cfg["dither_enable"] == 1
+
+    # gains are the commissioned ones rescaled by the plant gain
+    kp, ki_tick = suggest_gains(m)
+    assert decode_gain(cfg["kp_mant"], cfg["kp_shift"]) == pytest.approx(kp, rel=1e-3)
+    assert decode_gain(cfg["ki_mant"], cfg["ki_shift"]) == pytest.approx(ki_tick, rel=1e-3)
 
     # time conversions: 1 us = 125 ticks of 8 ns
     assert cfg["deadtime"] == 125
     assert cfg["settle"] == 12500
     assert cfg["flip_timeout"] == 2_500_000
 
-    # gain encoding round-trips to a few ppm
-    assert decode_gain(cfg["kp_mant"], cfg["kp_shift"]) == pytest.approx(0.5, rel=2**-16)
-    ki_tick = decode_gain(cfg["ki_mant"], cfg["ki_shift"])
-    assert ki_tick == pytest.approx(15080.0 * T_S, rel=2**-16)
-
     # enabling must never come from a config file
     assert "servo_enable" not in cfg
+    assert "G_pass" in summary(ch)
 
 
-def test_zero_window_counts():
+def test_mot_values():
     cfg = load_channel("mot")["cfg"]
-    assert cfg["zero_win"] == round(0.5 / 125.0 * 8192)   # 33 counts
+    assert cfg["out_clamp"] == 4474
+    assert cfg["u_floor"] == 3234
+    assert cfg["trip_level"] == 4096               # 100 A
+    assert cfg["trip_timeout"] == 375_000          # 3 ms
+    assert cfg["zero_win"] == round(0.5 / 200.0 * 8192)   # 20 counts
 
 
 BASE_TOML = """
-[test]
+[{name}]
 board_host = "x.local"
 I_rated = {i_rated}
-I_FS = {i_fs}
-kp = 0.5
-ki = 15080.0
+V_rail = {v_rail}
+G_inamp = {g_inamp}
+floor_frac = 0.9
+kp = 0.1044
+ki = 3149.0
 deadband_counts = 8
+dither_enable = 1
+trip_amps = {trip}
+trip_ticks = 4
+trip_timeout_us = 3000.0
+slew_up_amps_per_ms = {slew_up}
+slew_down_amps_per_ms = 50.0
 zero_win_amps = {zero_win}
 zero_holdoff_ticks = 16
 deadtime_us = 1.0
 settle_us = 100.0
 flip_timeout_us = {timeout}
 dio_invert = 0
+out2_enable = {out2}
 out2_invert = 0
-boost_mode = 1
+boost_mode = 0
+{extra}
 """
 
 
 def write_toml(tmp_path, **kw):
-    defaults = dict(i_rated=100.0, i_fs=125.0, zero_win=0.5, timeout=20000.0)
-    defaults.update(kw)
+    d = dict(name="mot", i_rated=100.0, v_rail=5.0, g_inamp=1.0, trip=100.0,
+             slew_up=200.0, zero_win=0.5, timeout=20000.0, out2=0, extra="")
+    d.update(kw)
     p = tmp_path / "channels.toml"
-    p.write_text(BASE_TOML.format(**defaults))
+    p.write_text(BASE_TOML.format(**d))
     return p
 
 
-def test_loader_rejects_unsafe_configs(tmp_path):
-    # a valid file loads
-    load_channel("test", path=write_toml(tmp_path))
-    # I_FS below rated: the 100%-of-rated clamp would not be representable
+def test_loader_accepts_a_valid_file(tmp_path):
+    ch = load_channel("mot", path=write_toml(tmp_path))
+    assert ch["cfg"]["out_clamp"] == CHANNELS["mot"].clamp_counts
+
+
+@pytest.mark.parametrize("kw", [
+    dict(v_rail=6.5),                          # MOT rail above 6 V
+    dict(i_rated=250.0),                       # rated beyond the sensor scale
+    dict(g_inamp=2.0, trip=120.0, i_rated=90.0),   # trip beyond I_FS = 100 A
+    dict(slew_up=0.0),                         # would freeze the setpoint
+    dict(zero_win=0.0),                        # a flip could never qualify
+    dict(timeout=0.0),                         # removes the TIMEOUT_HOLD net
+    dict(out2=1),                              # OUT2 is not fitted
+    dict(extra="u_floor_counts = 5000"),       # floor above the clamp
+    dict(extra="out_clamp_counts = 9000"),     # clamp outside the DAC range
+])
+def test_loader_rejects_unsafe_configs(tmp_path, kw):
     with pytest.raises(ValueError):
-        load_channel("test", path=write_toml(tmp_path, i_fs=80.0))
-    # zero window of zero: a flip could never qualify
+        load_channel("mot", path=write_toml(tmp_path, **kw))
+
+
+def test_shim_rail_limit_is_10_volts(tmp_path):
+    load_channel("z", path=write_toml(tmp_path, name="z", v_rail=9.0, i_rated=60.0, trip=60.0))
     with pytest.raises(ValueError):
-        load_channel("test", path=write_toml(tmp_path, zero_win=0.0))
-    # disabled flip timeout: removes the TIMEOUT_HOLD safety net
-    with pytest.raises(ValueError):
-        load_channel("test", path=write_toml(tmp_path, timeout=0.0))
+        load_channel("z", path=write_toml(tmp_path, name="z", v_rail=11.0,
+                                          i_rated=60.0, trip=60.0))
+
+
+def test_measured_overrides_win(tmp_path):
+    extra = "out_clamp_counts = 4300\nu_floor_counts = 3100\nV_th = [3.4, 3.4]"
+    ch = load_channel("mot", path=write_toml(tmp_path, extra=extra))
+    assert ch["cfg"]["out_clamp"] == 4300
+    assert ch["cfg"]["u_floor"] == 3100
+    assert ch["model"].V_th == (3.4, 3.4)
+
+
+def test_in_amp_gain_changes_the_scale(tmp_path):
+    ch = load_channel("mot", path=write_toml(tmp_path, g_inamp=2.0, trip=90.0,
+                                             i_rated=90.0))
+    assert ch["i_fs"] == pytest.approx(100.0)
+    assert ch["cfg"]["trip_level"] == round(90.0 / 100.0 * 8192)

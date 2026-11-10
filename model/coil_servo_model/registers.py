@@ -43,6 +43,10 @@ CFG_FIELDS = {
 }
 
 CFG_WORDS = 32      # CFG_DATA_WIDTH = 1024 bits
+# Register-map revision reported in STS word 0 bits 31:24. Bump it (here,
+# in coil_servo_top.v and in the server's mock) on any layout change. The
+# 2026-08-27 full-architecture bitstream reads 0.
+MAP_REV = 3
 STS_WORDS = 8       # STS_DATA_WIDTH = 256 bits
 
 STS_FIELDS = {
@@ -57,6 +61,7 @@ STS_FIELDS = {
     "timeout_hold":     (0, 11, 1, False),
     "u_floor":          (0, 12, 1, False),
     "tripped":          (0, 13, 1, False),
+    "map_rev":          (0, 24, 8, False),
     "i_meas":           (1, 0, 22, True),
     "sp_active":        (2, 0, 14, True),
     "u14":              (3, 0, 14, True),
@@ -98,6 +103,18 @@ def cfg_words(**fields) -> dict:
         w = CFG_FIELDS[name][0]
         words[w] = (packed >> (32 * w)) & 0xFFFF_FFFF
     return words
+
+
+def parse_cfg(cfg: int) -> dict:
+    """Decode a CFG block (int) into named field values (sign-extending the
+    signed ones) -- the inverse of pack_cfg, for readback checks."""
+    out = {}
+    for name, (w, lsb, width, signed) in CFG_FIELDS.items():
+        raw = (cfg >> (32 * w + lsb)) & ((1 << width) - 1)
+        if signed and raw & (1 << (width - 1)):
+            raw -= 1 << width
+        out[name] = raw
+    return out
 
 
 def parse_sts(sts: int) -> dict:

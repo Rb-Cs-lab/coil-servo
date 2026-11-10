@@ -2,16 +2,17 @@
 
     python -m coil_servo_host.check mot
 
-Verifies the register link, that the fabric is alive (heartbeat counter
-advancing), walks the LEDs, applies the channel configuration, and dumps
-the status flags.
+Prints what the configuration derives (sensor scale, pass-bank gain, dead
+zone, floor, clamp, trip, ramps), verifies the register link, that the
+fabric is alive (heartbeat counter advancing), walks the LEDs, applies the
+channel configuration, reads it back, and dumps the status flags.
 """
 
 import argparse
 import time
 
 from .board import Board
-from .config import load_channel
+from .config import load_channel, summary
 
 
 def main():
@@ -19,8 +20,15 @@ def main():
     p.add_argument("channel")
     args = p.parse_args()
     ch = load_channel(args.channel)
+    print(summary(ch))
+    print()
 
-    with Board(ch["host"], max_clamp=ch["cfg"]["out_clamp"]) as b:
+    try:
+        b = Board(ch["host"], max_clamp=ch["cfg"]["out_clamp"])
+    except ConnectionError as exc:
+        raise SystemExit(f"*** {exc}") from None
+
+    with b:
         s0 = b.sts()
         time.sleep(0.05)
         s1 = b.sts()
@@ -35,15 +43,27 @@ def main():
         print("LED walk done (watch the board)")
 
         b.apply_config(ch["cfg"])
-        s = b.sts()
+        rb = b.read_cfg()
+        bad = {k: (v, rb[k]) for k, v in ch["cfg"].items() if rb[k] != v}
+        if bad:
+            print(f"*** CFG readback mismatch (wrote, read): {bad} -- stale "
+                  f"bitstream? The register map changed in MVP rewrite "
+                  f"step 3; redeploy the current coil_servo.bit.bin ***")
+        else:
+            print("configuration written and read back OK")
+        print(f"OUT2 enable={rb['out2_enable']}  boost_mode={rb['boost_mode']}"
+              f"  boost_manual={rb['boost_manual']}  (all must be 0 in the MVP)"
+              f"  dither={rb['dither_enable']}")
+
+        s = b.warn_flags()
         print(f"state={s['fsm_state_name']} armed={s['armed']} "
-              f"fault={s['fault']} bridge_en={s['bridge_en']} "
-              f"polarity={s['polarity']}")
+              f"bridge_en={s['bridge_en']} polarity={s['polarity']} "
+              f"tripped={s['tripped']} u_floor={s['u_floor']} "
+              f"fault(DIO5, unwired)={s['fault']}")
         amps = s["i_meas"] / 128 * ch["i_fs"] / 8192
         print(f"measured current: {amps:+.3f} A "
-              f"(should be ~0 with the servo disabled)")
-        if s["fault"]:
-            print("*** interlock fault flag is SET ***")
+              f"(should be ~0 with the servo disabled; the offset is the "
+              f"IN1 calibration)")
 
 
 if __name__ == "__main__":

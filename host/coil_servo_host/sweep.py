@@ -4,9 +4,13 @@ FIRST RUNS: DUMMY RESISTIVE LOAD ONLY.
     python -m coil_servo_host.sweep mot -o tf.csv
 
 Setup: a lab function generator drives IN2 (the analog setpoint input,
-+/-1 V after the /10 divider -- keep the amplitude small and the offset
-positive so the drive stays on OUT1). The board is put in open-loop mode:
-the setpoint goes straight to the output stage through the hard clamp.
++/-1 V after the /10 divider). The board is put in open-loop mode: the IN2
+value goes straight to OUT1 (count for count) through the hard clamp. In
+the MVP OUT1 drives the pass bank, which conducts only above its dead zone
+(~0.44 V at OUT1, i.e. ~4.4 V at the generator before the /10): set the
+generator OFFSET above the dead zone at the operating point you want to
+measure, and keep the amplitude small and inside [dead zone, clamp]. |H|
+is then the plant gain G_pass/I_FS (~4.8 nominal), not 1.
 The capture FIFO records stimulus and response synchronously at 976.6 kS/s
 (16.8 ms per record), so amplitude and phase come from correlating the two
 captured channels -- no signal generator in the FPGA, no timing needed from
@@ -17,7 +21,8 @@ frequencies you care about (10 Hz .. ~100 kHz; a few seconds per point).
 Each time a clean new frequency is detected, a CSV row is appended and
 flushed: frequency in Hz, |H| (dimensionless: measured amps per commanded
 amp), phase in degrees, stimulus amplitude in amps. Ctrl-C ends the sweep.
-The board must be armed (DIO4).
+The servo is enabled first; raise arm (DIO4) when prompted (the FSM needs
+an arm EDGE after servo_enable).
 """
 
 import argparse
@@ -54,8 +59,8 @@ def main():
     with Board(ch["host"], max_clamp=ch["cfg"]["out_clamp"]) as b:
         b.apply_config(ch["cfg"])
         b.write_cfg(sp_source=0, open_loop=1, servo_enable=1)  # IN2 drives
-        if not b.warn_flags()["armed"]:
-            raise SystemExit("board is not armed (DIO4) -- nothing will drive")
+        b.warn_flags()
+        b.wait_for_run()
         print("open-loop mode; sweep the function generator now (Ctrl-C to stop)")
         try:
             while True:

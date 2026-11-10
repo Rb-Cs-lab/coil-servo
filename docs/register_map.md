@@ -68,7 +68,7 @@ from the stated width (`registers.parse_sts` does this).
 
 | Word | Name | Format | Meaning |
 |---|---|---|---|
-| 0 | `flags` | bits | b3:0 `fsm_state`; b4 `fault` (DIO5, read-only, no clear path); b5 `bridge_en`; b6 `polarity`; b7 `armed` (DIO4); b8 `out_sat` (hard clamp ±`out_clamp` engaged); b9 `int_railed`; b10 `sp_sign_mismatch`; b11 `timeout_hold`; b12 `u_floor` (PI output sits on its lower bound — in the MVP: OUT1 at the floor, current can only decay); b13 `tripped` (FSM in TRIP or TRIPPED) |
+| 0 | `flags` | bits | b3:0 `fsm_state`; b4 `fault` (DIO5, read-only, no clear path); b5 `bridge_en`; b6 `polarity`; b7 `armed` (DIO4); b8 `out_sat` (hard clamp ±`out_clamp` engaged); b9 `int_railed`; b10 `sp_sign_mismatch`; b11 `timeout_hold`; b12 `u_floor` (PI output sits on its lower bound — in the MVP: OUT1 at the floor, current can only decay); b13 `tripped` (FSM in TRIP or TRIPPED); b31:24 `map_rev` = **3**, the register-map revision (constant in the bitstream; the host refuses CFG writes to any other revision — the 2026-08-27 full-architecture bitstream reads 0, and its 16-word CFG block would alias words 16–20 onto words 0–4) |
 | 1 | `i_meas` | s22 Q2.20 | decimated measured current (board frame) |
 | 2 | `sp_active` | s14 | setpoint after mux and slew limiter (what the loop sees) |
 | 3 | `u14` | s14 | PI output after the hard clamp |

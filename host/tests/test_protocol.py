@@ -124,3 +124,58 @@ def test_out_of_range_refused(server):
             b.read_words(0x1000_0000, 1)
         with pytest.raises(IOError):
             b.read_words(0x4800_0000 - 4, 2)      # crosses the window end
+
+
+def test_new_mvp_fields_round_trip_through_read_cfg(server):
+    """Words 15-20 (slew, floor, trip) and the new ctrl bits land where the
+    register map says and come back through Board.read_cfg."""
+    from coil_servo_host.config import load_channel
+    cfg = load_channel("mot")["cfg"]
+    with Board("127.0.0.1", port=server) as b:
+        b.apply_config(cfg)
+        rb = b.read_cfg()
+    assert {k: rb[k] for k in cfg} == cfg
+    assert rb["servo_enable"] == 0
+
+
+def test_no_server_gives_a_deploy_hint():
+    import socket
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()                                   # nothing listening there
+    with pytest.raises(ConnectionError, match="coil_servo_host.deploy"):
+        Board("127.0.0.1", port=port, timeout=1.0)
+
+
+def test_wait_for_run_times_out_and_disables(server):
+    """Mock board never leaves IDLE: wait_for_run must give up and leave
+    servo_enable at 0, so a later arm edge cannot start the servo."""
+    with Board("127.0.0.1", port=server) as b:
+        b.write_cfg(servo_enable=1)
+        with pytest.raises(SystemExit):
+            b.wait_for_run(timeout=0.3)
+        assert b.read_cfg()["servo_enable"] == 0
+
+
+def test_refuses_writes_to_an_old_register_map(server):
+    """A bitstream reporting another map revision (the 2026-08-27 image
+    reads 0) must not receive CFG writes: its 16-word block would alias
+    words 16-20 onto ctrl/setpoint/gains."""
+    with Board("127.0.0.1", port=server) as b:
+        b.write_words(STS_BASE, [0])             # pretend: old bitstream
+    with Board("127.0.0.1", port=server) as b:
+        with pytest.raises(RuntimeError, match="register-map revision 0"):
+            b.write_cfg(servo_enable=1)
+        assert b.read_words(CFG_BASE, 1) == [0]
+    with Board("127.0.0.1", port=server, check_map=False) as b:
+        b.write_cfg(led=1)                       # explicit diagnostic opt-out
+
+
+def test_mock_server_map_rev_matches_the_register_map():
+    import importlib.util
+    from coil_servo_model.registers import MAP_REV
+    spec = importlib.util.spec_from_file_location("srv", SERVER)
+    srv = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(srv)
+    assert srv.MockMem.MAP_REV == MAP_REV

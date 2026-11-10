@@ -24,8 +24,9 @@ def main():
                 s = b.sts()
                 amps = s["i_meas"] / 128 * ch["i_fs"] / 8192
                 flags = " ".join(name for name in
-                                 ("fault", "out_sat", "sp_sign_mismatch",
-                                  "timeout_hold") if s[name])
+                                 ("tripped", "out_sat", "u_floor",
+                                  "sp_sign_mismatch", "timeout_hold",
+                                  "fault") if s[name])
                 print(f"\r{amps:+9.3f} A  {s['fsm_state_name']:<12s} "
                       f"armed={s['armed']} bridge={s['bridge_en']} "
                       f"pol={s['polarity']}  {flags:<30s}",

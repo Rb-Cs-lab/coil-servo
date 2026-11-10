@@ -56,8 +56,12 @@ class RealMem:
 class MockMem:
     """For protocol tests on a PC: a sparse word store instead of /dev/mem."""
 
+    # STS word 0 bits 31:24 report the register-map revision; mirror of
+    # coil_servo_model.registers.MAP_REV (host/tests check they agree)
+    MAP_REV = 3
+
     def __init__(self):
-        self.words = {}
+        self.words = {0x4100_0000: self.MAP_REV << 24}
 
     def read(self, addr, count, pop):
         out = bytearray()

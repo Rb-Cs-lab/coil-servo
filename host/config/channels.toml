@@ -1,85 +1,166 @@
-# Per-channel configuration for the four coil servo boards.
+# Per-channel configuration for the coil servo boards (MVP power stage,
+# docs/mvp_architecture.md).
 #
-# EVERY value marked PROVISIONAL is computed or assumed, not measured --
-# see "Open unknowns" in BOOTSTRAP.md. Update here (never in code) as real
-# measurements arrive. Physics values must stay consistent with
-# model/coil_servo_model/channels.py.
+# This file is the ONE place for measured and provisional numbers. The host
+# loader (host/coil_servo_host/config.py) builds the physics model from the
+# "physics" block (overriding model/coil_servo_model/channels.py) and DERIVES
+# the register values from it: the sensor scale I_FS, the OUT1 command
+# clamp, and the dead-zone floor. So when a bench measurement arrives
+# (thresholds, g_fs, termination, in-amp gain ...), change it here and the
+# registers follow. Print what the loader derives with:
 #
-# board_host: address of the board on the WIRED Ethernet lab network
-# (the rp-xxxxxx.local name from the sticker on the Ethernet jack, or a
-# static IP). The boards are never to be attached via WiFi -- latency and
-# dropouts.
+#     python -m coil_servo_host.config mot
+#
+# EVERY value marked PROVISIONAL is computed or assumed, not measured.
+#
+# board_host: address of the board on the WIRED Ethernet lab network (never
+# WiFi -- latency and dropouts).
 #
 # UNITS -- two different "ticks" appear here, don't mix them up:
-#   * zero_holdoff_ticks counts DECIMATED samples (1.024 us each);
-#   * deadtime_us / settle_us / flip_timeout_us are given in MICROSECONDS
-#     and converted to 8 ns fabric clock ticks by config.py.
-# deadband_counts is in raw DAC counts (1 count = I_FS/8192 amps, i.e.
-# ~15.3 mA on the MOT channel, ~9.2 mA on the shims) because it is a
-# handoff hysteresis at the digital output, not a physical current limit.
+#   * zero_holdoff_ticks / trip_ticks count DECIMATED samples (1.024 us);
+#   * *_us values are MICROSECONDS, converted to 8 ns fabric clock ticks.
+# deadband_counts is in raw DAC counts (an OUT1 turn-on hysteresis).
 
 [mot]
 board_host = "192.168.0.65"     # first board, fixed IP on the wired lab net
+
+# --- physics (overrides of model/coil_servo_model/channels.py) ---
 I_rated = 100.0                 # amps
-I_FS = 125.0                    # amps at +1.000 V on IN1 -- PROVISIONAL
-                                # (fixed by the burden resistor choice)
-kp = 0.5                        # normalized -- PROVISIONAL, from the model;
-ki = 15080.0                    # 1/s        -- retune from measured step
+V_rail = 5.0                    # SE-600-5 (refused above 6 V on the MOT)
+V_th = [3.52, 3.53, 3.52, 3.56, 3.50, 3.52]   # MEASURED 2026-11-02 (3 mA)
+g_fs = 50.0                     # A/V per FET in this regime -- PROVISIONAL
+gain_opamp = 7.98               # OPA994 stage, 1 + 6.98k/1k
+out1_terminated = true          # OUT1 into 50 ohm -- PROVISIONAL (check 3.2)
+R_burden = 10.0                 # ohm, LEM burden
+G_inamp = 1.0                   # AD8421 gain -- PROVISIONAL (1 -> I_FS 200 A)
+
+# --- derived-value overrides (uncomment once measured directly) ---
+# out_clamp_counts = 4474       # OUT1 command clamp (default: model, the
+#                               # command that asks for I_rated)
+# u_floor_counts = 3234         # RUN floor (default: floor_frac x dead zone)
+floor_frac = 0.9                # floor at 90 % of the dead zone (decided)
+
+# --- loop ---
+# The commissioned loopback gains (kp 0.5, ki 15080/s) rescaled by the
+# model's plant gain G_pass/I_FS ~ 4.79 -- PROVISIONAL: set them from the
+# measured step response.
+kp = 0.1044
+ki = 3149.0                     # 1/s
 deadband_counts = 8             # PROVISIONAL
-zero_win_amps = 0.5             # flip zero window -- PROVISIONAL
-zero_holdoff_ticks = 64         # decimated samples (~66 us of quiet;
-                                # matches design.md section 3)
+dither_enable = 1               # OUT1 sigma-delta dither (decided)
+
+# --- protection ---
+trip_amps = 100.0               # over-current trip (decided: supply rating);
+                                # hold setpoints a little below it (~98 A)
+trip_ticks = 4                  # consecutive ~1 us samples above the level
+trip_timeout_us = 3000.0        # bridge opens at the latest after this
+                                # (freewheel from 100 A takes ~1.3 ms)
+slew_up_amps_per_ms = 200.0     # setpoint ramp away from zero (decided)
+slew_down_amps_per_ms = 50.0    # setpoint ramp toward zero (decided)
+
+# --- flip / stop ---
+zero_win_amps = 0.5             # flip zero window -- PROVISIONAL (calibrate
+                                # the ~0.3 A IN1 offset first)
+zero_holdoff_ticks = 64         # decimated samples (~66 us of quiet)
 deadtime_us = 1.0               # PROVISIONAL
 settle_us = 100.0               # chamber eddy PLACEHOLDER -- unmeasured
 flip_timeout_us = 20000.0       # 20 ms then TIMEOUT_HOLD
 dio_invert = 0                  # b0 flip, b1 arm, b2 fault
+
+# --- not fitted in the MVP: must stay 0 ---
+out2_enable = 0
 out2_invert = 0
-boost_mode = 1                  # 1 = auto (FSM-driven)
+boost_mode = 0
+
+# The shim rows are PLACEHOLDERS: their power stages are not built (shim
+# supply not chosen, rail <= 10 V). They reuse the MOT stage parts.
 
 [z_shim]
 board_host = "rp-zshim.local"   # PLACEHOLDER
 I_rated = 60.0
-I_FS = 75.0                     # PROVISIONAL
-kp = 0.5                        # PROVISIONAL
-ki = 15080.0                    # PROVISIONAL
+V_rail = 5.0                    # PLACEHOLDER
+V_th = [3.52, 3.53, 3.52, 3.56, 3.50, 3.52]   # PLACEHOLDER (MOT parts)
+g_fs = 50.0
+gain_opamp = 7.98
+out1_terminated = true
+R_burden = 10.0
+G_inamp = 1.0
+floor_frac = 0.9
+kp = 0.1044
+ki = 3149.0
 deadband_counts = 8
+dither_enable = 1
+trip_amps = 60.0
+trip_ticks = 4
+trip_timeout_us = 3000.0
+slew_up_amps_per_ms = 200.0
+slew_down_amps_per_ms = 50.0
 zero_win_amps = 0.3
 zero_holdoff_ticks = 16
 deadtime_us = 1.0
 settle_us = 100.0
 flip_timeout_us = 20000.0
 dio_invert = 0
+out2_enable = 0
 out2_invert = 0
-boost_mode = 1
+boost_mode = 0
 
 [x_shim]
 board_host = "rp-xshim.local"   # PLACEHOLDER
 I_rated = 60.0
-I_FS = 75.0                     # PROVISIONAL
-kp = 0.5                        # PROVISIONAL
-ki = 15080.0                    # PROVISIONAL
+V_rail = 5.0                    # PLACEHOLDER
+V_th = [3.52, 3.53, 3.52, 3.56, 3.50, 3.52]   # PLACEHOLDER (MOT parts)
+g_fs = 50.0
+gain_opamp = 7.98
+out1_terminated = true
+R_burden = 10.0
+G_inamp = 1.0
+floor_frac = 0.9
+kp = 0.1044
+ki = 3149.0
 deadband_counts = 8
+dither_enable = 1
+trip_amps = 60.0
+trip_ticks = 4
+trip_timeout_us = 5000.0        # X/Y freewheel from 60 A ~2.7 ms
+slew_up_amps_per_ms = 200.0
+slew_down_amps_per_ms = 50.0
 zero_win_amps = 0.3
 zero_holdoff_ticks = 16
 deadtime_us = 1.0
 settle_us = 100.0
 flip_timeout_us = 20000.0
 dio_invert = 0
+out2_enable = 0
 out2_invert = 0
-boost_mode = 1
+boost_mode = 0
 
 [y_shim]
 board_host = "rp-yshim.local"   # PLACEHOLDER
 I_rated = 60.0
-I_FS = 75.0                     # PROVISIONAL
-kp = 0.5                        # PROVISIONAL
-ki = 15080.0                    # PROVISIONAL
+V_rail = 5.0                    # PLACEHOLDER
+V_th = [3.52, 3.53, 3.52, 3.56, 3.50, 3.52]   # PLACEHOLDER (MOT parts)
+g_fs = 50.0
+gain_opamp = 7.98
+out1_terminated = true
+R_burden = 10.0
+G_inamp = 1.0
+floor_frac = 0.9
+kp = 0.1044
+ki = 3149.0
 deadband_counts = 8
+dither_enable = 1
+trip_amps = 60.0
+trip_ticks = 4
+trip_timeout_us = 5000.0        # X/Y freewheel from 60 A ~2.7 ms
+slew_up_amps_per_ms = 200.0
+slew_down_amps_per_ms = 50.0
 zero_win_amps = 0.3
 zero_holdoff_ticks = 16
 deadtime_us = 1.0
 settle_us = 100.0
 flip_timeout_us = 20000.0
 dio_invert = 0
+out2_enable = 0
 out2_invert = 0
-boost_mode = 1
+boost_mode = 0

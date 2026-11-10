@@ -2,13 +2,20 @@
 
     python -m coil_servo_host.step mot --amps 5 --open-loop -o step.csv
 
---open-loop drives the output stage directly with the (clamped) setpoint --
-this is the measurement BOOTSTRAP wants the PI gains derived from. Without
-it, the closed-loop step response is captured instead. Either way the
-decimated capture (976.6 kS/s, 16.8 ms window) records both the error and
-the measured current; the CSV has time, measured amps, and setpoint amps.
+--open-loop drives OUT1 directly with a fixed command -- the measurement the
+PI gains are derived from. In the MVP the OUT1 command is NOT in amps: the
+pass bank has a dead zone and a gain G_pass, so --amps is converted to the
+OUT1 command the model predicts for that current (channels.toml physics;
+PROVISIONAL until G_pass and the dead zone are measured -- the captured
+current shows what really happened). Without --open-loop the closed-loop
+step response is captured; the firmware ramps the step at the configured
+slew rates (200 A/ms up on the MOT). Either way the decimated capture
+(976.6 kS/s, 16.8 ms window) records the error and the measured current;
+the CSV has time, measured amps, and setpoint amps (in open loop the
+"setpoint" column is the OUT1 command in sensor-scale amps, not a current).
 
-The board must be armed (DIO4) for anything to drive.
+The servo is enabled first; then raise arm (DIO4) when prompted -- the FSM
+needs an arm EDGE after servo_enable.
 """
 
 import argparse
@@ -39,14 +46,21 @@ def main():
             f"({ch['i_rated']} A); the fabric clamp would cap the drive at "
             f"rated anyway, so this is almost certainly a typo")
 
-    sp_counts = round(args.amps / ch["i_fs"] * 8192)
+    if args.open_loop:
+        if args.amps < 0:
+            raise SystemExit("--open-loop needs --amps >= 0: OUT2 is not "
+                             "fitted in the MVP, OUT1 only drives up")
+        sp_counts = round(ch["model"].out1_for_current(args.amps) * 8192)             if args.amps > 0 else 0
+        print(f"open loop: OUT1 command {sp_counts} counts (model estimate "
+              f"for {args.amps} A)")
+    else:
+        sp_counts = round(args.amps / ch["i_fs"] * 8192)
     with Board(ch["host"], max_clamp=ch["cfg"]["out_clamp"]) as b:
         b.apply_config(ch["cfg"])
         b.write_cfg(sp_source=1, setpoint=0,
                     open_loop=1 if args.open_loop else 0, servo_enable=1)
-        s = b.warn_flags()
-        if not s["armed"]:
-            raise SystemExit("board is not armed (DIO4) -- nothing will drive")
+        b.warn_flags()
+        b.wait_for_run()
         time.sleep(0.05)
 
         # restart the capture, then step the setpoint ~2 ms into the window
