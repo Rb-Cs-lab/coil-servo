@@ -30,6 +30,13 @@ is the MOT channel only.
 
 ## 1. Topology
 
+![MVP system schematic: SE-600-5 supply, H-bridge with body diodes and the two coils (LEM on the mid lead, varistor across each coil), low-side pass bank with ballast and TVS, OPA994 gate stage, LEM/burden/AD8421 sensing chain, safety logic board, isolated gate drivers, Red Pitaya and control computer](img/mvp_schematic.svg)
+
+*MVP system schematic (MOT channel), checked against the hardware
+2026-11-10. Thick lines: 100 A path; copper: bus bars; solid blue: analog
+signals; dashed blue: 3.3 V logic. Body diodes are drawn because they set
+the turn-off behaviour (3.3).*
+
 ### 1.1 High-current loop — the pass bank sits LOW-SIDE, after the bridge and coils
 
 ```
