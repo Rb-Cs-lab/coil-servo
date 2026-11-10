@@ -185,11 +185,21 @@ unchanged. No hardware change.
   down-step rule, section 3.3) — with a setpoint slew limiter in fabric
   (CFG words 15/20). The integration bench steps 0 → 70 → 20 A with no
   overshoot or undershoot.
-- *Actuator dither.* In the fixed-point simulation a steady hold dithers
+- *Actuator hunting.* In the fixed-point simulation a steady hold hunts
   between two adjacent OUT1 codes, ~0.12 A of coil current (~50 mA p-p
   after the gate lag). At 30 A that is as wide as the whole ±0.1 % band.
-  This is the resolution item above, now visible in simulation; the bench
-  measurement decides.
+  **✓ DECIDED (Santi, 2026-11-10): firmware dither.** The PI already
+  computes 7 bits finer than the DAC; a first-order sigma-delta
+  (`servo_dither.v`, CFG ctrl b20 `dither_enable`) toggles OUT1 by ±1
+  count every 8 ns clock so its average carries those bits, and the gate
+  RC (~0.6 µs) averages the toggle. In simulation the hunting disappears
+  and a 30 A hold sits within one ADC count (24 mA); the ADC is then the
+  resolution limit. Unverified on hardware: the DAC's linearity between
+  adjacent codes and the OPA994's response to a 122 µV toggle at tens of
+  MHz set the real benefit; the slowest dither pattern (one toggle per
+  ~1 µs) should leave ~1–2 mA of ripple after the gate RC. It does
+  nothing for **ground noise** — if the bench shows that dominates, the
+  gain + bias change (future_upgrades.md section 7) is the fix.
 
 Model parameters: `V_th` (per FET, measured), `g_fs` (datasheet,
 PROVISIONAL), `R2`, `N_fets`, `gain_opamp`, `out1_termination`; `G_pass`

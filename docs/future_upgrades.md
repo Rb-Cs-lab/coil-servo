@@ -210,6 +210,12 @@ shelved.
 
 ## 7. Finer pass-bank drive: lower op-amp gain plus a fixed gate bias (discussed 2026-11-10)
 
+*Update 2026-11-10:* the **resolution** half of this problem is now
+addressed in firmware by the OUT1 sigma-delta dither (mvp_architecture.md
+section 3.1, CFG `dither_enable`). This hardware change remains the fix if
+the bench shows **ground noise** (or DAC non-linearity defeating the
+dither) dominates the hold.
+
 **Why:** the MVP's OPA994 stage is non-inverting with gain ≈ 8 (R_f
 6.98 kΩ / R_g 1 kΩ), mapping OUT1 0…1 V to a 0…8 V gate command. But
 the pass bank only conducts between V_th ≈ 3.53 V (zero current) and

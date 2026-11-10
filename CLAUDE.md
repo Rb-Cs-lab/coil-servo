@@ -32,9 +32,12 @@ Model findings (see the `model/tests/test_float_loop.py` docstring): raw
 setpoint steps undershoot going down and overshoot up to ~20 % on
 compliance-limited up-steps of ~55–95 A, so **the firmware enforces ramps
 (decided 2026-11-10): ≤ 200 A/ms away from zero, ≤ 50 A/ms toward zero**
-(`servo_slew.v`, CFG words 15/20); the control computer may step. Fixed-point sims
-show the gain-8 actuator dithering one OUT1 count (~0.12 A): marginal
-against ±0.1 % at 30 A — the ⚠ REVIEW resolution item, bench-measure it.
+(`servo_slew.v`, CFG words 15/20); the control computer may step. Gain-8 resolution
+(one OUT1 count ≈ 0.12 A → ~50 mA hunting at a hold): **decided 2026-11-10,
+OUT1 sigma-delta dither in fabric** (`servo_dither.v`, ctrl b20
+`dither_enable`) — in simulation the hold then sits within one ADC count;
+real benefit (DAC linearity, op-amp at tens of MHz) is a bench measurement.
+Does not help ground noise (future_upgrades.md §7 would).
 Turn-off decision made (bridge stays closed, freewheel model by default).
 
 ## Board
