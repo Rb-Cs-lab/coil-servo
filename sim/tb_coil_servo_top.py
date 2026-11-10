@@ -24,8 +24,9 @@ A pin-level safety monitor runs under every test (MVP safety invariants):
 import cocotb
 from cocotb.triggers import ClockCycles, RisingEdge
 
-from coil_servo_model import (CHANNELS, Plant, adc_quantize, encode_gain,
-                              slew_rate_code)
+from coil_servo_host.config import load_channel
+from coil_servo_model import (BENCH_CHANNELS, CHANNELS, Plant, adc_quantize,
+                              encode_gain, slew_rate_code)
 from coil_servo_model.analysis import overshoot_frac, settling_time, suggest_gains
 from coil_servo_model.loop import T_S
 from coil_servo_model.registers import MAP_REV, parse_sts, pack_cfg
@@ -60,6 +61,18 @@ def run_cfg(**over):
     base = dict(servo_enable=1, sp_source=1, out_clamp=MOT.clamp_counts,
                 deadband=8, u_floor=FLOOR, **gains(), **FSM_CFG, **TRIP_CFG,
                 **SLEW_CFG)
+    base.update(over)
+    return pack_cfg(**base)
+
+
+# Low-current bench profile: the register values the host derives from
+# channels.toml [mot_bench], unchanged (docs/bench_supply_test.md).
+BENCH = BENCH_CHANNELS["mot_bench"]
+BENCH_REGS = load_channel("mot_bench")["cfg"]
+
+
+def bench_cfg(**over):
+    base = dict(BENCH_REGS, servo_enable=1, sp_source=1)
     base.update(over)
     return pack_cfg(**base)
 
@@ -134,32 +147,37 @@ async def arm(dut):
 class World:
     """MVP plant + frame conversion + one servo tick = 128 fast samples."""
 
-    def __init__(self, dut, sp_amps: float, cfg_extra=None, average=False):
+    def __init__(self, dut, sp_amps: float, cfg_extra=None, average=False,
+                 ch=MOT, cfg_fn=None):
         """average=True: apply the mean OUT1 over the tick's 128 clocks
         to the plant (what the gate RC sees with the dither on) instead of
-        one sample at the end of the tick."""
+        one sample at the end of the tick. ch / cfg_fn: the plant channel
+        and the CFG builder (default: the MOT with run_cfg)."""
         self.dut = dut
         self.average = average
-        self.plant = Plant(MOT)
+        self.ch = ch
+        self.cfg_fn = cfg_fn or run_cfg
+        self.plant = Plant(ch)
         self.sp_amps = sp_amps       # magnitude of the requested current
         self.cfg_extra = cfg_extra or {}
         self.t = 0.0
 
     async def tick(self):
         dut = self.dut
+        ch = self.ch
         pol = int(dut.bridge_polarity_o.value)
         sign = -1 if pol else 1
         # board frame: measured current and setpoint change sign with polarity
-        meas = adc_quantize(sign * self.plant.I / MOT.I_FS)
-        sp = adc_quantize(sign * self.sp_amps / MOT.I_FS)
+        meas = adc_quantize(sign * self.plant.I / ch.I_FS)
+        sp = adc_quantize(sign * self.sp_amps / ch.I_FS)
         dut.s_axis_tdata.value = pack_adc(meas, sp)
-        dut.cfg_data.value = run_cfg(setpoint=sp, **self.cfg_extra)
+        dut.cfg_data.value = self.cfg_fn(setpoint=sp, **self.cfg_extra)
         if self.average:
             tot = 0
             for _ in range(128):
                 await RisingEdge(dut.aclk)
                 o1, o2 = dacs(dut)
-                assert o2 == 0 and o1 <= MOT.clamp_counts
+                assert o2 == 0 and o1 <= ch.clamp_counts
                 tot += o1
             o1 = tot / 128
         else:
@@ -442,6 +460,57 @@ async def over_current_trip_through_the_pins(dut):
         await world.tick()
     assert sts(dut)["fsm_state_name"] == "RUN"
     assert abs(world.plant.I - 20.0) < 0.1, "did not resume after re-arm"
+
+
+@cocotb.test()
+async def bench_profile_holds_2a_and_trips_below_the_supply_limit(dut):
+    """The mot_bench register values (I_FS 20 A, 10x slew codes, small
+    gains, trip 2.8 A, zero window 0.1 A) against the MOT plant on a 3 A
+    current-limited supply: the loop holds 2 A within ~1 ADC count (dither
+    on, gate-averaged), then a 2.9 A setpoint trips the firmware before the
+    supply's limit is reached, the coil freewheels, the bridge opens inside
+    the zero window, and the FSM latches in TRIPPED."""
+    await setup(dut, bench_cfg(setpoint=0))
+    await arm(dut)
+    world = World(dut, sp_amps=2.0, ch=BENCH, cfg_fn=bench_cfg)
+
+    # from the 90 % floor a 2 A step takes ~2.2 ms (test_bench.py)
+    for _ in range(2400):
+        o1 = await world.tick()
+        assert BENCH_REGS["u_floor"] <= o1 <= BENCH.clamp_counts
+    world.average = True                         # gate-averaged dither
+    tail = []
+    for k in range(400):
+        await world.tick()
+        if k >= 200:
+            tail.append(world.plant.I)
+    assert abs(sum(tail) / len(tail) - 2.0) < BENCH.amps_per_lsb, \
+        f"hold at {sum(tail) / len(tail):.4f} A"
+    assert max(tail) - min(tail) < 2 * BENCH.amps_per_lsb, "hold ripple"
+    assert sts(dut)["fsm_state_name"] == "RUN"
+
+    trip_amps = BENCH_REGS["trip_level"] * BENCH.amps_per_lsb
+    world.average = False
+    world.sp_amps = 2.9
+    peak, i_at_open, tripped = 0.0, None, False
+    for _ in range(1000):
+        o1 = await world.tick()
+        peak = max(peak, world.plant.I)
+        s = sts(dut)
+        tripped = tripped or bool(s["tripped"])
+        if tripped:
+            assert o1 == 0, "DAC driving after the trip"
+        if i_at_open is None and tripped and not int(dut.bridge_enable_o.value):
+            i_at_open = world.plant.I
+        if s["fsm_state_name"] == "TRIPPED":
+            break
+    else:
+        raise AssertionError(f"never latched; state {sts(dut)['fsm_state_name']}")
+    assert trip_amps < peak < BENCH.I_supply_max - 0.05, \
+        f"peak {peak:.3f} A (trip {trip_amps:.3f} A, supply {BENCH.I_supply_max} A)"
+    zero_win_amps = BENCH_REGS["zero_win"] * BENCH.amps_per_lsb
+    assert i_at_open is not None and i_at_open < 2 * zero_win_amps, \
+        f"bridge opened at {i_at_open} A"
 
 
 @cocotb.test()
