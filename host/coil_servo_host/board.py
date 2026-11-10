@@ -12,8 +12,8 @@ import time
 
 import numpy as np
 
-from coil_servo_model.registers import (CFG_BASE, CFG_FIELDS, STS_BASE,
-                                        _encode, parse_sts)
+from coil_servo_model.registers import (CFG_BASE, CFG_FIELDS, CFG_WORDS,
+                                        STS_BASE, _encode, parse_sts)
 
 FIFO_ADDR = 0x4200_0000     # axi_hub stream port 2 (S00): reads pop the FIFO
 FIFO_DEPTH = 16384
@@ -31,13 +31,13 @@ class Board:
         self.sock = socket.create_connection((host, port), timeout=timeout)
         self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.max_clamp = max_clamp
-        # Local shadow of the full 512-bit CFG block, synced FROM THE
+        # Local shadow of the full CFG block, synced FROM THE
         # HARDWARE at connect: a fresh connection that guessed zeros would
         # clobber every field its first write_cfg didn't mention (this bit
         # us live: a new REPL's write_cfg(open_loop=1) cleared servo_enable
         # and gracefully stopped the servo mid-measurement).
         self._cfg = 0
-        for k, w in enumerate(self.read_words(CFG_BASE, 16)):
+        for k, w in enumerate(self.read_words(CFG_BASE, CFG_WORDS)):
             self._cfg |= w << (32 * k)
 
     def close(self):

@@ -18,6 +18,8 @@ CFG_FIELDS = {
     "led":            (0, 8, 8, False),
     "open_loop":      (0, 16, 1, False),
     "capture_sel":    (0, 17, 1, False),
+    "out2_enable":    (0, 18, 1, False),
+    "trip_ack":       (0, 19, 1, False),
     "setpoint":       (1, 0, 14, True),
     "kp_mant":        (2, 0, 18, True),
     "kp_shift":       (3, 0, 5, False),
@@ -31,7 +33,14 @@ CFG_FIELDS = {
     "settle":         (11, 0, 32, False),
     "flip_timeout":   (12, 0, 32, False),
     "dio_invert":     (13, 0, 3, False),
+    "u_floor":        (16, 0, 14, False),
+    "trip_level":     (17, 0, 14, False),
+    "trip_ticks":     (18, 0, 16, False),
+    "trip_timeout":   (19, 0, 32, False),
 }
+
+CFG_WORDS = 32      # CFG_DATA_WIDTH = 1024 bits
+STS_WORDS = 8       # STS_DATA_WIDTH = 256 bits
 
 STS_FIELDS = {
     "fsm_state":        (0, 0, 4, False),
@@ -43,6 +52,8 @@ STS_FIELDS = {
     "int_railed":       (0, 9, 1, False),
     "sp_sign_mismatch": (0, 10, 1, False),
     "timeout_hold":     (0, 11, 1, False),
+    "u_floor":          (0, 12, 1, False),
+    "tripped":          (0, 13, 1, False),
     "i_meas":           (1, 0, 22, True),
     "sp_active":        (2, 0, 14, True),
     "u14":              (3, 0, 14, True),
@@ -51,7 +62,7 @@ STS_FIELDS = {
 }
 
 FSM_STATES = ["IDLE", "RUN", "RAMP_DOWN", "DISABLE", "FLIP", "ENABLE",
-              "SETTLE", "TIMEOUT_HOLD"]
+              "SETTLE", "TIMEOUT_HOLD", "TRIP", "TRIPPED"]
 
 CFG_BASE = 0x4000_0000
 STS_BASE = 0x4100_0000
@@ -66,7 +77,7 @@ def _encode(value: int, width: int, signed: bool) -> int:
 
 
 def pack_cfg(**fields) -> int:
-    """Build the full CFG word (512-bit int) from named fields; unnamed
+    """Build the full CFG block (1024-bit int) from named fields; unnamed
     fields are zero. Used to drive cfg_data in simulation."""
     word = 0
     for name, value in fields.items():
@@ -95,5 +106,6 @@ def parse_sts(sts: int) -> dict:
         if signed and raw & (1 << (width - 1)):
             raw -= 1 << width
         out[name] = raw
-    out["fsm_state_name"] = FSM_STATES[out["fsm_state"] & 0x7]
+    st = out["fsm_state"]
+    out["fsm_state_name"] = FSM_STATES[st] if st < len(FSM_STATES) else f"?{st}"
     return out
