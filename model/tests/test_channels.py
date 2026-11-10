@@ -70,7 +70,7 @@ def test_freewheel_turnoff_times():
 
 def test_fullarch_scaling_rule():
     # legacy: I_FS = 1.25 * rated, clamp 6554 counts (still what channels.toml
-    # and the HDL benches use until MVP rewrite steps 3-4)
+    # uses until MVP rewrite step 4)
     for ch in FULLARCH_CHANNELS.values():
         assert ch.I_FS == pytest.approx(1.25 * ch.I_rated)
         assert ch.clamp_counts == 6554

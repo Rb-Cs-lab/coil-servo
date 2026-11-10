@@ -32,10 +32,13 @@ class FloatPI:
         self.ki_tick = ki_tick
         self.clamp = clamp
         self.floor = -clamp if floor is None else floor
+        self.integrator = max(0.0, self._i_lo)
+
+    @property
+    def _i_lo(self):
         # A non-negative floor also bounds the integrator, and clear() starts
         # it there (with floor > 0: OUT1 starts just below the dead zone).
-        self._i_lo = self.floor if self.floor >= 0.0 else -Q320_LIMIT
-        self.integrator = max(0.0, self._i_lo)
+        return self.floor if self.floor >= 0.0 else -Q320_LIMIT
 
     def clear(self):
         self.integrator = max(0.0, self._i_lo)
@@ -46,14 +49,14 @@ class FloatPI:
         p = _clip(self.kp * e, -Q320_LIMIT, Q320_LIMIT)          # sat #1
         i = self.integrator                                       # already sat #2
         u_raw = _clip(p + i, -Q320_LIMIT, Q320_LIMIT)             # sat #3
-        u = _clip(u_raw, self.floor, self.clamp)                  # sat #4
+        u = min(max(u_raw, self.floor), self.clamp)               # sat #4
 
         # Anti-windup: freeze on hold; skip accumulation while an output
         # bound is engaged and the error would push further into it.
         pushing = (u_raw > self.clamp and e > 0) or (u_raw < self.floor and e < 0)
-        if not hold and not pushing:
-            self.integrator = _clip(self.integrator + self.ki_tick * e,
-                                    self._i_lo, Q320_LIMIT)       # sat #2
+        if not hold:
+            integ = self.integrator if pushing else self.integrator + self.ki_tick * e
+            self.integrator = _clip(integ, self._i_lo, Q320_LIMIT)  # sat #2
         return u
 
 

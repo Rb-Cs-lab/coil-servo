@@ -2,11 +2,10 @@
 boost, per-FET source-sense pass bank, active clamp on OUT2.
 
 This is NOT the hardware being built -- see channels.py / plant.py for the
-MVP model (docs/mvp_architecture.md). It is kept only because the HDL still
-implements the full-architecture output stage (OUT2 clamp, boost) until MVP
-rewrite step 3, so the cocotb benches, the fixed-point closed-loop tests and
-the channels.toml consistency test (rewrite step 4) run against it. Delete
-it once those have moved to the MVP model.
+MVP model (docs/mvp_architecture.md). Since MVP rewrite step 3 the HDL
+benches and fixed-point tests run on the MVP plant; this file is kept only
+for the channels.toml consistency test (host/tests/test_config.py), which
+moves over in rewrite step 4. Delete it then.
 """
 
 import math

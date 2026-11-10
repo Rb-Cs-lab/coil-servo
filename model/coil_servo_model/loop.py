@@ -67,7 +67,7 @@ def run_loop(channel, controller, deadband_counts: int,
             e15 = sp_code - meas_code            # s14 - s14 -> s15
             e22 = e15 << 7                        # constant over the tick
             u14 = controller.step(e22)
-            o1, o2 = output_mux_fixed(u14, deadband_counts)
+            o1, o2 = output_mux_fixed(u14, deadband_counts, out2_enable)
             u_norm, v1, v2 = u14 / 8192.0, o1 / 8192.0, o2 / 8192.0
             integ = (controller.acc >> controller.ki_shift) / (1 << 20)
         else:

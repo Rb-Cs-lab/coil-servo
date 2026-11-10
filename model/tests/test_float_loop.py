@@ -7,15 +7,21 @@ turn-down. Gains are analysis.suggest_gains, i.e. the commissioned values
 rescaled by the bank's plant gain -- real gains come from the measured step
 response.
 
-Two behaviours are DOCUMENTED here rather than required to meet spec,
-because fixing them is a design decision for rewrite step 3
+Behaviours DOCUMENTED here rather than required to meet spec
 (mvp_architecture.md 3.1):
   * from zero, the integrator must climb the dead zone before any current
-    flows (a 0 -> 10 A step starts ~2.7 ms late); an integrator floor just
-    below the dead zone restores the spec;
+    flows (a 0 -> 10 A step starts ~2.7 ms late); the RUN-only floor just
+    below the dead zone (decided 2026-11-10, register u_floor) restores the
+    spec;
   * a large down-STEP undershoots, because the integrator winds down while
     the coil freewheels slowly; a setpoint RAMP no faster than the freewheel
-    rate does not.
+    rate (<= ~50 A/ms) does not;
+  * a large up-STEP that is compliance-limited but stays below the clamp
+    (roughly 55-95 A on the MOT) overshoots by up to ~20 %: the integrator
+    winds up during the 5 V-limited rise, where no output bound is engaged.
+    A setpoint ramp at <= 200 A/ms does not. Both ramp limits are operating
+    rules for the control computer; the firmware remedy, if wanted, is the
+    setpoint slew limiter (CFG word 15, reserved).
 """
 
 from dataclasses import replace
@@ -98,8 +104,8 @@ def test_small_step_from_zero_is_dead_zone_delayed():
 
 @pytest.mark.parametrize("target", [10.0, 30.0, 100.0])
 def test_dead_zone_floor_restores_spec_from_zero(target):
-    # Candidate remedy for rewrite step 3: integrator (and output) floored at
-    # 90 % of the dead zone -- OUT1 then rests just below conduction.
+    # The decided remedy (CFG u_floor, RUN only): integrator and output
+    # floored at 90 % of the dead zone -- OUT1 rests just below conduction.
     floor = 0.9 * MOT.dead_zone
     res = run(MOT, lambda t: target, 3e-3, floor=floor)
     check_invariants(res, MOT, floor=floor)
@@ -184,3 +190,18 @@ def test_gains_are_the_commissioned_ones_rescaled_by_plant_gain():
     assert 3.0 < K < 8.0
     assert kp == pytest.approx(0.5 / K)
     assert ki_tick / T_S == pytest.approx(15080.0 / K, rel=1e-3)
+
+
+def test_large_up_step_overshoots_but_a_ramp_does_not():
+    # DOCUMENTED: 0 -> 70 A as a step overshoots ~20 %; the same move as a
+    # 200 A/ms ramp has no overshoot and still settles inside ~1 ms of the
+    # ramp's end.
+    floor = 0.9 * MOT.dead_zone
+    step = run(MOT, lambda t: 70.0, 3e-3, floor=floor)
+    assert overshoot_frac(step.I, 70.0) > 0.1
+
+    ramp = run(MOT, lambda t: min(70.0, 200e3 * t), 3e-3, floor=floor)
+    check_invariants(ramp, MOT, floor=floor)
+    assert overshoot_frac(ramp.I, 70.0) < 0.01
+    ts = settling_time(ramp.t, ramp.I, 70.0)
+    assert ts is not None and ts < 0.35e-3 + 1e-3

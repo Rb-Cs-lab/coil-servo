@@ -77,25 +77,50 @@ def decode_gain(mant: int, shift: int) -> float:
 
 
 class FixedPI:
-    """Integer PI, one step() per PI tick. Same structure/order as FloatPI."""
+    """Integer PI, one step() per PI tick. Same structure/order as FloatPI.
+
+    Output bounds: u14 = min(max(u_pre, floor), clamp) -- the clamp wins if
+    the two cross. floor_counts=None gives the full-architecture symmetric
+    bound (-clamp, OUT2 side); the MVP uses 0, or the RUN-only dead-zone
+    floor (register u_floor). `floor` may be changed between steps, as the
+    HDL does when the FSM enters or leaves RUN.
+
+    A non-negative floor also bounds the integrator: after every non-held
+    tick acc >= floor << (7 + ki_shift), so the integral term alone holds
+    the output at the floor. If that shift would not fit s48 (ki_shift > 26
+    with a large floor) the integrator bound falls back to 0 -- the output
+    floor still applies. servo_pi.v implements exactly this.
+    """
+
+    ACC_MAX = (1 << 47) - 1
 
     def __init__(self, kp_mant: int, kp_shift: int, ki_mant: int,
-                 ki_shift: int, clamp_counts: int):
+                 ki_shift: int, clamp_counts: int,
+                 floor_counts: int | None = None):
         self.kp_mant = kp_mant
         self.kp_shift = kp_shift
         self.ki_mant = ki_mant
         self.ki_shift = ki_shift
         self.clamp = clamp_counts
+        self.floor = -clamp_counts if floor_counts is None else floor_counts
         self.acc = 0                   # s48 integrator accumulator
         # Introspection for cocotb comparison (set by step()):
-        self.p = self.i = self.u24 = self.u14 = 0
+        self.p = self.i = self.u24 = self.u14 = self.u_pre = 0
+        self.out_sat = self.at_floor = False
+
+    def acc_floor(self) -> int:
+        """Integrator lower bound for the current floor (see class doc)."""
+        if self.floor < 0:
+            return -(1 << 47)          # no bound beyond s48 saturation
+        w = self.floor << (7 + self.ki_shift)
+        return w if w <= self.ACC_MAX else 0
 
     def clear(self):
         self.acc = 0
 
     def step(self, e22: int, hold: bool = False) -> int:
         """e22 = decimated drive-frame error, s22 Q2.20. Returns u14, the
-        clamped output in DAC counts (s14 Q1.13)."""
+        bounded output in DAC counts (s14 Q1.13)."""
         assert -(1 << 21) <= e22 < (1 << 21), "error exceeds s22"
 
         self.p = sat((e22 * self.kp_mant) >> self.kp_shift, 24)   # sat #1
@@ -103,23 +128,30 @@ class FixedPI:
         self.u24 = sat(self.p + self.i, 24)                        # sat #3
 
         # Q3.20 -> Q1.13: round to nearest on the 7 dropped bits, then the
-        # hard output clamp (sat #4/#5; design.md Node E).
-        u14_pre = (self.u24 + 64) >> 7
-        self.u14 = max(-self.clamp, min(self.clamp, u14_pre))
-        engaged = self.u14 != u14_pre
+        # output bounds (sat #4/#5; design.md Node E).
+        u_pre = (self.u24 + 64) >> 7
+        self.u_pre = u_pre
+        self.u14 = min(max(u_pre, self.floor), self.clamp)
+        self.out_sat = u_pre > self.clamp or u_pre < -self.clamp
+        self.at_floor = u_pre <= self.floor
 
-        if not hold and not (engaged and (e22 > 0) == (self.u24 > 0)):
-            self.acc = sat(self.acc + e22 * self.ki_mant, 48)      # sat #2
+        # anti-windup: don't integrate further into whichever bound is hit
+        skip = ((u_pre > self.clamp and e22 > 0) or
+                (u_pre < self.floor and e22 < 0))
+        if not hold:
+            acc = self.acc if skip else sat(self.acc + e22 * self.ki_mant, 48)
+            self.acc = max(acc, self.acc_floor())                  # sat #2
         return self.u14
 
 
-def output_mux_fixed(u14: int, deadband_counts: int):
+def output_mux_fixed(u14: int, deadband_counts: int, out2_enable: bool = True):
     """Node F in counts. Returns (out1, out2) DAC codes, both >= 0,
     never both nonzero. out2 saturates at 8191: -(-8192) does not fit s14
-    (unreachable through the PI clamp, but the mux is safe standalone)."""
+    (unreachable through the PI clamp, but the mux is safe standalone).
+    out2_enable False (MVP, CFG ctrl b18 = 0): OUT2 is always 0."""
     if u14 > deadband_counts:
         return u14, 0
-    if u14 < -deadband_counts:
+    if u14 < -deadband_counts and out2_enable:
         return 0, min(-u14, 8191)
     return 0, 0
 
