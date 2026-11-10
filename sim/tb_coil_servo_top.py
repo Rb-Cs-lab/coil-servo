@@ -1,6 +1,7 @@
 """Integration bench for coil_servo_top: the full signal path (error ->
-decimators -> PI -> mux -> DAC word, flip FSM on the pins) against the
-Python plant, configured through the real register map (registers.pack_cfg).
+decimators -> PI -> mux -> DAC word, flip FSM and over-current trip on the
+pins) against the MVP plant (model/coil_servo_model/plant.py), configured
+through the real register map (registers.pack_cfg).
 
 Unit benches already prove each core bit-exact; this bench checks the
 *integration*: system behavior through the exact Verilog that Vivado will
@@ -11,26 +12,38 @@ it converts the drive-frame plant current into board-frame ADC codes
 (measured current changes sign with bridge polarity), and flips its
 setpoint sign when the polarity output changes -- exactly what the real
 control system must do.
+
+A pin-level safety monitor runs under every test (MVP safety invariants):
+  * OUT2 is exactly 0 and DIO2 (boost) is low unless a test opts in;
+  * both DACs are exactly 0 whenever the bridge-enable pin is low;
+  * the polarity pin only changes after the bridge has been open for at
+    least the dead time, and the bridge stays open for at least the dead
+    time after it (the edge sits strictly inside the enable-low window).
 """
 
 import cocotb
 from cocotb.triggers import ClockCycles, RisingEdge
 
-from coil_servo_model import adc_quantize, encode_gain
-from coil_servo_model.analysis import settling_time, suggest_gains
-from coil_servo_model.fullarch import FULLARCH_CHANNELS
-from coil_servo_model.fullarch import FullArchPlant as Plant
+from coil_servo_model import CHANNELS, Plant, adc_quantize, encode_gain
+from coil_servo_model.analysis import overshoot_frac, settling_time, suggest_gains
 from coil_servo_model.loop import T_S
 from coil_servo_model.registers import parse_sts, pack_cfg
 from tb_util import reset, start_clock
 
-# The HDL still implements the full-architecture output stage until MVP
-# rewrite step 3, so the bench closes the loop around that plant for now.
-MOT = FULLARCH_CHANNELS["mot"]
+MOT = CHANNELS["mot"]
+FLOOR = round(0.9 * MOT.dead_zone * 8192)        # RUN-only floor, counts
+
+
+def counts(amps: float) -> int:
+    """Amps -> counts of I_FS (sensor scale), as host config.py does."""
+    return round(amps / MOT.I_FS * 8192)
+
 
 # flip/stop timing, small for sim speed (clock ticks @ 8 ns)
 FSM_CFG = dict(zero_win=41, zero_holdoff=3, deadtime=20, settle=400,
                flip_timeout=0)
+TRIP_CFG = dict(trip_level=counts(100.0), trip_ticks=4,
+                trip_timeout=375_000)            # 3 ms
 
 
 def gains():
@@ -42,7 +55,7 @@ def gains():
 
 def run_cfg(**over):
     base = dict(servo_enable=1, sp_source=1, out_clamp=MOT.clamp_counts,
-                deadband=8, **gains(), **FSM_CFG)
+                deadband=8, u_floor=FLOOR, **gains(), **FSM_CFG, **TRIP_CFG)
     base.update(over)
     return pack_cfg(**base)
 
@@ -55,19 +68,67 @@ def pack_adc(meas_code: int, in2_code: int) -> int:
     return ((in2_code & 0x3FFF) << 16) | (meas_code & 0x3FFF)
 
 
-async def setup(dut, cfg: int):
+def dacs(dut):
+    w = int(dut.m_axis_tdata.value)
+    o1, o2 = w & 0x3FFF, (w >> 16) & 0x3FFF
+    return o1 - 0x4000 * (o1 >> 13), o2 - 0x4000 * (o2 >> 13)
+
+
+async def safety_monitor(dut, allow):
+    """Runs every clock; `allow` is a dict a test may flip ('out2')."""
+    deadtime = FSM_CFG["deadtime"]
+    prev_pol = int(dut.bridge_polarity_o.value)
+    low_for = 10 ** 9           # clocks the bridge has been open
+    since_pol_change = 10 ** 9  # clocks since the last polarity edge
+    prev_ben = int(dut.bridge_enable_o.value)
+    while True:
+        await RisingEdge(dut.aclk)
+        ben = int(dut.bridge_enable_o.value)
+        pol = int(dut.bridge_polarity_o.value)
+        o1, o2 = dacs(dut)
+        if not allow["out2"]:
+            assert o2 == 0, f"OUT2 = {o2} with out2_enable = 0"
+        assert int(dut.boost_o.value) == 0, "DIO2 (boost) driven in the MVP"
+        if not ben:
+            assert (o1, o2) == (0, 0), "DAC driving with the bridge open"
+        if pol != prev_pol:
+            assert ben == 0, "POLARITY CHANGED WITH THE BRIDGE ENABLED"
+            assert low_for >= deadtime, \
+                f"polarity edge only {low_for} clocks after the bridge opened"
+            since_pol_change = 0
+            prev_pol = pol
+        if ben and not prev_ben:
+            assert since_pol_change >= deadtime, \
+                f"bridge re-closed {since_pol_change} clocks after a polarity edge"
+        low_for = 0 if ben else low_for + 1
+        since_pol_change += 1
+        prev_ben = ben
+
+
+async def setup(dut, cfg: int, arm_at_load: int = 0):
     cocotb.start_soon(start_clock(dut))
     dut.cfg_data.value = cfg
     dut.s_axis_tdata.value = 0
     dut.s_axis_tvalid.value = 1
     dut.flip_req_i.value = 0
-    dut.arm_i.value = 0
+    dut.arm_i.value = arm_at_load
     dut.fault_i.value = 0
     await reset(dut)
+    allow = {"out2": False}
+    cocotb.start_soon(safety_monitor(dut, allow))
+    return allow
+
+
+async def arm(dut):
+    """A fresh rising edge on DIO4."""
+    dut.arm_i.value = 0
+    await ClockCycles(dut.aclk, 5)
+    dut.arm_i.value = 1
+    await ClockCycles(dut.aclk, 10)
 
 
 class World:
-    """Plant + frame conversion + one servo tick = 128 fast samples."""
+    """MVP plant + frame conversion + one servo tick = 128 fast samples."""
 
     def __init__(self, dut, sp_amps: float, cfg_extra=None):
         self.dut = dut
@@ -76,11 +137,8 @@ class World:
         self.cfg_extra = cfg_extra or {}
         self.t = 0.0
 
-    async def tick(self, boost=None):
-        """boost=None: obey the DUT's boost_o pin (tests auto-boost)."""
+    async def tick(self):
         dut = self.dut
-        if boost is None:
-            boost = bool(int(dut.boost_o.value))
         pol = int(dut.bridge_polarity_o.value)
         sign = -1 if pol else 1
         # board frame: measured current and setpoint change sign with polarity
@@ -90,32 +148,25 @@ class World:
         dut.cfg_data.value = run_cfg(setpoint=sp, **self.cfg_extra)
         await ClockCycles(dut.aclk, 128)
 
-        # apply the DAC outputs to the plant for one tick
-        word = int(dut.m_axis_tdata.value)
-        o1 = word & 0x3FFF
-        o2 = (word >> 16) & 0x3FFF
-        o1 -= 0x4000 * (o1 >> 13)     # sign-extend s14
-        o2 -= 0x4000 * (o2 >> 13)
-        assert not (o1 != 0 and o2 != 0), "OUT1 and OUT2 both active"
-        if int(dut.bridge_enable_o.value):
-            self.plant.step(max(o1, 0) / 8192.0, max(o2, 0) / 8192.0,
-                            boost, T_S)
-        else:
-            assert (o1, o2) == (0, 0), "DAC driving with the bridge open"
-            self.plant.step(0.0, 0.0, False, T_S)
+        # apply the DAC output to the plant for one tick
+        o1, o2 = dacs(dut)
+        assert o2 == 0
+        self.plant.bridge_enabled = bool(int(dut.bridge_enable_o.value))
+        self.plant.step(max(o1, 0) / 8192.0, 0.0, False, T_S)
         self.t += T_S
-        return o1, o2
+        return o1
 
 
 @cocotb.test()
 async def reset_state_is_off(dut):
     await setup(dut, cfg=0)
-    assert int(dut.m_axis_tdata.value) & 0x3FFF3FFF == 0, "DACs not zero"
+    assert dacs(dut) == (0, 0), "DACs not zero"
     assert dut.bridge_enable_o.value == 0
     assert dut.bridge_polarity_o.value == 0
     assert dut.boost_o.value == 0
     s = sts(dut)
     assert s["fsm_state_name"] == "IDLE"
+    assert s["tripped"] == 0
     # heartbeat (DIV_LOG2=6 in sim) must toggle regardless of configuration
     v0 = int(dut.heartbeat_o.value)
     await ClockCycles(dut.aclk, 100)
@@ -123,50 +174,79 @@ async def reset_state_is_off(dut):
 
 
 @cocotb.test()
-async def closed_loop_step_settles(dut):
-    """Arm, command 50 A via the setpoint register, boost during the ramp:
-    settles to 0.1% in < 1 ms through the full HDL chain."""
+async def arm_level_high_at_load_does_not_drive(dut):
+    """Safety invariant 2 (MVP): fully configured and enabled, arm already
+    high at load -> nothing happens until the arm line is re-raised."""
+    await setup(dut, run_cfg(setpoint=counts(20.0)), arm_at_load=1)
+    await ClockCycles(dut.aclk, 2000)
+    assert sts(dut)["fsm_state_name"] == "IDLE"
+    assert dut.bridge_enable_o.value == 0 and dacs(dut) == (0, 0)
+    await arm(dut)
+    assert sts(dut)["fsm_state_name"] == "RUN"
+    assert dut.bridge_enable_o.value == 1
+
+
+@cocotb.test()
+async def floor_holds_out1_below_the_dead_zone_in_run_only(dut):
+    """Armed with a zero setpoint: OUT1 rests on u_floor (no current flows,
+    the plant's dead zone is above it) and STS reports u_floor. After a
+    graceful stop the outputs are exactly zero again."""
     await setup(dut, run_cfg(setpoint=0))
-    dut.arm_i.value = 1
-    await ClockCycles(dut.aclk, 10)
+    await arm(dut)
+    world = World(dut, sp_amps=0.0)
+    for _ in range(50):
+        o1 = await world.tick()
+    assert o1 == FLOOR, f"OUT1 {o1} != floor {FLOOR}"
+    assert world.plant.I == 0.0, "floor must sit below the dead zone"
+    s = sts(dut)
+    assert s["u_floor"] == 1 and s["u14"] == FLOOR
+
+    world.cfg_extra = dict(servo_enable=0)
+    for _ in range(50):
+        await world.tick()
+    assert sts(dut)["fsm_state_name"] == "IDLE"
+    assert dacs(dut) == (0, 0)
+
+
+@cocotb.test()
+async def closed_loop_step_settles(dut):
+    """Arm, command 50 A via the setpoint register: settles to 0.1 % in
+    < 1 ms through the full HDL chain, OUT1 only, no overshoot."""
+    await setup(dut, run_cfg(setpoint=0))
+    await arm(dut)
     assert sts(dut)["fsm_state_name"] == "RUN"
 
     world = World(dut, sp_amps=50.0)
     trace_t, trace_i = [], []
-    for k in range(1000):                       # 1.024 ms
-        await world.tick(boost=world.t < 0.3e-3)
+    for _ in range(1300):                       # 1.33 ms
+        o1 = await world.tick()
+        assert FLOOR <= o1 <= MOT.clamp_counts
         trace_t.append(world.t)
         trace_i.append(world.plant.I)
 
     ts = settling_time(trace_t, trace_i, 50.0)
     assert ts is not None and ts < 1e-3, f"settled in {ts}"
+    assert overshoot_frac(trace_i, 50.0) < 0.01
     s = sts(dut)
     assert s["fsm_state_name"] == "RUN"
     assert abs(s["i_meas"] - adc_quantize(50.0 / MOT.I_FS) * 128) <= 256, \
         "STS current readback disagrees with the plant"
-    assert s["u14"] > 0 and s["out_sat"] == 0
+    assert s["u14"] > FLOOR and s["out_sat"] == 0 and s["u_floor"] == 0
 
 
 @cocotb.test()
 async def flip_sequence_through_the_pins(dut):
     """Run at 30 A, request a flip on the DIO3 pin, and follow the whole
-    sequence via the external pins only. Asserts the current was inside the
-    zero window when the bridge opened and that the loop re-settles at the
-    flipped polarity."""
-    await setup(dut, run_cfg(setpoint=0, boost_mode=1))
-    dut.arm_i.value = 1
-    await ClockCycles(dut.aclk, 10)
+    sequence via the external pins only: the current freewheels down with
+    the bridge closed, the bridge opens only inside the zero window, and
+    the loop re-settles at the flipped polarity."""
+    await setup(dut, run_cfg(setpoint=0))
+    await arm(dut)
 
-    # boost follows the DUT's own boost_o pin: auto-boost must engage for
-    # the ramp and drop by ~87.5% of the setpoint
-    world = World(dut, sp_amps=30.0, cfg_extra=dict(boost_mode=1))
-    saw_boost = False
-    for _ in range(600):
+    world = World(dut, sp_amps=30.0)
+    for _ in range(1000):
         await world.tick()
-        saw_boost |= bool(int(dut.boost_o.value))
     assert abs(world.plant.I - 30.0) < 0.1, "did not reach 30 A before flip"
-    assert saw_boost, "auto-boost never engaged for the arming ramp"
-    assert int(dut.boost_o.value) == 0, "auto-boost stuck on at setpoint"
 
     # flip request on the pin (long enough to survive the 2FF synchronizer)
     dut.flip_req_i.value = 1
@@ -176,7 +256,7 @@ async def flip_sequence_through_the_pins(dut):
     saw_bridge_open = False
     i_at_open = None
     pol_before = int(dut.bridge_polarity_o.value)
-    for _ in range(2500):
+    for _ in range(3000):
         await world.tick()
         if not saw_bridge_open and int(dut.bridge_enable_o.value) == 0:
             saw_bridge_open = True
@@ -186,15 +266,13 @@ async def flip_sequence_through_the_pins(dut):
     else:
         raise AssertionError(f"flip never completed; state {sts(dut)['fsm_state_name']}")
 
-    assert i_at_open is not None
     zero_win_amps = FSM_CFG["zero_win"] * MOT.amps_per_lsb
     assert i_at_open < 2 * zero_win_amps, \
         f"bridge opened at {i_at_open:.2f} A (window {zero_win_amps:.2f} A)"
     assert int(dut.bridge_polarity_o.value) == 1 - pol_before
 
-    # loop must re-settle at the new polarity (drive-frame current -> 30 A),
-    # again with boost from the DUT's own auto-boost
-    for _ in range(1000):
+    # loop must re-settle at the new polarity (drive-frame current -> 30 A)
+    for _ in range(1300):
         await world.tick()
     assert abs(world.plant.I - 30.0) < 0.1, \
         f"did not re-settle after flip (I = {world.plant.I:.2f} A)"
@@ -204,29 +282,96 @@ async def flip_sequence_through_the_pins(dut):
 
 
 @cocotb.test()
+async def over_current_trip_through_the_pins(dut):
+    """Trip level 40 A, command 50 A: the DAC drops to zero within a few
+    ticks of crossing 40 A, the bridge stays closed while the coil
+    freewheels, opens inside the zero window, the FSM latches in TRIPPED,
+    and only trip_ack plus a fresh arm edge bring it back."""
+    trip = dict(trip_level=counts(40.0))
+    await setup(dut, run_cfg(setpoint=0, **trip))
+    await arm(dut)
+
+    world = World(dut, sp_amps=50.0, cfg_extra=trip)
+    peak = 0.0
+    crossed_at = tripped_at = opened_at = None
+    i_at_open = None
+    for k in range(3000):
+        o1 = await world.tick()
+        peak = max(peak, world.plant.I)
+        s = sts(dut)
+        if crossed_at is None and world.plant.I > 40.0:
+            crossed_at = k
+        if tripped_at is None and s["tripped"]:
+            tripped_at = k
+            assert s["fsm_state_name"] == "TRIP"
+        if tripped_at is not None:
+            assert o1 == 0, "DAC driving after the trip"
+        if opened_at is None and tripped_at is not None and \
+                not int(dut.bridge_enable_o.value):
+            opened_at = k
+            i_at_open = world.plant.I
+        if s["fsm_state_name"] == "TRIPPED":
+            break
+    else:
+        raise AssertionError(f"never latched; state {sts(dut)['fsm_state_name']}")
+
+    assert crossed_at is not None and tripped_at is not None
+    assert tripped_at - crossed_at <= TRIP_CFG["trip_ticks"] + 3, \
+        f"trip took {tripped_at - crossed_at} ticks"
+    assert peak < 45.0, f"current reached {peak:.1f} A"
+    assert opened_at - tripped_at > 100, "bridge opened before the freewheel"
+    zero_win_amps = FSM_CFG["zero_win"] * MOT.amps_per_lsb
+    assert i_at_open < 2 * zero_win_amps, f"bridge opened at {i_at_open:.2f} A"
+
+    # latched: enabled and armed, still nothing
+    for _ in range(50):
+        await world.tick()
+    assert sts(dut)["fsm_state_name"] == "TRIPPED"
+    assert dut.bridge_enable_o.value == 0
+
+    # host acknowledge -> IDLE; arm is still high, so no restart yet
+    world.cfg_extra = dict(trip, trip_ack=1)
+    await world.tick()
+    world.cfg_extra = dict(trip, trip_ack=0)
+    world.sp_amps = 20.0
+    for _ in range(20):
+        await world.tick()
+    assert sts(dut)["fsm_state_name"] == "IDLE"
+    assert dut.bridge_enable_o.value == 0
+
+    await arm(dut)
+    for _ in range(1200):
+        await world.tick()
+    assert sts(dut)["fsm_state_name"] == "RUN"
+    assert abs(world.plant.I - 20.0) < 0.1, "did not resume after re-arm"
+
+
+@cocotb.test()
 async def open_loop_drives_output_through_clamp(dut):
-    """open_loop=1: the setpoint register drives OUT1/OUT2 directly, still
-    clamped and still gated by the bridge."""
-    await setup(dut, run_cfg(open_loop=1, setpoint=3000))
-    dut.arm_i.value = 1
-    await ClockCycles(dut.aclk, 20)
+    """open_loop=1: the setpoint register drives the output stage directly,
+    still clamped and still gated by the bridge. MVP (out2_enable = 0): a
+    negative setpoint drives nothing; the legacy OUT2 branch still works
+    when explicitly enabled."""
+    allow = await setup(dut, run_cfg(open_loop=1, setpoint=3000))
+    await arm(dut)
+    await ClockCycles(dut.aclk, 10)
 
-    def outs():
-        w = int(dut.m_axis_tdata.value)
-        o1, o2 = w & 0x3FFF, (w >> 16) & 0x3FFF
-        return o1 - 0x4000 * (o1 >> 13), o2 - 0x4000 * (o2 >> 13)
-
-    assert outs() == (3000, 0)
+    assert dacs(dut) == (3000, 0)
     dut.cfg_data.value = run_cfg(open_loop=1, setpoint=-3000)
     await ClockCycles(dut.aclk, 10)
-    assert outs() == (0, 3000)
+    assert dacs(dut) == (0, 0), "OUT2 must stay at 0 with out2_enable = 0"
+    allow["out2"] = True
+    dut.cfg_data.value = run_cfg(open_loop=1, setpoint=-3000, out2_enable=1)
+    await ClockCycles(dut.aclk, 10)
+    assert dacs(dut) == (0, 3000)
     dut.cfg_data.value = run_cfg(open_loop=1, setpoint=8000)  # beyond clamp
     await ClockCycles(dut.aclk, 10)
-    assert outs() == (MOT.clamp_counts, 0), "open loop must respect the clamp"
+    assert dacs(dut) == (MOT.clamp_counts, 0), "open loop must respect the clamp"
+    allow["out2"] = False
     dut.arm_i.value = 0                    # back to IDLE: graceful stop path
     dut.cfg_data.value = run_cfg(open_loop=1, setpoint=3000, servo_enable=0)
     await ClockCycles(dut.aclk, 3000)      # ramp-to-zero + deadtime
-    assert outs() == (0, 0), "bridge open must silence open-loop drive too"
+    assert dacs(dut) == (0, 0), "bridge open must silence open-loop drive too"
 
 
 @cocotb.test()
@@ -234,7 +379,7 @@ async def capture_sel_streams_decimated_pairs(dut):
     """capture_sel=1: the monitor stream emits one {e[21:6], i[21:6]} word
     per PI tick instead of raw ADC samples."""
     await setup(dut, run_cfg(capture_sel=1, setpoint=2000))
-    dut.arm_i.value = 1
+    await arm(dut)
     meas = 500
     dut.s_axis_tdata.value = pack_adc(meas, 0)
     await ClockCycles(dut.aclk, 5)
@@ -256,8 +401,14 @@ async def capture_sel_streams_decimated_pairs(dut):
 
 @cocotb.test()
 async def dio_invert_flips_arm_sense(dut):
-    await setup(dut, run_cfg(dio_invert=0b010))   # invert the arm input
-    dut.arm_i.value = 0                           # physically low = armed now
+    """Inverted arm input: physically low = armed. Low at load is a level,
+    not an edge; a physical high-then-low arms."""
+    await setup(dut, run_cfg(dio_invert=0b010, setpoint=0), arm_at_load=0)
+    await ClockCycles(dut.aclk, 20)
+    assert sts(dut)["fsm_state_name"] == "IDLE"
+    assert sts(dut)["armed"] == 1
+    dut.arm_i.value = 1                           # physically high = disarmed
+    await ClockCycles(dut.aclk, 5)
+    dut.arm_i.value = 0                           # edge into armed
     await ClockCycles(dut.aclk, 10)
     assert sts(dut)["fsm_state_name"] == "RUN"
-    assert sts(dut)["armed"] == 1

@@ -26,6 +26,7 @@ module coil_servo_top #
   input  wire         s_axis_tvalid,
 
   // DAC stream out: [13:0] OUT1 = pass bank, [29:16] OUT2 = clamp
+  // (OUT2 unused in the MVP: held at 0 while CFG out2_enable = 0)
   output wire [31:0]  m_axis_tdata,
   output wire         m_axis_tvalid,
 
@@ -34,7 +35,7 @@ module coil_servo_top #
   output wire         m01_axis_tvalid,
 
   // registers (axi_hub port 0 / port 1)
-  input  wire [511:0] cfg_data,
+  input  wire [1023:0] cfg_data,
   output wire [159:0] sts_data,
 
   // E1 digital inputs (raw pins, conditioned here)
@@ -45,7 +46,7 @@ module coil_servo_top #
   // E1 digital outputs
   output wire         bridge_polarity_o,  // DIO0_P
   output wire         bridge_enable_o,    // DIO1_P (low = all FETs off)
-  output reg          boost_o,            // DIO2_P
+  output reg          boost_o,            // DIO2_P (unused in the MVP)
   output wire         heartbeat_o,        // DIO6_P
 
   output wire [7:0]   led_o,
@@ -70,6 +71,8 @@ module coil_servo_top #
                                               // bridge gating still apply)
   wire        capture_sel    = cfg_data[17];  // FIFO: 0 = raw ADC @125 MS/s,
                                               // 1 = decimated {e, i} pairs
+  wire        out2_enable    = cfg_data[18];  // 0 = OUT2 held at 0 (MVP)
+  wire        trip_ack       = cfg_data[19];  // TRIPPED -> IDLE
   wire signed [13:0] sp_reg       = cfg_data[45:32];    // W1
   wire signed [17:0] kp_mant      = cfg_data[81:64];    // W2
   wire        [4:0]  kp_shift     = cfg_data[100:96];   // W3
@@ -83,6 +86,10 @@ module coil_servo_top #
   wire        [31:0] settle       = cfg_data[383:352];  // W11
   wire        [31:0] flip_timeout = cfg_data[415:384];  // W12
   wire        [2:0]  dio_invert   = cfg_data[418:416];  // W13
+  wire        [13:0] u_floor      = cfg_data[525:512];  // W16
+  wire        [13:0] trip_level   = cfg_data[557:544];  // W17
+  wire        [15:0] trip_ticks   = cfg_data[591:576];  // W18
+  wire        [31:0] trip_timeout = cfg_data[639:608];  // W19
 
   assign fifo_resetn = aresetn & ~fifo_rst;
 
@@ -158,21 +165,24 @@ module coil_servo_top #
   // ------------------------------------------------------------------
   // Flip FSM
   // ------------------------------------------------------------------
-  wire bridge_en, fsm_int_clear, int_hold;
+  wire bridge_en, fsm_int_clear, int_hold, out_kill, run_state;
   wire [3:0] fsm_state;
-  wire timeout_hold;
+  wire timeout_hold, tripped;
 
   servo_flip_fsm fsm_0 (
     .aclk(aclk), .aresetn(aresetn),
     .servo_enable(servo_enable), .armed(armed),
     .flip_req(flip_pulse), .flip_fault_ack(flip_fault_ack),
+    .trip_ack(trip_ack),
     .tick(tick_i), .i_meas(i_dec),
     .zero_win(zero_win), .zero_holdoff(zero_holdoff),
     .deadtime(deadtime), .settle(settle), .flip_timeout(flip_timeout),
+    .trip_level(trip_level), .trip_ticks(trip_ticks),
+    .trip_timeout(trip_timeout),
     .bridge_en(bridge_en), .polarity(polarity),
     .sp_force_zero(sp_force_zero), .int_clear(fsm_int_clear),
-    .int_hold(int_hold),
-    .fsm_state(fsm_state), .timeout_hold(timeout_hold)
+    .int_hold(int_hold), .out_kill(out_kill), .run_state(run_state),
+    .fsm_state(fsm_state), .timeout_hold(timeout_hold), .tripped(tripped)
   );
 
   assign bridge_polarity_o = polarity;
@@ -182,17 +192,28 @@ module coil_servo_top #
   // PI and output stage
   // ------------------------------------------------------------------
   wire signed [13:0] u14;
-  wire out_sat, int_railed;
+  wire out_sat, int_railed, at_floor;
   wire signed [47:0] acc_mon;
+
+  // PI lower bound (register map W16 and ctrl b18): full architecture ->
+  // symmetric -out_clamp (OUT2 side); MVP -> u_floor in RUN, 0 otherwise.
+  // u_floor >= 8192 saturates to 8191 (and then the clamp wins in servo_pi).
+  // Registered: CFG and FSM state change rarely against the 128-clock tick.
+  wire signed [13:0] u_floor_s = u_floor[13] ? 14'sd8191 : u_floor;
+  reg  signed [13:0] pi_floor;
+  always @(posedge aclk)
+    pi_floor <= !aresetn   ? 14'sd0 :
+                out2_enable ? -$signed(out_clamp) :
+                run_state   ? u_floor_s : 14'sd0;
 
   servo_pi pi_0 (
     .aclk(aclk), .aresetn(aresetn),
     .tick(tick_e), .e(e_dec),
     .kp_mant(kp_mant), .kp_shift(kp_shift),
     .ki_mant(ki_mant), .ki_shift(ki_shift),
-    .clamp(out_clamp),
+    .clamp(out_clamp), .floor(pi_floor),
     .int_hold(int_hold), .int_clear(fsm_int_clear | int_clear_host),
-    .u14(u14), .out_sat(out_sat), .acc_mon(acc_mon),
+    .u14(u14), .out_sat(out_sat), .at_floor(at_floor), .acc_mon(acc_mon),
     .int_railed(int_railed)
   );
 
@@ -216,8 +237,10 @@ module coil_servo_top #
 
   servo_output_mux mux_0 (
     .aclk(aclk), .aresetn(aresetn),
-    .enable(bridge_en),          // outputs live only with the bridge closed
+    // outputs live only with the bridge closed and no over-current trip
+    .enable(bridge_en & ~out_kill),
     .u14(u_drive), .deadband(deadband), .out2_invert(out2_invert),
+    .out2_enable(out2_enable),
     .out1(out1), .out2(out2)
   );
 
@@ -267,7 +290,9 @@ module coil_servo_top #
   assign sts_data[9]       = int_railed;
   assign sts_data[10]      = sp_sign_mismatch;
   assign sts_data[11]      = timeout_hold;
-  assign sts_data[31:12]   = 20'd0;
+  assign sts_data[12]      = at_floor;
+  assign sts_data[13]      = tripped;
+  assign sts_data[31:14]   = 18'd0;
   assign sts_data[53:32]   = i_dec;          // W1, s22 (host sign-extends)
   assign sts_data[63:54]   = 10'd0;
   assign sts_data[77:64]   = sp_active;      // W2, s14 (host sign-extends)

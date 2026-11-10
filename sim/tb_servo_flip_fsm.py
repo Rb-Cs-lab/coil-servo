@@ -3,8 +3,12 @@
 A concurrent invariant monitor runs under every test:
   * polarity never changes unless the bridge has been open for >= deadtime
   * bridge is never enabled in DISABLE/FLIP states
+  * in TRIP/TRIPPED the DAC outputs are killed, the bridge never re-closes,
+    and in TRIPPED it is open
+  * the bridge never closes without a preceding arm edge (IDLE -> RUN)
 Directed tests walk the full flip sequence, window qualification, timeout
-hold + acknowledge, graceful stop, and arm gating.
+hold + acknowledge, graceful stop, arm gating (edge, not level), and the
+over-current trip (persistence, freewheel-then-open, timeout, latch, ack).
 """
 
 import cocotb
@@ -18,23 +22,32 @@ HOLDOFF = 3
 DEADTIME = 20         # clocks
 SETTLE = 50           # clocks
 TIMEOUT = 300         # clocks
+TRIP_LEVEL = 4096     # counts; Q2.20 threshold = 4096 << 7 = 524288
+TRIP_TICKS = 3
+TRIP_TIMEOUT = 400    # clocks
 
-S_IDLE, S_RUN, S_RAMP, S_DIS, S_FLIP, S_EN, S_SETTLE, S_THOLD = range(8)
+(S_IDLE, S_RUN, S_RAMP, S_DIS, S_FLIP, S_EN, S_SETTLE, S_THOLD,
+ S_TRIP, S_TRIPPED) = range(10)
 
-I_BIG = 200000        # well outside the window
+I_BIG = 200000        # well outside the window, below the trip
 I_SMALL = 1000        # inside the window
+I_TRIP = 600000       # above the trip level
 
 
 def state(dut):
     return int(dut.fsm_state.value)
 
 
-async def setup(dut):
+async def setup(dut, armed_at_load=0, trip_timeout=TRIP_TIMEOUT):
     cocotb.start_soon(start_clock(dut))
     dut.servo_enable.value = 0
-    dut.armed.value = 0
+    dut.armed.value = armed_at_load
     dut.flip_req.value = 0
     dut.flip_fault_ack.value = 0
+    dut.trip_ack.value = 0
+    dut.trip_level.value = TRIP_LEVEL
+    dut.trip_ticks.value = TRIP_TICKS
+    dut.trip_timeout.value = trip_timeout
     dut.tick.value = 0
     dut.i_meas.value = 0
     dut.zero_win.value = ZERO_WIN
@@ -48,12 +61,29 @@ async def setup(dut):
 
 async def invariant_monitor(dut):
     prev_pol = int(dut.polarity.value)
+    prev_ben = int(dut.bridge_en.value)
+    prev_st = state(dut)
+    prev_arm = int(dut.armed.value)
+    arm_edge_seen = False
     bridge_low_for = 10 ** 9
     while True:
         await RisingEdge(dut.aclk)
         ben = int(dut.bridge_en.value)
         pol = int(dut.polarity.value)
         st = state(dut)
+        arm = int(dut.armed.value)
+        if st in (S_TRIP, S_TRIPPED):
+            assert int(dut.out_kill.value) == 1, "DACs not killed in a trip state"
+            assert not (ben and not prev_ben), "bridge re-closed during a trip"
+        if st == S_TRIPPED:
+            assert ben == 0, "bridge closed in TRIPPED"
+        if prev_st == S_IDLE and st == S_RUN:
+            assert arm_edge_seen, "left IDLE without an arm edge"
+        if st == S_IDLE and prev_st != S_IDLE:
+            arm_edge_seen = False        # a fresh edge is needed again
+        if arm and not prev_arm:
+            arm_edge_seen = True
+        prev_arm, prev_ben, prev_st = arm, ben, st
         if pol != prev_pol:
             assert ben == 0, "POLARITY CHANGED WITH BRIDGE ENABLED"
             assert bridge_low_for >= DEADTIME, \
@@ -219,6 +249,175 @@ async def arm_gating(dut):
     dut.flip_req.value = 0
     await idle(dut, 5)
     assert state(dut) == S_RUN, "flip while disarmed must be ignored"
+
+
+@cocotb.test()
+async def arm_level_high_at_load_is_not_an_edge(dut):
+    """Safety invariant 2 (MVP): arm already high when the bitstream loads
+    must not close the bridge; the control computer has to re-raise it."""
+    await setup(dut, armed_at_load=1)
+    dut.servo_enable.value = 1
+    await idle(dut, 20)
+    assert state(dut) == S_IDLE and dut.bridge_en.value == 0
+    dut.armed.value = 0
+    await idle(dut, 3)
+    dut.armed.value = 1
+    await wait_state(dut, S_RUN, 5, "fresh arm edge")
+
+
+@cocotb.test()
+async def arm_edge_before_enable_does_not_count(dut):
+    await setup(dut)
+    dut.armed.value = 1                  # edge while servo_enable = 0
+    await idle(dut, 5)
+    dut.servo_enable.value = 1
+    await idle(dut, 20)
+    assert state(dut) == S_IDLE and dut.bridge_en.value == 0
+
+
+@cocotb.test()
+async def rearm_needed_after_graceful_stop(dut):
+    await setup(dut)
+    await arm_and_run(dut)
+    dut.servo_enable.value = 0
+    await wait_state(dut, S_RAMP, 5)
+    for _ in range(HOLDOFF):
+        await dtick(dut, I_SMALL)
+    await wait_state(dut, S_IDLE, DEADTIME + 5)
+    dut.servo_enable.value = 1           # arm still high: no edge
+    await idle(dut, 20)
+    assert state(dut) == S_IDLE and dut.bridge_en.value == 0
+    dut.armed.value = 0
+    await idle(dut, 2)
+    dut.armed.value = 1
+    await wait_state(dut, S_RUN, 5, "re-arm")
+
+
+async def trip_from_run(dut):
+    """Arm, run, then over-current for TRIP_TICKS samples -> TRIP."""
+    await arm_and_run(dut)
+    for _ in range(TRIP_TICKS - 1):
+        await dtick(dut, I_TRIP)
+    assert state(dut) == S_RUN, "tripped before trip_ticks samples"
+    await dtick(dut, I_TRIP)
+    assert state(dut) == S_TRIP
+    assert dut.out_kill.value == 1
+    assert dut.bridge_en.value == 1, "bridge must stay closed: freewheel first"
+    assert dut.sp_force_zero.value == 1
+    assert dut.int_hold.value == 1
+
+
+@cocotb.test()
+async def trip_freewheels_then_opens_and_latches(dut):
+    await setup(dut)
+    pol = int(dut.polarity.value)
+    await trip_from_run(dut)
+
+    # current decaying but still above the window: bridge stays closed;
+    # servo_enable and flip requests are ignored while tripped
+    dut.servo_enable.value = 0
+    dut.flip_req.value = 1
+    await RisingEdge(dut.aclk)
+    dut.flip_req.value = 0
+    for _ in range(3):
+        await dtick(dut, I_BIG)
+    assert state(dut) == S_TRIP and dut.bridge_en.value == 1
+
+    for _ in range(HOLDOFF):
+        await dtick(dut, I_SMALL)
+    assert state(dut) == S_TRIPPED
+    assert dut.bridge_en.value == 0
+    assert int(dut.polarity.value) == pol, "a trip must never flip"
+
+    # latched: stays put until acknowledged, even with enable + arm
+    dut.servo_enable.value = 1
+    await idle(dut, 50)
+    assert state(dut) == S_TRIPPED
+    dut.trip_ack.value = 1
+    await wait_state(dut, S_IDLE, 5, "trip_ack")
+    dut.trip_ack.value = 0
+    await idle(dut, 20)
+    assert state(dut) == S_IDLE, "arm still high: needs a fresh edge"
+    assert dut.out_kill.value == 0
+    dut.armed.value = 0
+    await idle(dut, 2)
+    dut.armed.value = 1
+    await wait_state(dut, S_RUN, 5, "re-arm after trip")
+    assert dut.out_kill.value == 0 and dut.bridge_en.value == 1
+
+
+@cocotb.test()
+async def trip_needs_consecutive_samples(dut):
+    await setup(dut)
+    await arm_and_run(dut)
+    for _ in range(5):
+        for _ in range(TRIP_TICKS - 1):
+            await dtick(dut, I_TRIP)
+        await dtick(dut, I_BIG)          # one sample below resets the count
+    assert state(dut) == S_RUN
+    await dtick(dut, -I_TRIP)            # magnitude counts, either sign
+    await dtick(dut, -I_TRIP)
+    await dtick(dut, I_TRIP)
+    assert state(dut) == S_TRIP
+
+
+@cocotb.test()
+async def trip_timeout_opens_the_bridge_anyway(dut):
+    """Current that does not decay (e.g. a shorted pass FET): the bridge
+    opens after trip_timeout regardless."""
+    await setup(dut)
+    await trip_from_run(dut)
+    for _ in range(TRIP_TIMEOUT // 5 + 10):
+        await dtick(dut, I_TRIP)
+        if state(dut) == S_TRIPPED:
+            break
+    assert state(dut) == S_TRIPPED and dut.bridge_en.value == 0
+
+
+@cocotb.test()
+async def trip_timeout_zero_opens_at_once(dut):
+    """trip_timeout = 0: the bridge opens on the clock after the trip (the
+    coil energy then goes into the supply -- an explicit choice)."""
+    await setup(dut, trip_timeout=0)
+    await arm_and_run(dut)
+    for _ in range(TRIP_TICKS - 1):
+        await dtick(dut, I_TRIP)
+    dut.i_meas.value = I_TRIP
+    dut.tick.value = 1
+    await RisingEdge(dut.aclk)
+    dut.tick.value = 0
+    await RisingEdge(dut.aclk)
+    assert state(dut) == S_TRIP and dut.out_kill.value == 1
+    await RisingEdge(dut.aclk)
+    await RisingEdge(dut.aclk)
+    assert state(dut) == S_TRIPPED and dut.bridge_en.value == 0
+
+
+@cocotb.test()
+async def trip_during_a_flip_never_flips(dut):
+    await setup(dut)
+    await arm_and_run(dut)
+    pol = int(dut.polarity.value)
+    dut.flip_req.value = 1
+    await RisingEdge(dut.aclk)
+    dut.flip_req.value = 0
+    await wait_state(dut, S_RAMP, 5)
+    for _ in range(TRIP_TICKS):
+        await dtick(dut, I_TRIP)
+    assert state(dut) == S_TRIP
+    for _ in range(HOLDOFF):
+        await dtick(dut, I_SMALL)
+    await idle(dut, 3 * DEADTIME)
+    assert state(dut) == S_TRIPPED
+    assert int(dut.polarity.value) == pol
+
+
+@cocotb.test()
+async def no_trip_in_idle(dut):
+    await setup(dut)
+    for _ in range(2 * TRIP_TICKS):
+        await dtick(dut, I_TRIP)
+    assert state(dut) == S_IDLE
 
 
 @cocotb.test()

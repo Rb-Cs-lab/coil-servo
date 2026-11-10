@@ -12,8 +12,13 @@
 // is 128 clocks (decimation ratio), so timing is easy and a tick can never
 // arrive while the previous one is still in flight.
 //
-// clamp must be <= 8191 (Q1.13 positive range); the register map's
-// out_clamp is 6554 counts = 100% of rated current.
+// Output bounds: u14 = min(max(u_pre, floor), clamp) -- the clamp wins if
+// the two cross. floor is signed: -clamp reproduces the full-architecture
+// symmetric bound (OUT2 side); the MVP uses 0, or the RUN-only dead-zone
+// floor (CFG u_floor). A non-negative floor also bounds the integrator:
+// acc >= floor << (7 + ki_shift) after every non-held tick, so the
+// integral term alone holds the output on the floor (falls back to 0 if
+// that shift does not fit s48). clamp must be <= 8191.
 
 module servo_pi
 (
@@ -28,12 +33,14 @@ module servo_pi
   input  wire signed [17:0] ki_mant,
   input  wire        [5:0]  ki_shift,
   input  wire        [13:0] clamp,      // hard output clamp, counts
+  input  wire signed [13:0] floor,      // lower output bound, counts
 
   input  wire               int_hold,   // freeze accumulator (safety core)
   input  wire               int_clear,  // zero accumulator (FSM / host)
 
   output reg  signed [13:0] u14,        // clamped output, DAC counts
   output reg                out_sat,    // clamp engaged on the last tick
+  output reg                at_floor,   // output on its lower bound (STS)
   output wire signed [47:0] acc_mon,    // integrator state (STS/debug)
   output wire               int_railed  // accumulator at its s48 rails (STS)
 );
@@ -71,9 +78,24 @@ module servo_pi
   wire signed [17:0] u14_pre  = u_round >>> 7;
   wire signed [17:0] clamp_s  = {4'b0000, clamp};
   wire signed [13:0] clamp_pos = clamp[13:0];
+  wire signed [17:0] floor_s  = floor;
+  // the clamp wins over a floor configured above it
+  wire signed [13:0] floor_eff = (floor_s > clamp_s) ? clamp_pos : floor;
   wire engaged = (u14_pre > clamp_s) || (u14_pre < -clamp_s);
-  // anti-windup mechanism 1: don't integrate further into the clamp
-  wire windup_skip = engaged && ((e_r > 0) == (u24 > 0));
+  // anti-windup mechanism 1: don't integrate further into either bound
+  wire windup_skip = ((u14_pre > clamp_s) && (e_r > 0)) ||
+                     ((u14_pre < floor_s) && (e_r < 0));
+
+  // Integrator lower bound for a non-negative floor, registered (CFG and
+  // FSM state change rarely; the tick period is 128 clocks).
+  wire [6:0]  lo_shift = 7'd7 + {1'b0, ki_shift};
+  wire [83:0] lo_wide  = {70'd0, floor} << lo_shift;
+  reg signed [47:0] acc_lo;
+  always @(posedge aclk)
+    acc_lo <= floor[13] ? 48'sh800000000000 :
+              (lo_wide > 84'h7fffffffffff) ? 48'sd0 : lo_wide[47:0];
+
+  wire signed [47:0] acc_upd = windup_skip ? acc : sat48(acc_next);
 
   always @(posedge aclk) begin
     if (!aresetn) begin
@@ -81,6 +103,7 @@ module servo_pi
       acc <= 48'sd0;
       u14 <= 14'sd0;          // reset state is OFF (safety invariant 2)
       out_sat <= 1'b0;
+      at_floor <= 1'b0;
       e_r <= 22'sd0;
       p_full <= 40'sd0;
       ki_prod <= 40'sd0;
@@ -110,10 +133,11 @@ module servo_pi
         end
         S_OUT: begin
           u14 <= (u14_pre > clamp_s)  ? clamp_pos :
-                 (u14_pre < -clamp_s) ? -clamp_pos : u14_pre[13:0];
+                 (u14_pre < floor_s)  ? floor_eff : u14_pre[13:0];
           out_sat <= engaged;
-          if (!int_hold && !int_clear && !windup_skip)
-            acc <= sat48(acc_next);
+          at_floor <= (u14_pre <= floor_s);
+          if (!int_hold && !int_clear)
+            acc <= (acc_upd < acc_lo) ? acc_lo : acc_upd;
           state <= S_IDLE;
         end
         default: state <= S_IDLE;

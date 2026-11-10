@@ -7,7 +7,8 @@
 // model/coil_servo_model/fixed_point.py::output_mux_fixed.
 //
 // enable low (servo disabled, FSM in IDLE, or reset) forces both outputs
-// to exactly zero -- safety invariants 2 and 3.
+// to exactly zero -- safety invariants 2 and 3. out2_enable low (MVP: no
+// active clamp fitted) holds OUT2 at exactly zero whatever u14 is.
 
 module servo_output_mux
 (
@@ -18,10 +19,18 @@ module servo_output_mux
   input  wire signed [13:0] u14,          // clamped PI output
   input  wire        [13:0] deadband,     // handoff deadband, counts
   input  wire               out2_invert,  // flip OUT2 analog polarity
+  input  wire               out2_enable,  // 0 = OUT2 always zero (MVP)
 
-  output reg  signed [13:0] out1,         // pass bank command, >= 0
-  output reg  signed [13:0] out2          // clamp command
+  output wire signed [13:0] out1,         // pass bank command, >= 0
+  output wire signed [13:0] out2          // clamp command
 );
+
+  // The registered mux below is additionally gated by enable
+  // combinationally, so both outputs are zero on the very clock enable
+  // drops (bridge opening / trip) -- not one clock later.
+  reg signed [13:0] out1_r, out2_r;
+  assign out1 = enable ? out1_r : 14'sd0;
+  assign out2 = enable ? out2_r : 14'sd0;
 
   wire signed [14:0] u15 = u14;
   wire signed [14:0] db  = {1'b0, deadband};
@@ -31,17 +40,17 @@ module servo_output_mux
 
   always @(posedge aclk) begin
     if (!aresetn || !enable) begin
-      out1 <= 14'sd0;
-      out2 <= 14'sd0;
+      out1_r <= 14'sd0;
+      out2_r <= 14'sd0;
     end else if (u15 > db) begin
-      out1 <= u14;
-      out2 <= 14'sd0;
-    end else if (u15 < -db) begin
-      out1 <= 14'sd0;
-      out2 <= out2_invert ? -mag : mag;
+      out1_r <= u14;
+      out2_r <= 14'sd0;
+    end else if (u15 < -db && out2_enable) begin
+      out1_r <= 14'sd0;
+      out2_r <= out2_invert ? -mag : mag;
     end else begin
-      out1 <= 14'sd0;
-      out2 <= 14'sd0;
+      out1_r <= 14'sd0;
+      out2_r <= 14'sd0;
     end
   end
 

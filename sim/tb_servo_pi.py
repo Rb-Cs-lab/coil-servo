@@ -4,8 +4,9 @@ The contract: servo_pi must be bit-exact against
 model/coil_servo_model/fixed_point.py::FixedPI -- output, saturation flag,
 and integrator state, every tick. On top of that, directed tests assert the
 BOOTSTRAP requirements: reset state off, no overflow at rail-to-rail input,
-anti-windup at the clamp, and the settling spec in a closed loop against the
-same plant model the float reference uses.
+anti-windup at the clamp AND at the lower bound (MVP: PI floored at 0 or at
+the RUN-only dead-zone floor), and the settling spec in a closed loop
+against the MVP plant the float reference uses.
 """
 
 import random
@@ -13,25 +14,24 @@ import random
 import cocotb
 from cocotb.triggers import RisingEdge
 
-from coil_servo_model import FixedPI, adc_quantize, encode_gain, output_mux_fixed
-from coil_servo_model.analysis import settling_time, suggest_gains
-from coil_servo_model.fullarch import FULLARCH_CHANNELS
-from coil_servo_model.fullarch import FullArchPlant as Plant
+from coil_servo_model import (CHANNELS, FixedPI, Plant, adc_quantize,
+                              encode_gain, output_mux_fixed)
+from coil_servo_model.analysis import overshoot_frac, settling_time, suggest_gains
 from coil_servo_model.loop import T_S
 from tb_util import reset, signed, start_clock
 
-# The HDL still implements the full-architecture output stage until MVP
-# rewrite step 3, so the bench closes the loop around that plant for now.
-MOT = FULLARCH_CHANNELS["mot"]
-CLAMP = MOT.clamp_counts        # 6554 = 100% of rated
+MOT = CHANNELS["mot"]
+CLAMP = MOT.clamp_counts                        # OUT1 command clamp
+FLOOR = round(0.9 * MOT.dead_zone * 8192)       # RUN-only dead-zone floor
 
 
-def apply_gains(dut, kp_m, kp_s, ki_m, ki_s, clamp=CLAMP):
+def apply_gains(dut, kp_m, kp_s, ki_m, ki_s, clamp=CLAMP, floor=0):
     dut.kp_mant.value = kp_m
     dut.kp_shift.value = kp_s
     dut.ki_mant.value = ki_m
     dut.ki_shift.value = ki_s
     dut.clamp.value = clamp
+    dut.floor.value = floor
 
 
 async def tick(dut, e, hold=False, clear=False):
@@ -66,27 +66,31 @@ async def reset_state_is_off(dut):
     assert signed(dut.u14) == 0
     assert signed(dut.acc_mon) == 0
     assert dut.out_sat.value == 0
+    assert dut.at_floor.value == 0
 
 
 @cocotb.test()
 async def bit_exact_against_model(dut):
-    """3 gain sets x 800 random ticks with random hold/clear events:
-    u14, out_sat, and the accumulator must match FixedPI exactly."""
+    """4 gain/floor sets x 800 random ticks with random hold/clear events
+    and the floor switching as the FSM enters/leaves RUN: u14, out_sat,
+    at_floor and the accumulator must match FixedPI exactly."""
     cocotb.start_soon(start_clock(dut))
     dut.tick.value = 0
     rng = random.Random(42)
 
+    # (gains, floor values the sequence switches between)
     gain_sets = [
-        suggested(),
-        (2**17 - 1, 0, 2**17 - 1, 0),        # most violent representable gains
-        (-1234, 3, 517, 20),                 # negative P, odd shifts
+        (suggested(), (0, FLOOR)),             # MVP: zero floor / RUN floor
+        ((2**17 - 1, 0, 2**17 - 1, 0), (-CLAMP, 0, FLOOR)),  # violent gains
+        ((-1234, 3, 517, 20), (-CLAMP, 0)),    # negative P, odd shifts
+        ((5000, 10, 3, 40), (FLOOR, 8000)),    # shift overflow; floor > clamp
     ]
-    for kp_m, kp_s, ki_m, ki_s in gain_sets:
-        apply_gains(dut, kp_m, kp_s, ki_m, ki_s)
+    for (kp_m, kp_s, ki_m, ki_s), floors in gain_sets:
+        apply_gains(dut, kp_m, kp_s, ki_m, ki_s, floor=floors[0])
         dut.int_hold.value = 0
         dut.int_clear.value = 0
         await reset(dut)
-        golden = FixedPI(kp_m, kp_s, ki_m, ki_s, CLAMP)
+        golden = FixedPI(kp_m, kp_s, ki_m, ki_s, CLAMP, floors[0])
 
         for n in range(800):
             r = rng.random()
@@ -100,6 +104,9 @@ async def bit_exact_against_model(dut):
                 e = rng.randint(-(2**21), 2**21 - 1)
             hold = rng.random() < 0.05
             clear = rng.random() < 0.02
+            if rng.random() < 0.03:
+                golden.floor = rng.choice(floors)
+                dut.floor.value = golden.floor
 
             # HDL semantics: while int_clear is asserted the accumulator is
             # pinned at zero (clear wins over accumulate). Mirror that as
@@ -111,10 +118,13 @@ async def bit_exact_against_model(dut):
 
             assert got == exp, f"tick {n}: u14 HDL {got} != model {exp}"
             assert -CLAMP <= got <= CLAMP, f"tick {n}: clamp violated"
+            assert got >= min(golden.floor, CLAMP), f"tick {n}: below floor"
             assert signed(dut.acc_mon) == golden.acc, \
                 f"tick {n}: acc HDL {signed(dut.acc_mon)} != model {golden.acc}"
-            assert int(dut.out_sat.value) == int(exp != (golden.u24 + 64) >> 7), \
+            assert int(dut.out_sat.value) == int(golden.out_sat), \
                 f"tick {n}: out_sat mismatch"
+            assert int(dut.at_floor.value) == int(golden.at_floor), \
+                f"tick {n}: at_floor mismatch"
 
 
 @cocotb.test()
@@ -143,6 +153,37 @@ async def anti_windup_stops_integration_at_clamp(dut):
 
 
 @cocotb.test()
+async def anti_windup_at_the_floor(dut):
+    """MVP lower bound: a sustained negative error holds the output on the
+    floor, the integrator on floor << (7 + ki_shift) -- never below -- and
+    a positive error moves it off the floor on the very next tick."""
+    cocotb.start_soon(start_clock(dut))
+    dut.tick.value = 0
+    gains = suggested()
+    apply_gains(dut, *gains, floor=FLOOR)
+    dut.int_hold.value = 0
+    dut.int_clear.value = 0
+    await reset(dut)
+
+    for _ in range(300):
+        u = await tick(dut, -(2**20))
+        assert u == FLOOR
+    assert dut.at_floor.value == 1
+    acc_floor = FLOOR << (7 + gains[3])
+    assert signed(dut.acc_mon) == acc_floor
+    await tick(dut, 2**16)
+    assert signed(dut.acc_mon) > acc_floor and dut.at_floor.value == 0
+
+    # floor 0 (outside RUN): the integrator unwinds but never goes negative
+    dut.floor.value = 0
+    for _ in range(3000):
+        u = await tick(dut, -(2**20))
+        assert u >= 0
+        assert signed(dut.acc_mon) >= 0
+    assert u == 0
+
+
+@cocotb.test()
 async def hold_and_clear(dut):
     cocotb.start_soon(start_clock(dut))
     dut.tick.value = 0
@@ -164,46 +205,48 @@ async def hold_and_clear(dut):
 
 @cocotb.test()
 async def closed_loop_step_meets_settling_spec(dut):
-    """MOT channel, 0 -> 100 A step with boost for the ramp: the HDL-in-the-
-    loop response must match the FixedPI reference exactly AND settle to
-    0.1% in under 1 ms (BOOTSTRAP loop target)."""
+    """MOT channel, MVP plant, steps from zero with the RUN floor: the HDL-
+    in-the-loop response must match the FixedPI reference exactly, never
+    drive OUT2, and settle to 0.1 % in under 1 ms (BOOTSTRAP loop target).
+    50 A: plain step. 100 A: compliance-limited, rides the clamp."""
     cocotb.start_soon(start_clock(dut))
     dut.tick.value = 0
     gains = suggested()
-    apply_gains(dut, *gains)
-    dut.int_hold.value = 0
-    dut.int_clear.value = 0
-    await reset(dut)
-
-    golden = FixedPI(*gains, CLAMP)
-    plant_hdl = Plant(MOT)
-    plant_ref = Plant(MOT)
     deadband = 8
-    target = 100.0
-    n_ticks = 1500           # 1.536 ms of loop time
-    t_axis, i_trace = [], []
 
-    for k in range(n_ticks):
-        t = k * T_S
-        boost = t < 0.5e-3
+    for target in (50.0, 100.0):
+        apply_gains(dut, *gains, floor=FLOOR)
+        dut.int_hold.value = 0
+        dut.int_clear.value = 0
+        await reset(dut)
 
-        # identical quantization path for both loops
+        golden = FixedPI(*gains, CLAMP, FLOOR)
+        plant_hdl = Plant(MOT)
+        plant_ref = Plant(MOT)
+        n_ticks = 1300           # 1.33 ms of loop time
+        t_axis, i_trace = [], []
         sp_code = adc_quantize(target / MOT.I_FS)
 
-        e_hdl = (sp_code - adc_quantize(plant_hdl.I / MOT.I_FS)) << 7
-        u_hdl = await tick(dut, e_hdl)
-        o1, o2 = output_mux_fixed(u_hdl, deadband)
-        plant_hdl.step(o1 / 8192.0, o2 / 8192.0, boost, T_S)
+        for k in range(n_ticks):
+            e_hdl = (sp_code - adc_quantize(plant_hdl.I / MOT.I_FS)) << 7
+            u_hdl = await tick(dut, e_hdl)
+            o1, o2 = output_mux_fixed(u_hdl, deadband, out2_enable=False)
+            assert o2 == 0
+            plant_hdl.step(o1 / 8192.0, 0.0, False, T_S)
 
-        e_ref = (sp_code - adc_quantize(plant_ref.I / MOT.I_FS)) << 7
-        u_ref = golden.step(e_ref)
-        r1, r2 = output_mux_fixed(u_ref, deadband)
-        plant_ref.step(r1 / 8192.0, r2 / 8192.0, boost, T_S)
+            e_ref = (sp_code - adc_quantize(plant_ref.I / MOT.I_FS)) << 7
+            u_ref = golden.step(e_ref)
+            r1, _ = output_mux_fixed(u_ref, deadband, out2_enable=False)
+            plant_ref.step(r1 / 8192.0, 0.0, False, T_S)
 
-        assert u_hdl == u_ref, f"tick {k}: closed-loop divergence {u_hdl} != {u_ref}"
+            assert u_hdl == u_ref, \
+                f"{target} A tick {k}: closed-loop divergence {u_hdl} != {u_ref}"
+            assert FLOOR <= u_hdl <= CLAMP
 
-        t_axis.append(t)
-        i_trace.append(plant_hdl.I)
+            t_axis.append(k * T_S)
+            i_trace.append(plant_hdl.I)
 
-    ts = settling_time(t_axis, i_trace, target)
-    assert ts is not None and ts < 1e-3, f"settling time {ts} s violates spec"
+        ts = settling_time(t_axis, i_trace, target)
+        assert ts is not None and ts < 1e-3, \
+            f"{target} A: settling time {ts} s violates spec"
+        assert overshoot_frac(i_trace, target) < 0.01

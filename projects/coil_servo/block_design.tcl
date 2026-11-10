@@ -6,7 +6,7 @@
 # projects/playground wiring: PS7 + clocks, axi_hub register bridge,
 # fast ADC in, fast DAC out, raw-ADC capture FIFO, XADC monitoring.
 #
-# Register map: docs/register_map.md (CFG 512 bits, STS 256 bits at
+# Register map: docs/register_map.md (CFG 1024 bits, STS 256 bits at
 # 0x40000000 / 0x41000000 through the hub).
 #
 # NOT yet built with Vivado on this machine -- first `make xpr && make bit`
@@ -56,7 +56,7 @@ cell xilinx.com:ip:proc_sys_reset rst_0 {} {
 # Register bridge: PS GP0 -> axi_hub at 0x40000000.
 # Addr bits [27:24]: 0 = CFG, 1 = STS, 2+ = BRAM/streams.
 cell pavel-demin:user:axi_hub hub_0 {
-  CFG_DATA_WIDTH 512
+  CFG_DATA_WIDTH 1024
   STS_DATA_WIDTH 256
 } {
   S_AXI ps_0/M_AXI_GP0
