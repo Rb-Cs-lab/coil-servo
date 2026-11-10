@@ -16,14 +16,17 @@ control system must do.
 import cocotb
 from cocotb.triggers import ClockCycles, RisingEdge
 
-from coil_servo_model import CHANNELS, adc_quantize, encode_gain
+from coil_servo_model import adc_quantize, encode_gain
 from coil_servo_model.analysis import settling_time, suggest_gains
+from coil_servo_model.fullarch import FULLARCH_CHANNELS
+from coil_servo_model.fullarch import FullArchPlant as Plant
 from coil_servo_model.loop import T_S
-from coil_servo_model.plant import Plant
 from coil_servo_model.registers import parse_sts, pack_cfg
 from tb_util import reset, start_clock
 
-MOT = CHANNELS["mot"]
+# The HDL still implements the full-architecture output stage until MVP
+# rewrite step 3, so the bench closes the loop around that plant for now.
+MOT = FULLARCH_CHANNELS["mot"]
 
 # flip/stop timing, small for sim speed (clock ticks @ 8 ns)
 FSM_CFG = dict(zero_win=41, zero_holdoff=3, deadtime=20, settle=400,

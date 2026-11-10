@@ -1,14 +1,19 @@
-"""Fixed-point mirror: format safety and agreement with the float reference."""
+"""Fixed-point mirror: format safety and agreement with the float reference.
+
+The closed-loop comparisons still run on the full-architecture plant
+(fullarch.py) because the fixed mirror keeps the symmetric clamp and OUT2
+branch until MVP rewrite step 3 updates it together with the HDL.
+"""
 
 import numpy as np
 import pytest
 
-from coil_servo_model import (CHANNELS, Decimator, FixedPI, FloatPI,
+from coil_servo_model import (FULLARCH_CHANNELS, Decimator, FixedPI, FloatPI,
                               adc_quantize, decode_gain, encode_gain,
                               output_mux_fixed, run_loop, sat)
 from coil_servo_model.analysis import settling_time, suggest_gains
 
-MOT = CHANNELS["mot"]
+MOT = FULLARCH_CHANNELS["mot"]
 DEADBAND_COUNTS = 8
 
 

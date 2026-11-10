@@ -1,9 +1,14 @@
-"""channels.toml loader: unit conversions and consistency with the model."""
+"""channels.toml loader: unit conversions and consistency with the model.
+
+channels.toml still holds the full-architecture values until MVP rewrite
+step 4, so it is checked against the legacy channel table for now.
+"""
 
 import pytest
 
 from coil_servo_host.config import load_channel
-from coil_servo_model import CHANNELS, decode_gain
+from coil_servo_model import FULLARCH_CHANNELS as CHANNELS
+from coil_servo_model import decode_gain
 from coil_servo_model.loop import T_S
 
 

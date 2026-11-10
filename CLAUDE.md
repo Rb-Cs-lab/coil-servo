@@ -14,9 +14,18 @@ rest of the repo in line is [docs/mvp_rewrite_brief.md](docs/mvp_rewrite_brief.m
 §11 — work it in order, one step per session. This file is the
 quick-reference facts; if they conflict, flag it — don't silently pick one.
 
-**Rewrite status (2026-11-10): step 1 of 6 done (this file + mvp_architecture.md).**
-The model, HDL, host config and remaining docs still describe the full
-architecture (active clamp, boost rail, I_FS = 125 A) until steps 2–5 land.
+**Rewrite status (2026-11-10): steps 1–2 of 6 done.** The model (`model/`)
+now describes the MVP: `channels.py` / `plant.py` (dead zone, measured V_th,
+5 V compliance, freewheel turn-off, bridge-open branch, I_FS = 200 A), float
+PI with a lower bound. The HDL, fixed-point mirror, host config and remaining
+docs still describe the full architecture until steps 3–5; the cocotb
+benches, fixed-point closed-loop tests and the channels.toml test therefore
+run against the legacy `model/coil_servo_model/fullarch.py`, which is
+deleted once they move over. Model findings that step 3 must decide on
+(see `model/tests/test_float_loop.py` docstring): steps from zero wait
+~2.7 ms on the dead zone unless the integrator is floored just below it, and
+large down-steps undershoot unless the setpoint is ramped at ≤ the freewheel
+rate.
 Turn-off decision made (bridge stays closed, freewheel model by default), so
 step 2's model tests use the freewheel decay, not the brief's TVS-limited
 rates. Remaining ⚠ REVIEW items in mvp_architecture.md (clamp meaning,

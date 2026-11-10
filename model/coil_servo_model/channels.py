@@ -1,87 +1,171 @@
-"""Per-channel parameters for the four coil servo channels.
+"""Per-channel parameters for the MVP power stage (docs/mvp_architecture.md).
 
 This is the single Python source for plant and scaling numbers. Values marked
-PROVISIONAL are computed/assumed, not measured -- see "Open unknowns" in
-BOOTSTRAP.md. The runtime configuration the boards actually receive lives in
-host/config/channels.toml (session 7) and must stay consistent with this file.
+PROVISIONAL are computed/assumed, not measured; MEASURED values cite their
+source. The runtime configuration the boards actually receive lives in
+host/config/channels.toml and is brought in line with this file in MVP
+rewrite step 4 (until then it still holds the full-architecture values --
+see fullarch.py).
+
+MVP actuator, per channel: one fixed low-voltage rail, an H-bridge on the
+high side, and a LOW-SIDE linear pass bank of N MOSFETs (each with its own
+ballast resistor) whose gates are driven from OUT1 through a non-inverting
+op-amp stage. No active clamp, no boost rail, no per-FET current loops:
+OUT2 and the boost output are unused.
 """
 
-from dataclasses import dataclass, field
+import math
+from dataclasses import dataclass
+
+# Pass-bank MOSFET thresholds, MEASURED 2026-11-02 (Construction notes):
+# IXTN200N10L2 at 3 mA, installed devices #1, 2, 4, 7, 9, 10.
+VTH_INSTALLED = (3.52, 3.53, 3.52, 3.56, 3.50, 3.52)
 
 
 @dataclass(frozen=True)
 class Channel:
     name: str
 
-    # --- Coil / circuit (BOOTSTRAP plant table) ---
-    L: float                 # coil pair inductance [H] (Radia-computed)
+    # --- Coils (Radia-computed) ---
+    L: float                 # coil pair inductance [H]
     R_coil: float            # coil pair resistance [ohm] -- PROVISIONAL: Kelvin measurement pending
-    R_extra: float           # pass bank on-state + cabling [ohm] -- PROVISIONAL estimate
     I_rated: float           # max operating current [A]
 
-    # --- Rails (BOOTSTRAP) ---
-    V_rail: float = 3.0      # hold rail [V]
-    V_boost: float = 15.0    # boost capacitor rail for fast ramps [V]
-    V_clamp: float = 30.0    # active clamp pull-down voltage [V] -- PROVISIONAL (illustrative figure)
-    V_ds_min: float = 0.5    # minimum pass-FET drop to stay linear [V] -- PROVISIONAL
+    # --- Supply and series path ---
+    V_rail: float = 5.0          # fixed rail [V] (Mean Well SE-600-5 on the MOT)
+    R_cable: float = 2.5e-3      # 4/0 cabling + contacts, whole loop [ohm] -- PROVISIONAL
+    R_coil_cable: float = 1.0e-3  # bridge-to-coil part of R_cable [ohm] -- PROVISIONAL
+    R_bridge: float = 3.0e-3     # one conducting bridge switch, warm [ohm] -- PROVISIONAL (2.3 mOhm cold)
+    V_f: float = 0.8             # MOSFET body-diode drop at high current [V] -- PROVISIONAL
 
-    # --- Sensing (design.md Node 0) ---
-    # I_FS = current at +1.000 V on IN1 = 2000 / (R_M * G_ia).
-    # DECIDED: rated ~ 80% of full scale => I_FS = 1.25 * I_rated.
-    # PROVISIONAL until the burden resistor R_M is chosen for real.
-    I_FS: float = 0.0        # filled in __post_init__ if left 0
+    # --- Pass bank ---
+    V_th: tuple = VTH_INSTALLED  # per-FET gate threshold [V] -- MEASURED (3 mA)
+    g_fs: float = 50.0           # per-FET transconductance in this regime [A/V] -- PROVISIONAL
+    R_ballast: float = 0.030     # per-FET source ballast (Caddock MP930) [ohm]
+    R_ds_on: float = 11e-3       # per-FET fully-on resistance [ohm] (datasheet, 10 V gate)
+    gain_opamp: float = 1.0 + 6.98 / 1.0   # OPA994 non-inverting stage, R_f 6.98k / R_g 1k
+    out1_terminated: bool = True  # OUT1 into 50 ohm? unterminated doubles the swing -- PROVISIONAL
+    V_opamp_max: float = 12.0    # op-amp output ceiling [V] -- PROVISIONAL (supply rail undocumented)
+    # Lumped lag between OUT1 and bank current: gate RC (24.9 ohm x 23 nF
+    # = 0.57 us) + op-amp + LEM response. PROVISIONAL.
+    tau_inner: float = 1.4e-6
 
-    # --- Pass bank / clamp actuator model -- ALL PROVISIONAL ---
-    # The pass bank is a transconductance: per-FET source-sense op-amp loops
-    # follow the OUT1 reference, so coil current tracks G_pass * V_out1 within
-    # voltage compliance. G_pass is assumed scaled so +1 V commands I_FS.
-    # The clamp uses "the same conditioning chain" (BOOTSTRAP), so it is
-    # modelled the same way (transconductance pull-down, compliance V_clamp).
-    # FLAG: the clamp's real transfer characteristic is an Open Unknown; if it
-    # turns out to be a voltage-mode stage, set clamp_is_voltage_mode=True and
-    # re-run the tuning tests.
-    G_pass: float = 0.0      # [A/V], filled in __post_init__ if left 0
-    G_clamp: float = 0.0     # [A/V], ditto
-    tau_inner: float = 1.6e-6  # inner analog loop time constant [s] -- PROVISIONAL (~100 kHz)
-    clamp_is_voltage_mode: bool = False
+    # --- Turn-off physics (mvp_architecture.md 3.3) ---
+    # "freewheel": bank throttles, coil current circulates through one bridge
+    #   switch + the opposite low-side body diode (decided design; analysis
+    #   pending scope confirmation).
+    # "tvs": the rewrite brief's alternative -- bank voltage rises to the
+    #   5KP12CA clamp. Kept for comparison until the scope capture.
+    turnoff_model: str = "freewheel"
+    V_tvs: float = 13.3          # 5KP12CA V_BR(min) [V]
 
-    def __post_init__(self):
-        if self.I_FS == 0.0:
-            object.__setattr__(self, "I_FS", 1.25 * self.I_rated)
-        if self.G_pass == 0.0:
-            object.__setattr__(self, "G_pass", self.I_FS)   # +1 V -> I_FS
-        if self.G_clamp == 0.0:
-            object.__setattr__(self, "G_clamp", self.I_FS)
+    # --- Sensing: LEM LF 310-S (2000:1) -> burden -> AD8421 -> IN1 ---
+    lem_ratio: float = 2000.0
+    R_burden: float = 10.0       # [ohm] (MPR24000Z1009BCU00)
+    G_inamp: float = 1.0         # AD8421 gain -- PROVISIONAL (1 or 2)
 
+    out2_enable: bool = False    # OUT2 (active clamp) not fitted in the MVP
+
+    # --- Sensing scale ---
     @property
-    def R_loop(self) -> float:
-        """Total series resistance seen by the loop [ohm]."""
-        return self.R_coil + self.R_extra
-
-    @property
-    def f_pole(self) -> float:
-        """Open-loop electrical pole R_loop / (2 pi L) [Hz]."""
-        import math
-        return self.R_loop / (2.0 * math.pi * self.L)
+    def I_FS(self) -> float:
+        """Coil current at +1.000 V on IN1 [A]."""
+        return self.lem_ratio / (self.R_burden * self.G_inamp)
 
     @property
     def amps_per_lsb(self) -> float:
-        """Current per ADC/DAC code (14-bit, +/-1 V <-> +/-I_FS)."""
+        """Coil current per IN1 ADC code."""
         return self.I_FS / 8192.0
+
+    # --- Series path ---
+    @property
+    def R_series(self) -> float:
+        """Everything in series with the bank while the bridge conducts."""
+        return self.R_coil + self.R_cable + 2.0 * self.R_bridge
+
+    @property
+    def R_fw(self) -> float:
+        """Freewheel loop: coils + one conducting switch + coil-side cable
+        (the body diode adds V_f)."""
+        return self.R_coil + self.R_bridge + self.R_coil_cable
+
+    # --- Pass bank ---
+    @property
+    def out1_factor(self) -> float:
+        """Volts at the op-amp input per normalized OUT1 unit (1.0 = full
+        DAC scale): 1 V into 50 ohm, about 2 V into a high impedance."""
+        return 1.0 if self.out1_terminated else 2.0
+
+    def gate_command(self, u_out1: float) -> float:
+        """Gate voltage commanded by a normalized OUT1 value [V]."""
+        v = u_out1 * self.out1_factor * self.gain_opamp
+        return min(max(v, 0.0), self.V_opamp_max)
+
+    def fet_currents(self, V_gate: float) -> list:
+        """Per-FET current a gate voltage asks for, in the linear region:
+        I = g_fs (V_g - V_th) / (1 + g_fs R2), zero below threshold."""
+        k = self.g_fs / (1.0 + self.g_fs * self.R_ballast)
+        return [k * (V_gate - vt) if V_gate > vt else 0.0 for vt in self.V_th]
+
+    def bank_current(self, V_gate: float) -> float:
+        return sum(self.fet_currents(V_gate))
+
+    def v_bank_min(self, I: float) -> float:
+        """Smallest drop across the bank (all FETs fully on) at current I."""
+        return I * (self.R_ds_on + self.R_ballast) / len(self.V_th)
+
+    @property
+    def G_pass(self) -> float:
+        """Small-signal bank transconductance above threshold [A per
+        normalized OUT1 unit]."""
+        k = self.g_fs / (1.0 + self.g_fs * self.R_ballast)
+        return len(self.V_th) * k * self.gain_opamp * self.out1_factor
+
+    @property
+    def dead_zone(self) -> float:
+        """Normalized OUT1 below which no FET conducts."""
+        return min(self.V_th) / (self.gain_opamp * self.out1_factor)
+
+    def out1_for_current(self, I: float) -> float:
+        """Normalized OUT1 that asks the bank for current I (bisection)."""
+        lo, hi = min(self.V_th), self.V_opamp_max
+        if self.bank_current(hi) < I:
+            raise ValueError(f"{self.name}: gate ceiling cannot command {I} A")
+        for _ in range(60):
+            mid = 0.5 * (lo + hi)
+            if self.bank_current(mid) < I:
+                lo = mid
+            else:
+                hi = mid
+        return hi / (self.gain_opamp * self.out1_factor)
 
     @property
     def clamp_counts(self) -> int:
-        """Hard output clamp in DAC counts = 100% of rated (review 2026-08-26)."""
-        return round(self.I_rated / self.I_FS * 8192)
+        """OUT1 command clamp in DAC counts: the command that asks for 100% of
+        rated current with the nominal parameters. PROVISIONAL -- the real
+        value comes from the measured G_pass and dead zone (it limits the
+        gate command, not the current; mvp_architecture.md 3.5)."""
+        return round(self.out1_for_current(self.I_rated) * 8192)
+
+    @property
+    def max_current(self) -> float:
+        """Steady current with the bank fully on (compliance limit) [A]."""
+        return self.V_rail / (self.R_series + (self.R_ds_on + self.R_ballast) / len(self.V_th))
+
+    @property
+    def freewheel_time(self) -> float:
+        """Time for the freewheel decay from I_rated to zero [s]."""
+        tau = self.L / self.R_fw
+        i_eq = self.V_f / self.R_fw
+        return tau * math.log((self.I_rated + i_eq) / i_eq)
 
 
-# BOOTSTRAP plant table. R_extra: BOOTSTRAP quotes "roughly 10-15 mOhm" total
-# loop resistance for the MOT channel (coil 6.4 mOhm + pass bank + cabling);
-# we take 12 mOhm total => R_extra = 5.6 mOhm, and assume a similar 6 mOhm of
-# extras on the shim channels. PROVISIONAL until the Kelvin measurement.
+# Coil table (Radia-computed). MVP builds the MOT channel only; the shim rows
+# reuse the MOT power-stage parts as PLACEHOLDERS until their stage exists
+# (shim supply not chosen -- rail <= 10 V).
 CHANNELS = {
-    "mot": Channel(name="mot", L=16e-6, R_coil=6.4e-3, R_extra=5.6e-3, I_rated=100.0),
-    "z_shim": Channel(name="z_shim", L=29e-6, R_coil=11.6e-3, R_extra=6.0e-3, I_rated=60.0),
-    "x_shim": Channel(name="x_shim", L=57e-6, R_coil=14.2e-3, R_extra=6.0e-3, I_rated=60.0),
-    "y_shim": Channel(name="y_shim", L=57e-6, R_coil=14.2e-3, R_extra=6.0e-3, I_rated=60.0),
+    "mot": Channel(name="mot", L=16e-6, R_coil=6.4e-3, I_rated=100.0),
+    "z_shim": Channel(name="z_shim", L=29e-6, R_coil=11.6e-3, I_rated=60.0),
+    "x_shim": Channel(name="x_shim", L=57e-6, R_coil=14.2e-3, I_rated=60.0),
+    "y_shim": Channel(name="y_shim", L=57e-6, R_coil=14.2e-3, I_rated=60.0),
 }

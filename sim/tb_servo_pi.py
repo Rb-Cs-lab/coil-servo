@@ -13,13 +13,16 @@ import random
 import cocotb
 from cocotb.triggers import RisingEdge
 
-from coil_servo_model import CHANNELS, FixedPI, adc_quantize, encode_gain, output_mux_fixed
+from coil_servo_model import FixedPI, adc_quantize, encode_gain, output_mux_fixed
 from coil_servo_model.analysis import settling_time, suggest_gains
+from coil_servo_model.fullarch import FULLARCH_CHANNELS
+from coil_servo_model.fullarch import FullArchPlant as Plant
 from coil_servo_model.loop import T_S
-from coil_servo_model.plant import Plant
 from tb_util import reset, signed, start_clock
 
-MOT = CHANNELS["mot"]
+# The HDL still implements the full-architecture output stage until MVP
+# rewrite step 3, so the bench closes the loop around that plant for now.
+MOT = FULLARCH_CHANNELS["mot"]
 CLAMP = MOT.clamp_counts        # 6554 = 100% of rated
 
 

@@ -12,7 +12,6 @@ import math
 
 import numpy as np
 
-from .channels import Channel
 from .loop import T_S
 
 # Digital delay budget from design.md section 4: decimator group delay
@@ -43,22 +42,29 @@ def overshoot_frac(I, target: float) -> float:
     return max(0.0, (peak - abs(target)) / abs(target))
 
 
-def open_loop(channel: Channel, kp: float, ki: float, f):
+def plant_gain(channel) -> float:
+    """Normalized plant gain: IN1 units of current per OUT1 unit above the
+    dead zone (1.0 for the full-architecture plant, whose G_pass was
+    specified to equal I_FS; up to ~8 for the MVP bank)."""
+    return channel.G_pass / channel.I_FS
+
+
+def open_loop(channel, kp: float, ki: float, f):
     """Small-signal open-loop transfer L(j2*pi*f), normalized units.
 
-    Plant (pass-bank regime, provisional): transconductance with unity
-    normalized DC gain (G_pass scaled to I_FS) behind the inner analog lag,
-    plus the digital delay. PI: kp + ki/s with ki in 1/s.
+    Plant: transconductance with normalized gain plant_gain(channel) behind
+    the inner analog lag, plus the digital delay. PI: kp + ki/s with ki in
+    1/s. (The MVP dead zone is a large-signal effect, not in here.)
     """
     w = 2 * math.pi * np.asarray(f, dtype=float)
     s = 1j * w
-    plant = (channel.G_pass / channel.I_FS) / (1 + s * channel.tau_inner)
+    plant = plant_gain(channel) / (1 + s * channel.tau_inner)
     delay = np.exp(-s * DIGITAL_DELAY)
     pi = kp + ki / s
     return pi * plant * delay
 
 
-def crossover_and_margin(channel: Channel, kp: float, ki: float):
+def crossover_and_margin(channel, kp: float, ki: float):
     """Returns (f_c [Hz], phase margin [deg]) of the small-signal loop."""
     f = np.logspace(1, 6, 20000)
     L = open_loop(channel, kp, ki, f)
@@ -74,15 +80,19 @@ def crossover_and_margin(channel: Channel, kp: float, ki: float):
     return float(f_c), float(180.0 + phase)
 
 
-def suggest_gains(channel: Channel, f_c: float = 3e3):
+def suggest_gains(channel, f_c: float = 3e3):
     """Starting-point (kp, ki_tick) for a target crossover f_c.
 
-    With the provisional transconductance plant (flat, unity normalized gain)
-    the crossover is set by the integrator: ki ~ 2*pi*f_c, with a modest kp
-    for phase lead. If the composite plant turns out to look like L/R instead
-    (voltage-mode actuator), kp rises to ~f_c/f_pole (order 20-50) -- both
-    regimes fit the s18+shift gain formats with room to spare.
+    The plant is a flat transconductance (no L/R pole in the loop), so the
+    crossover is set by the integrator: ki ~ 2*pi*f_c / K with K the
+    normalized plant gain, and kp = 0.5 / K keeps the proportional loop gain
+    well below 1 at high frequency (with a flat plant and ~4 us of delay, a
+    proportional loop gain above 1 would be unstable). For the
+    full-architecture plant K = 1 and this returns the commissioned values
+    (kp 0.5, ki 15080/s). The real gains come from the measured step
+    response.
     """
-    ki = 2 * math.pi * f_c * 0.8      # 1/s
-    kp = 0.5
+    K = plant_gain(channel)
+    ki = 2 * math.pi * f_c * 0.8 / K  # 1/s
+    kp = 0.5 / K
     return kp, ki * T_S               # (kp, per-tick ki)

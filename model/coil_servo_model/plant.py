@@ -1,25 +1,37 @@
-"""Plant model: RL coil driven by the linear pass bank and the active clamp.
+"""Plant model for the MVP power stage (docs/mvp_architecture.md section 3).
 
 Drive-frame convention (design.md Node B): the H-bridge polarity rotation has
-already happened, so coil current here is >= 0 in normal operation, the pass
-bank pushes it up, the clamp pulls it down.
+already happened, so coil current here is >= 0.
 
-Actuator model (PROVISIONAL -- see channels.py):
-  * Pass bank = transconductance. The per-FET source-sense loops regulate the
-    series (== coil) current toward G_pass * v_out1, with a first-order inner
-    time constant tau_inner. It can only SOURCE: when it throttles back, the
-    current falls no faster than the passive L/R decay.
-  * Clamp = same, mirrored: regulates current downward toward
-    I - G_clamp * v_out2 territory by absorbing it, limited by V_clamp.
-  * Voltage compliance: dI/dt is capped by the available headroom,
-      up:   dI/dt <= (V_avail - I*R_loop - V_ds_min) / L
-      down: dI/dt >= -(V_clamp_avail + I*R_loop) / L
-    where V_avail is V_boost when the boost cap is switched in, else V_rail,
-    and V_clamp_avail is V_clamp only while the clamp stage is commanded.
+The pass bank is a voltage-controlled CURRENT source with a dead zone: OUT1 ->
+op-amp -> gate (one lumped lag, tau_inner) -> per-FET current
+g_fs (V_g - V_th,k) / (1 + g_fs R2). The coil's L/R pole is not in the loop;
+the coil only shows up through the voltage limits on how fast the current
+can change:
 
-Integration: explicit Euler with substeps << tau_inner. Good enough for a
-reference model; tests check dt-convergence.
+  * up (bank asks for more than flows): the rail is the only push,
+      L dI/dt = V_rail - I*R_series - V_bank,min(I)
+    and the current stops at what the bank asks for;
+  * down (bank asks for less): turnoff_model "freewheel" (decided design):
+    the coil current circulates through one bridge switch and the opposite
+    low-side body diode, independent of the bank,
+      L dI/dt = -(V_f + I*R_fw);
+    turnoff_model "tvs" (rewrite brief alternative): the bank's voltage rises
+    to the TVS clamp,
+      L dI/dt = -(V_tvs - V_rail + I*R_series);
+    in both cases the current stops falling at what the bank asks for;
+  * bridge open at current (heartbeat-latch trip): body diodes push the
+    current back into the supply,
+      L dI/dt = -(V_rail + 3 V_f + I*R_series), down to zero.
+
+OUT2 and the boost output are not connected in the MVP: the plant rejects any
+nonzero command on them, so a firmware/config mistake shows up in simulation.
+
+Integration: explicit Euler with substeps; the gate lag uses the exact
+first-order update.
 """
+
+import math
 
 from .channels import Channel
 
@@ -28,51 +40,57 @@ class Plant:
     def __init__(self, channel: Channel, i0: float = 0.0):
         self.ch = channel
         self.I = float(i0)          # coil current [A], drive frame
+        self.bridge_enabled = True
+        if i0 > 0.0:
+            # start in steady state: gate already asking for i0
+            self.V_gate = channel.out1_for_current(i0) * channel.gain_opamp * channel.out1_factor
+        else:
+            self.V_gate = 0.0
 
     def step(self, v_out1: float, v_out2: float, boost: bool, dt: float,
              substeps: int = 8) -> float:
-        """Advance by dt with OUT1/OUT2 held at v_out1/v_out2 volts.
-
-        Returns the coil current at the end of the interval.
-        """
+        """Advance by dt with OUT1 held at v_out1 (normalized DAC units, 1.0 =
+        full scale). Returns the coil current at the end of the interval."""
+        assert v_out2 == 0.0, "OUT2 commanded but no active clamp is fitted (MVP)"
+        assert not boost, "boost commanded but no boost rail is fitted (MVP)"
         ch = self.ch
         h = dt / substeps
-        v_avail = ch.V_boost if boost else ch.V_rail
+        v_cmd = ch.gate_command(v_out1)
+        decay = math.exp(-h / ch.tau_inner)
 
         for _ in range(substeps):
+            self.V_gate = v_cmd + (self.V_gate - v_cmd) * decay
             I = self.I
 
-            if v_out1 > 0.0 and v_out2 <= 0.0:
-                # Pass bank regulating toward its commanded current.
-                target = ch.G_pass * v_out1
-                dIdt = (target - I) / ch.tau_inner
-                # Sourcing is voltage-limited; throttling back can't beat the
-                # passive decay (the stage has no pull-down path).
-                dIdt = min(dIdt, (v_avail - I * ch.R_loop - ch.V_ds_min) / ch.L)
-                dIdt = max(dIdt, -(I * ch.R_loop) / ch.L)
-            elif v_out2 > 0.0 and v_out1 <= 0.0:
-                if ch.clamp_is_voltage_mode:
-                    # Alternative model: clamp applies reverse volts
-                    # proportional to command (full scale -> V_clamp).
-                    v_rev = ch.V_clamp * min(v_out2, 1.0)
-                    dIdt = -(v_rev + I * ch.R_loop) / ch.L
-                else:
-                    # Default: transconductance sink pulling toward
-                    # (I - G_clamp*v_out2), compliance-limited by V_clamp.
-                    target = I - ch.G_clamp * v_out2
-                    dIdt = (target - I) / ch.tau_inner
-                    dIdt = max(dIdt, -(ch.V_clamp + I * ch.R_loop) / ch.L)
-                    dIdt = min(dIdt, -(I * ch.R_loop) / ch.L)
-            elif v_out1 <= 0.0 and v_out2 <= 0.0:
-                # Deadband: both stages off, passive decay through R_loop.
-                dIdt = -(I * ch.R_loop) / ch.L
-            else:
-                # Both commanded -- forbidden by the output mux; the model
-                # refuses to guess what the hardware would do.
-                raise AssertionError(
-                    "OUT1 and OUT2 driven simultaneously: mutual-exclusion "
-                    "invariant violated upstream of the plant")
+            if not self.bridge_enabled:
+                dIdt = -(ch.V_rail + 3.0 * ch.V_f + I * ch.R_series) / ch.L
+                self.I = max(I + h * dIdt, 0.0) if I > 0.0 else 0.0
+                continue
 
-            self.I = I + h * dIdt
+            I_cmd = ch.bank_current(self.V_gate)
+            if I_cmd >= I:
+                dIdt = (ch.V_rail - I * ch.R_series - ch.v_bank_min(I)) / ch.L
+                I_new = I + h * dIdt
+                if dIdt > 0.0:
+                    I_new = min(I_new, I_cmd)
+            else:
+                if ch.turnoff_model == "freewheel":
+                    dIdt = -(ch.V_f + I * ch.R_fw) / ch.L
+                elif ch.turnoff_model == "tvs":
+                    dIdt = -(ch.V_tvs - ch.V_rail + I * ch.R_series) / ch.L
+                else:
+                    raise ValueError(f"unknown turnoff_model {ch.turnoff_model!r}")
+                I_new = max(I + h * dIdt, I_cmd)
+            self.I = max(I_new, 0.0)
 
         return self.I
+
+    def fet_currents(self) -> list:
+        """Current each FET carries right now [A]. The bank passes the coil
+        current, split in the ratio the gate voltage asks for."""
+        asked = self.ch.fet_currents(self.V_gate)
+        total = sum(asked)
+        if total <= 0.0:
+            return [0.0] * len(asked)
+        share = min(self.I, total) / total
+        return [a * share for a in asked]

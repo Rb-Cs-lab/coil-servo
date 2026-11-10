@@ -16,7 +16,6 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .channels import Channel
 from .pi import FloatPI, output_mux
 from .fixed_point import FixedPI, adc_quantize, output_mux_fixed
 
@@ -36,7 +35,7 @@ class SimResult:
         return float(self.I[-1])
 
 
-def run_loop(channel: Channel, controller, deadband_counts: int,
+def run_loop(channel, controller, deadband_counts: int,
              t_end: float, setpoint_fn, boost_fn=None,
              plant=None, substeps: int = 8) -> SimResult:
     """Run the closed loop for t_end seconds.
@@ -45,13 +44,15 @@ def run_loop(channel: Channel, controller, deadband_counts: int,
     setpoint_fn(t) -> setpoint in AMPS (drive frame).
     boost_fn(t) -> bool, boost cap engaged (default: never).
     """
+    from .fullarch import FullArchChannel, FullArchPlant
     from .plant import Plant
     if plant is None:
-        plant = Plant(channel)
+        plant = (FullArchPlant if isinstance(channel, FullArchChannel) else Plant)(channel)
     if boost_fn is None:
         boost_fn = lambda t: False
     fixed = isinstance(controller, FixedPI)
     deadband_norm = deadband_counts / 8192.0
+    out2_enable = channel.out2_enable
 
     n = int(round(t_end / T_S))
     out = SimResult(*(np.zeros(n) for _ in range(6)))
@@ -72,7 +73,7 @@ def run_loop(channel: Channel, controller, deadband_counts: int,
         else:
             e = (sp_amps - plant.I) / channel.I_FS
             u_norm = controller.step(e)
-            v1, v2 = output_mux(u_norm, deadband_norm)
+            v1, v2 = output_mux(u_norm, deadband_norm, out2_enable)
             integ = controller.integrator
 
         plant.step(v1, v2, boost_fn(t), T_S, substeps)
