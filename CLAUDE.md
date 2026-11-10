@@ -21,10 +21,10 @@ the bitstream on the NUC. Step 5 rewrote the interface brief, operating
 scenarios, bring-up checklist, README/ONBOARDING, added
 `docs/lab_notes_2026-11.md`, moved the dropped full-architecture features
 to future_upgrades.md §8, and gave design.md an MVP-changes preamble.
-`deploy` now post-checks the safe state. **Open proposal (not decided):**
-IN2 → 0 currently ramps down at 50 A/ms (2 ms from 100 A), slower than the
-1.3 ms freewheel; option: let the setpoint jump to zero inside the zero
-window (operating_scenarios.md §5). Step 3 added (register_map.md): CFG widened to 32
+`deploy` now post-checks the safe state. **Decided 2026-11-10: snap to
+zero** — a setpoint target inside the zero window (`zero_win`) bypasses the
+slew limit, so IN2 → 0 freewheels at full speed (~1.3 ms from 100 A).
+Step 3 added (register_map.md): CFG widened to 32
 words; `out2_enable` (OUT2 ≡ 0), RUN-only PI floor `u_floor` (W16),
 over-current trip `trip_level`/`trip_ticks`/`trip_timeout` (W17–19) +
 `trip_ack`, FSM states TRIP/TRIPPED, arm *edge* required to leave IDLE

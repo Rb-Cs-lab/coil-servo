@@ -198,3 +198,16 @@ def test_sigma_delta_mean_and_bounds():
         assert abs(np.mean(out[128:]) - (4000 + resid / 128)) <= 1 / 128
     for u, r in ((4474, 63), (3000, -64)):
         assert all(3000 <= sd.step(u, r, 3000, 4474) <= 4474 for _ in range(500))
+
+
+def test_slew_limiter_snaps_inside_the_zero_window():
+    from coil_servo_model import SlewLimiter, slew_rate_code
+    up, down = slew_rate_code(200e3, 200.0), slew_rate_code(50e3, 200.0)
+    sl = SlewLimiter()
+    for _ in range(200_000):
+        sl.step(2867, up, down, snap_win=20)     # ramp to ~70 A
+    assert sl.sp == 2867
+    assert sl.step(0, up, down, snap_win=20) == 0          # snap-off
+    assert sl.step(12, up, down, snap_win=20) == 12        # small target kept
+    sl.step(2867, up, down, snap_win=20)
+    assert sl.sp < 20                            # outside the window: ramps

@@ -54,7 +54,8 @@ datasheet g_fs and the provisional coil/cable resistances.
 | Measurement resolution | 24.4 mA per ADC count (I_FS = 200 A at +1 V) | LEM + 10 Ω burden + in-amp G = 1 |
 | Actuator step | ~0.12 A per OUT1 count (P); ~1 mA effective with the OUT1 dither | Gain-8 gate stage |
 | Ramp up, 0 → 100 A | ≥ 0.5 ms: firmware limit 200 A/ms; the 5 V rail alone allows ~0.4 ms (P) | Firmware slew limit / 5 V compliance |
-| Ramp down, 100 → 0 A | ~2 ms at the firmware limit of 50 A/ms; a forced zero (flip, stop, trip) freewheels in ~1.3 ms (P) | Firmware slew limit / body-diode freewheel |
+| Ramp down to a lower current | ≤ 50 A/ms (firmware limit) | Firmware slew limit |
+| Snap to zero (setpoint → 0, flip, stop, trip) | ~1.3 ms from 100 A, freewheeling (P) | Body-diode freewheel |
 | Settling | to 0.1 % in < 1 ms after a ramp ends (simulation) | PI loop, crossover 2–5 kHz |
 | Field reversal at 50 A, electrical | ~1.2 ms: ~0.8 ms freewheel to zero + ~70 µs zero check + 2 µs bridge-open + 100 µs settle (placeholder) + 0.25 ms ramp back up | FSM + physics |
 | Continuous duty | indefinite at 100 A from the servo's side; **thermally limited** (water cooling required, see 1c) | Power stage |
@@ -177,7 +178,9 @@ never hardware. Flips are never triggered by the setpoint changing sign.
   operator acknowledges.
 - **Software "off" is a graceful ramp-to-zero**, never an instantaneous
   bridge drop at current.
-- **Setpoint ramps limited** to 200 A/ms up, 50 A/ms down.
+- **Setpoint ramps limited** to 200 A/ms up, 50 A/ms down — except a
+  target inside the ±0.5 A zero window, which is taken at once (snap-off
+  at the freewheel rate).
 - Network/computer loss changes nothing; the hardware protection is the
   heartbeat latch.
 

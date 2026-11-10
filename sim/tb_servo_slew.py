@@ -1,7 +1,7 @@
 """cocotb bench for servo_slew: bit-exact vs fixed_point.SlewLimiter every
 clock (random targets, rates, hold_zero and bypass), plus directed checks
-of the physical ramp rates, the frozen-when-unconfigured default, and the
-zero crossing."""
+of the physical ramp rates, the frozen-when-unconfigured default, the
+zero crossing, and the snap to a target inside the zero window."""
 
 import random
 
@@ -21,8 +21,9 @@ def counts(amps):
     return round(amps / I_FS * 8192)
 
 
-def drive(dut, target, up=UP, down=DOWN, hold=0, bypass=0):
+def drive(dut, target, up=UP, down=DOWN, hold=0, bypass=0, snap=0):
     dut.target.value = target
+    dut.snap_win.value = snap
     dut.rate_up.value = up
     dut.rate_down.value = down
     dut.hold_zero.value = hold
@@ -53,13 +54,17 @@ async def bit_exact_against_model(dut):
     await FallingEdge(dut.aclk)
     rng = random.Random(5)
     golden = SlewLimiter()
-    a = dict(target=0, up=UP, down=DOWN, hold=0, bypass=0)
+    a = dict(target=0, up=UP, down=DOWN, hold=0, bypass=0, snap=0)
     for n in range(20000):
         r = rng.random()
         if r < 0.002:
             a["target"] = rng.choice([8191, -8192, 0])
         elif r < 0.01:
             a["target"] = rng.randint(-8192, 8191)
+        elif r < 0.012:
+            a["target"] = rng.randint(-40, 40)        # near the snap window
+        if rng.random() < 0.002:
+            a["snap"] = rng.choice([0, 20, 21, 1000, 16383])
         if rng.random() < 0.002:
             a["up"] = rng.choice([0, 1, UP, 65535, rng.randint(0, 65535)])
             a["down"] = rng.choice([0, 1, DOWN, 65535, rng.randint(0, 65535)])
@@ -67,10 +72,11 @@ async def bit_exact_against_model(dut):
             a["hold"] ^= 1
         if rng.random() < 0.002:
             a["bypass"] ^= 1
-        drive(dut, a["target"], a["up"], a["down"], a["hold"], a["bypass"])
+        drive(dut, a["target"], a["up"], a["down"], a["hold"], a["bypass"],
+              a["snap"])
         await FallingEdge(dut.aclk)
         exp = golden.step(a["target"], a["up"], a["down"],
-                          bool(a["hold"]), bool(a["bypass"]))
+                          bool(a["hold"]), bool(a["bypass"]), a["snap"])
         got = signed(dut.sp_out)
         assert got == exp, f"clock {n}: HDL {got} != model {exp} ({a})"
 
@@ -129,3 +135,23 @@ async def crossing_zero_uses_down_then_up(dut):
     n1 = await clocks_to_reach(dut, counts(-20.0), 200_000)
     assert abs(n0 * CLK - 0.4e-3) < 0.01e-3
     assert abs(n1 * CLK - 0.1e-3) < 0.01e-3
+
+
+@cocotb.test()
+async def target_inside_the_zero_window_snaps(dut):
+    """Snap-off: from 70 A a step to zero (inside the 0.5 A zero window) is
+    taken in one clock; a target outside the window still ramps."""
+    await setup(dut)
+    win = counts(0.5)
+    drive(dut, counts(70.0), snap=win)
+    await clocks_to_reach(dut, counts(70.0), 200_000)
+    drive(dut, 0, snap=win)
+    n = await clocks_to_reach(dut, 0, 10)
+    assert n <= 2, f"snap took {n} clocks"
+    drive(dut, counts(70.0), snap=win)
+    await clocks_to_reach(dut, counts(70.0), 200_000)
+    drive(dut, counts(10.0), snap=win)          # outside the window: ramps
+    n = await clocks_to_reach(dut, counts(10.0), 300_000)
+    assert abs(n * CLK - 1.2e-3) < 0.01e-3
+    drive(dut, counts(0.3), snap=win)           # small setpoint: kept, not 0
+    await clocks_to_reach(dut, counts(0.3), 10)

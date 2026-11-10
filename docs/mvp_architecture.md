@@ -183,7 +183,9 @@ unchanged. No hardware change.
   ramp ends). **✓ DECIDED (Santi, 2026-11-10): the firmware enforces both
   ramp limits** — ≤ 200 A/ms away from zero, ≤ 50 A/ms toward zero (the
   down-step rule, section 3.3) — with a setpoint slew limiter in fabric
-  (CFG words 15/20). The integration bench steps 0 → 70 → 20 A with no
+  (CFG words 15/20). A target inside the flip zero window is taken at
+  once, so stepping to zero stays a full-speed freewheel snap-off
+  (undershoot is impossible at a zero target). The integration bench steps 0 → 70 → 20 A with no
   overshoot or undershoot.
 - *Actuator hunting.* In the fixed-point simulation a steady hold hunts
   between two adjacent OUT1 codes, ~0.12 A of coil current (~50 mA p-p

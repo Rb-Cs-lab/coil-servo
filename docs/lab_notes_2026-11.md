@@ -64,7 +64,9 @@ and the design decisions of 11-10.
 - **Over-current trip at 100 A** (the supply's rating), on measured
   current.
 - **Setpoint ramps enforced in firmware:** ≤ 200 A/ms up, ≤ 50 A/ms down
-  (raw steps overshoot or undershoot on this plant).
+  (raw steps overshoot or undershoot on this plant) — except a target
+  inside the ±0.5 A zero window, which is taken at once, so a step to
+  zero is a full-speed freewheel snap-off (~1.3 ms from 100 A).
 - **OUT1 dither** to recover resolution lost to the gain-8 gate stage.
 - **DIO5 (fault input) not wired;** the Red Pitaya outputs nothing until
   enabled and armed (edge).

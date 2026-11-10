@@ -140,7 +140,7 @@ module coil_servo_top #
   servo_slew slew_0 (
     .aclk(aclk), .aresetn(aresetn),
     .target(sp_sel), .hold_zero(sp_force_zero), .bypass(open_loop),
-    .rate_up(slew_up), .rate_down(slew_down),
+    .rate_up(slew_up), .rate_down(slew_down), .snap_win(zero_win),
     .sp_out(sp_lim)
   );
 

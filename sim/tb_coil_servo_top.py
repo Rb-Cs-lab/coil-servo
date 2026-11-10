@@ -308,6 +308,31 @@ async def dither_removes_the_one_count_hunting(dut):
 
 
 @cocotb.test()
+async def snap_off_freewheels_at_full_speed(dut):
+    """At 80 A the control computer steps the setpoint to zero: the snap
+    window takes it at once (no 50 A/ms ramp, which would need 1.6 ms) and
+    the coil freewheels to below the zero window in ~1.1 ms, bridge closed
+    throughout."""
+    await setup(dut, run_cfg(setpoint=0))
+    await arm(dut)
+    world = World(dut, sp_amps=80.0)
+    for _ in range(1700):
+        await world.tick()
+    assert abs(world.plant.I - 80.0) < 0.2, f"not at 80 A: {world.plant.I}"
+
+    world.sp_amps = 0.0
+    zero_win_amps = FSM_CFG["zero_win"] * MOT.amps_per_lsb
+    for k in range(2000):
+        await world.tick()
+        assert int(dut.bridge_enable_o.value) == 1, "snap-off opened the bridge"
+        if world.plant.I < zero_win_amps:
+            break
+    t_off = (k + 1) * T_S
+    assert t_off < 1.3e-3, f"snap-off took {t_off * 1e3:.2f} ms"
+    assert sts(dut)["fsm_state_name"] == "RUN"
+
+
+@cocotb.test()
 async def flip_sequence_through_the_pins(dut):
     """Run at 30 A, request a flip on the DIO3 pin, and follow the whole
     sequence via the external pins only: the current freewheels down with

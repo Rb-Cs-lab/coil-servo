@@ -83,11 +83,13 @@ zero before recovering — the reason for the limit.)
 
 ### S5 — Turn-off (snap to zero for time-of-flight / molasses)
 
-Control computer steps IN2 to zero. **Today** this is the same as S4: the
-setpoint ramps down at 50 A/ms, so 100 A → 0 takes ~2 ms. The bridge
-stays closed and enabled — a turn-off is not a flip. The coil could fall
-faster on its own (freewheel ≈ 1.3 ms from 100 A) — see the open item in
-section 5.
+Control computer steps IN2 to zero. A target inside the zero window
+(±0.5 A) bypasses the 50 A/ms limit, so the setpoint snaps to zero at
+once, OUT1 drops below the dead zone, and the coil **freewheels at full
+speed: ~1.3 ms from 100 A, ~1.1 ms from 80 A**. The bridge stays closed
+and enabled — a turn-off is not a flip. (The down-limit exists to
+prevent undershoot, which cannot happen at a zero target. A ramp *to*
+zero that you shape yourself is followed as usual.)
 
 The fastest turn-off the MVP hardware can do is the freewheel; a much
 faster snap-off (~50 µs) needs the blocking diode + TVS upgrade
@@ -227,8 +229,8 @@ supply per its manual, re-enable and re-arm.
 | Move | Time | Set by |
 |---|---|---|
 | Ramp up 0 → 50 A / 0 → 100 A | 0.25 ms / 0.5 ms, then settle ~1 ms | Firmware limit 200 A/ms (physics allows ~0.4 ms to 100 A) |
-| Ramp down 100 → 50 A / 100 → 0 A (IN2) | 1 ms / 2 ms | Firmware limit 50 A/ms |
-| Forced zero (flip, stop, trip) from 50 A / 100 A | ~0.8 ms / ~1.3 ms | Body-diode freewheel |
+| Ramp down 100 → 50 A (IN2) | 1 ms | Firmware limit 50 A/ms |
+| Snap to zero (IN2 → 0, or flip, stop, trip) from 50 A / 100 A | ~0.8 ms / ~1.3 ms | Body-diode freewheel |
 | Flip at 50 A, electrical | ~1.2 ms = 0.8 ms freewheel + ~70 µs zero check + 2 µs bridge window + 0.1 ms settle (placeholder) + 0.25 ms ramp up | FSM + physics |
 | Flip at 100 A, electrical | ~2 ms | same |
 
@@ -238,12 +240,6 @@ takes ~1.4 ms (Z) and ~2.7 ms (X/Y).
 
 ## 5. Open items that shape sequence design
 
-- **Fast snap-off to zero (proposal, not decided):** a step of IN2 to zero
-  currently ramps at 50 A/ms (2 ms from 100 A), slower than the coil's own
-  freewheel (1.3 ms). The undershoot the down-limit prevents cannot
-  happen when the target is zero. Option: let the setpoint jump to zero
-  when the target is inside the zero window, so a snap-off freewheels at
-  full speed.
 - **Eddy-current settling after flips and snap-offs** — unmeasured;
   dominates the usable reversal budget. Measure early (`settle_us`).
 - **PI gains** — loopback values rescaled by the model's plant gain;

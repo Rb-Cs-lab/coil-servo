@@ -196,7 +196,9 @@ class SlewLimiter:
 
     acc holds the setpoint in counts << 14; rates are in 2^-14 counts per
     clock. "Up" = away from zero, "down" = toward zero. hold_zero forces 0,
-    bypass passes the target through; a rate of 0 freezes the setpoint."""
+    bypass passes the target through; a rate of 0 freezes the setpoint.
+    A target with |target| < snap_win (the flip zero window) is taken at
+    once, so a step to zero is a true snap-off."""
 
     FRAC = 14
 
@@ -208,11 +210,12 @@ class SlewLimiter:
         return self.acc >> self.FRAC
 
     def step(self, target: int, rate_up: int, rate_down: int,
-             hold_zero: bool = False, bypass: bool = False) -> int:
+             hold_zero: bool = False, bypass: bool = False,
+             snap_win: int = 0) -> int:
         t = target << self.FRAC
         if hold_zero:
             self.acc = 0
-        elif bypass:
+        elif bypass or abs(target) < snap_win:
             self.acc = t
         else:
             delta = t - self.acc

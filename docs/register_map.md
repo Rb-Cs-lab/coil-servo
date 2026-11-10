@@ -46,7 +46,7 @@ their word; unused high bits read/write as 0.
 | 5 | `ki_shift` | u6 | 0 | I accumulator right-shift |
 | 6 | `out_clamp` | u14 Q1.13 | 0 | hard output clamp, counts — an upper bound on the OUT1 *command* (MVP: calibrate from the measured G_pass; it is not by itself a current limit — word 17 is). Reset 0 ⇒ outputs forced 0 until configured — safe. The host `Board` class additionally refuses to write a value above rated unless constructed with `max_clamp=None` (a typo rail; the fabric clamp is the real enforcement). |
 | 7 | `deadband` | u14 Q1.13 | 0 | OUT1/OUT2 handoff deadband |
-| 8 | `zero_win` | u14 Q1.13 | 0 | flip zero-current window (counts) — PROVISIONAL |
+| 8 | `zero_win` | u14 Q1.13 | 0 | flip zero-current window (counts) — PROVISIONAL. Also the setpoint snap window of the slew limiter (word 20) |
 | 9 | `zero_holdoff` | u16 | 0 | decimated samples the window must hold |
 | 10 | `deadtime` | u16 | 125 | bridge dead time, 8 ns ticks (125 = 1 µs) — PROVISIONAL |
 | 11 | `settle` | u32 | 0 | post-flip settle, 8 ns ticks — eddy placeholder, PROVISIONAL |
@@ -58,7 +58,7 @@ their word; unused high bits read/write as 0.
 | 17 | `trip_level` | u14 Q1.13 | 0 | over-current trip level, counts **of the IN1 sensor scale** (1 count = I_FS/8192, 24.4 mA at I_FS = 200 A). Trips when \|measured current\| > level for `trip_ticks` consecutive PI ticks, in every state except IDLE. Reset 0 = trips on the first nonzero reading — the servo cannot run until this is configured (fail-safe). MOT: 100 A. |
 | 18 | `trip_ticks` | u16 | 0 | consecutive decimated samples (1.024 µs each) above `trip_level` before tripping; 0 and 1 both mean "first sample". |
 | 19 | `trip_timeout` | u32 | 0 | after a trip, the longest the bridge stays closed (OUT1 = 0, coil freewheeling) waiting for the current to fall inside `zero_win`, in 8 ns ticks. Then the bridge opens regardless (e.g. a shorted pass FET keeps current flowing). 0 = open the bridge at once (pushes the coil energy into the supply; mvp_architecture.md 3.3). MOT: ~3 ms, comfortably above the 1.3 ms freewheel from 100 A. |
-| 20 | `slew_down` | u16 | 0 | setpoint slew-rate limit **toward zero**, same units as word 15. MOT: 50 A/ms → **268**. A move across zero uses this rate down to 0, then `slew_up`. |
+| 20 | `slew_down` | u16 | 0 | setpoint slew-rate limit **toward zero**, same units as word 15. MOT: 50 A/ms → **268**. A move across zero uses this rate down to 0, then `slew_up`. **Snap:** a target inside the zero window (\|target\| < `zero_win`, word 8) is taken at once, unlimited — so stepping the setpoint to zero is a full-speed snap-off (the coil freewheels, ~1.3 ms from 100 A); the down-limit exists to prevent undershoot, which cannot happen at a zero target (decided 2026-11-10). |
 | 21–31 | — | | 0 | reserved |
 
 ## STS (0x4100_0000 + 4·word)
