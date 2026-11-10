@@ -186,7 +186,6 @@ Each of these must be a named, commented-provisional parameter
 - Bridge-open-at-current energy path: SE-600-5 output-cap overvoltage / OVP
 - Actuator resolution and ground noise at a steady hold vs the 0.1 % spec
   (gain-8 stage: one OUT1 count ≈ 0.14–0.4 % of rated)
-- Monostable timeout (notes say ~5 ms; scaling from 68 kΩ predicts ~3.6 ms)
 - IN1 offset (~1.4 mV ≈ 0.29 A at I_FS = 200 A — calibrate before trusting
   the ±0.5 A flip zero window)
 - Hold capacitor across the rail (C_hold) yes/no

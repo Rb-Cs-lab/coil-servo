@@ -20,8 +20,8 @@
 >   gain rescale factor is up to ~4, not ~8.
 > - **§3.4 ramp-up slack** — "~1–1.5 V near 100 A" contradicts the §7 power
 >   budget (2.8–3.2 V across the FETs at 100 A).
-> - **§5 monostable timeout** — 1.1 ms at 68 kΩ predicts ~3.6 ms at 220 kΩ,
->   not ~5 ms; measure.
+> - **§5 monostable timeout** — the Construction notes record ≈ 7.6 ms at
+>   220 kΩ (measured, consistent), not ~5 ms.
 > - New risk, not in the brief: the gain-8 op-amp stage makes one OUT1 DAC
 >   count ≈ 0.14–0.4 % of rated current, and ~1–1.6 A per mV of ground
 >   difference (mvp_architecture.md §3.1).

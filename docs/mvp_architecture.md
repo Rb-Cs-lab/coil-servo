@@ -212,7 +212,9 @@ at the freewheel rate) and to a snap-off with OUT1 at zero. Consequences:
   is an *open coil lead* — a lug coming loose between bridge and coil —
   where they give the coil current somewhere to go instead of an arc;
 - the bank TVS is harmless and can stay as a passive backstop, but it does
-  not shape normal operation.
+  not shape normal operation. (That matches its stated purpose in the MVP
+  notes — protecting the bank from backflow — rather than the rewrite
+  brief's turn-down role.)
 
 The decisive bench test: scope the drain bar and node A during a snap-off
 from a moderate current. Drain bar at ~V_rail + 0.7 V and a ~ms decay →
@@ -329,12 +331,12 @@ E1 line has a 10 kΩ pull-down.
 | 15 | DIO6_P heartbeat (~954 Hz) | Retriggers the CD74HC123E monostable; its Q stays high while the heartbeat runs |
 | 13 | DIO5_P fault in | **Not wired in the MVP** (decision 2026-11-10) |
 
-- **Monostable timing:** R_x/C_x = 220 kΩ / 100 nF (changed from 68 kΩ,
-  which timed out in ~1.1 ms — barely one heartbeat period, so a pulled
-  heartbeat could recover on an edge). Notes read ≈ 5 ms at 220 kΩ, but
-  the scope text was cut off. Note the timeout scales linearly with R_x,
-  so 1.1 ms at 68 kΩ predicts ≈ 3.6 ms at 220 kΩ, not 5 ms — one of the two
-  readings is off. **Measure it** and record it in bringup.md.
+- **Monostable timing:** R_x/C_x = 220 kΩ / 100 nF, **measured drop
+  ≈ 7.6 ms, consistent** (Construction notes, 2026-11-03). It was first
+  built with 68 kΩ, which timed out in only ~1.1 ms — about one heartbeat
+  period, so a pulled heartbeat could recover on an edge. (The CD74HC123
+  is specified at 5 V and times differently on the 3.3 V rail, so the
+  datasheet formula doesn't predict either value; trust the measurement.)
 - **74HC74 latch** with a B3F-1000 reset button: when the monostable drops,
   the latch trips and stays tripped until someone presses reset. The
   board never re-arms itself and **powers up tripped**.
@@ -449,7 +451,7 @@ current with an explicit duty limit.
   overvoltage / OVP behaviour; whether a reverse-energy absorber is needed.
 - Actuator resolution / ground noise at a steady hold vs the 0.1 % spec
   (3.1).
-- Measured monostable timeout (5.0) and the IN1 offset (6).
+- The IN1 offset (6).
 - Whether a hold capacitor goes across the rail (`C_hold`).
 - Chamber eddy-current settling → `settle_us`.
 - Uncooled duty-cycle limit for the first test round.
