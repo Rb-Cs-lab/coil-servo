@@ -41,6 +41,7 @@ module servo_pi
   output reg  signed [13:0] u14,        // clamped output, DAC counts
   output reg                out_sat,    // clamp engaged on the last tick
   output reg                at_floor,   // output on its lower bound (STS)
+  output reg  signed [6:0]  resid,      // rounding residual for the dither
   output wire signed [47:0] acc_mon,    // integrator state (STS/debug)
   output wire               int_railed  // accumulator at its s48 rails (STS)
 );
@@ -104,6 +105,7 @@ module servo_pi
       u14 <= 14'sd0;          // reset state is OFF (safety invariant 2)
       out_sat <= 1'b0;
       at_floor <= 1'b0;
+      resid <= 7'sd0;
       e_r <= 22'sd0;
       p_full <= 40'sd0;
       ki_prod <= 40'sd0;
@@ -136,6 +138,10 @@ module servo_pi
                  (u14_pre < floor_s)  ? floor_eff : u14_pre[13:0];
           out_sat <= engaged;
           at_floor <= (u14_pre <= floor_s);
+          // the 7 bits rounding dropped (u24/128 = u14_pre + resid/128);
+          // zero when an output bound is engaged
+          resid <= ((u14_pre > clamp_s) || (u14_pre < floor_s)) ? 7'sd0 :
+                   $signed({1'b0, u_round[6:0]}) - 8'sd64;
           if (!int_hold && !int_clear)
             acc <= (acc_upd < acc_lo) ? acc_lo : acc_upd;
           state <= S_IDLE;

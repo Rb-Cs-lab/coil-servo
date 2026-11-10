@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from coil_servo_model import (CHANNELS, Decimator, FixedPI, FloatPI, Plant,
+                              SigmaDelta,
                               adc_quantize, decode_gain, encode_gain,
                               output_mux_fixed, run_loop, sat)
 from coil_servo_model.analysis import overshoot_frac, settling_time, suggest_gains
@@ -170,3 +171,30 @@ def test_actuator_resolution_dither():
     count_amps = MOT.G_pass / 8192
     assert 0.3 * count_amps < ripple < 1.5 * count_amps
     assert ripple > 1e-3 * 30.0
+
+
+@pytest.mark.parametrize("target", [10.0, 30.0, 50.0])
+def test_dither_removes_the_hunting(target):
+    # With the OUT1 sigma-delta (CFG dither_enable) the gate sees the PI
+    # output at 2^-7 count resolution: the hold no longer hunts between two
+    # codes and sits within one ADC count of the setpoint. (The model hands
+    # the plant the tick-average OUT1; the residual in-tick ripple through
+    # the real gate RC is ~mA and is a bench measurement.)
+    (kp_m, kp_s, ki_m, ki_s), _ = quantized_gains(MOT)
+    pi = FixedPI(kp_m, kp_s, ki_m, ki_s, MOT.clamp_counts, FLOOR)
+    pi.acc = round(MOT.out1_for_current(target) * 8192) << (7 + ki_s)
+    res = run_loop(MOT, pi, DEADBAND_COUNTS, 3e-3, lambda t: target,
+                   plant=Plant(MOT, i0=target), dither=True)
+    tail = res.I[res.t > 1e-3]
+    assert np.ptp(tail) < 0.1 * MOT.G_pass / 8192
+    assert abs(tail.mean() - target) < MOT.amps_per_lsb
+
+
+def test_sigma_delta_mean_and_bounds():
+    sd = SigmaDelta()
+    for resid in range(-64, 64):
+        out = [sd.step(4000, resid, 3000, 4474) for _ in range(128 * 8)]
+        assert set(out) <= {3999, 4000, 4001}
+        assert abs(np.mean(out[128:]) - (4000 + resid / 128)) <= 1 / 128
+    for u, r in ((4474, 63), (3000, -64)):
+        assert all(3000 <= sd.step(u, r, 3000, 4474) <= 4474 for _ in range(500))

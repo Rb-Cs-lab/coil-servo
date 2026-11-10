@@ -134,8 +134,12 @@ async def arm(dut):
 class World:
     """MVP plant + frame conversion + one servo tick = 128 fast samples."""
 
-    def __init__(self, dut, sp_amps: float, cfg_extra=None):
+    def __init__(self, dut, sp_amps: float, cfg_extra=None, average=False):
+        """average=True: apply the mean OUT1 over the tick's 128 clocks
+        to the plant (what the gate RC sees with the dither on) instead of
+        one sample at the end of the tick."""
         self.dut = dut
+        self.average = average
         self.plant = Plant(MOT)
         self.sp_amps = sp_amps       # magnitude of the requested current
         self.cfg_extra = cfg_extra or {}
@@ -150,11 +154,20 @@ class World:
         sp = adc_quantize(sign * self.sp_amps / MOT.I_FS)
         dut.s_axis_tdata.value = pack_adc(meas, sp)
         dut.cfg_data.value = run_cfg(setpoint=sp, **self.cfg_extra)
-        await ClockCycles(dut.aclk, 128)
+        if self.average:
+            tot = 0
+            for _ in range(128):
+                await RisingEdge(dut.aclk)
+                o1, o2 = dacs(dut)
+                assert o2 == 0 and o1 <= MOT.clamp_counts
+                tot += o1
+            o1 = tot / 128
+        else:
+            await ClockCycles(dut.aclk, 128)
+            o1, o2 = dacs(dut)
+        assert o2 == 0
 
         # apply the DAC output to the plant for one tick
-        o1, o2 = dacs(dut)
-        assert o2 == 0
         self.plant.bridge_enabled = bool(int(dut.bridge_enable_o.value))
         self.plant.step(max(o1, 0) / 8192.0, 0.0, False, T_S)
         self.t += T_S
@@ -268,6 +281,29 @@ async def slew_limited_steps_neither_overshoot_nor_undershoot(dut):
     # OUT1 count of the gain-8 stage (test_actuator_resolution_dither)
     ts = settling_time(tr_t, tr_i, 20.0, tol_frac=0.1 / 20.0)
     assert ts is not None and ts < 1.0e-3 + 1e-3, f"settled in {ts}"
+
+
+@cocotb.test()
+async def dither_removes_the_one_count_hunting(dut):
+    """Steady 30 A hold, OUT1 averaged per clock as the gate does: without
+    dither the current hunts between two OUT1 codes (~50 mA p-p, wider
+    than +-0.1 %); with dither_enable it holds within one ADC count."""
+    ripple = {}
+    for dither in (0, 1):
+        await setup(dut, run_cfg(setpoint=0, dither_enable=dither))
+        await arm(dut)
+        world = World(dut, sp_amps=30.0, average=True,
+                      cfg_extra=dict(dither_enable=dither))
+        tail = []
+        for k in range(1400):
+            await world.tick()
+            if k >= 1100:                       # settled (~0.8 ms) + margin
+                tail.append(world.plant.I)
+        ripple[dither] = max(tail) - min(tail)
+        assert abs(sum(tail) / len(tail) - 30.0) < 2 * MOT.amps_per_lsb
+    assert ripple[0] > 0.03, f"expected hunting without dither: {ripple[0]}"
+    assert ripple[1] < 0.3 * ripple[0], f"dither ripple {ripple}"
+    assert ripple[1] < 1e-3 * 30.0, "dithered hold outside +-0.1 %"
 
 
 @cocotb.test()

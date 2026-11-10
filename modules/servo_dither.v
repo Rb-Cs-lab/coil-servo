@@ -1,0 +1,53 @@
+`timescale 1 ns / 1 ps
+
+// OUT1 resolution dither (MVP; register_map.md ctrl b20 dither_enable).
+// Bit-exact mirror of model/coil_servo_model/fixed_point.py::SigmaDelta.
+//
+// Why: with the gain-8 op-amp stage one DAC count is ~0.12 A of coil
+// current, so a steady hold hunts between two adjacent codes (~50 mA p-p).
+// The PI computes 7 bits finer than the DAC (u24 vs u14) and rounding drops
+// them; here a first-order sigma-delta, running every 8 ns clock, puts them
+// back as a +-1-count toggle whose mean is resid/128. The gate (24.9 ohm
+// into the FET input capacitance, ~0.6 us) averages it, so the pass bank
+// sees the PI output at ~2^-7 count resolution. Unverified on hardware:
+// the DAC's linearity and the op-amp's response to a 1-count toggle at
+// tens of MHz set the real benefit (bench measurement).
+//
+// The dithered value is clipped to [lo, clamp] -- it never exceeds the hard
+// clamp (safety invariant 1). enable low: output = u14 exactly, sigma-delta
+// state cleared.
+
+module servo_dither
+(
+  input  wire               aclk,
+  input  wire               aresetn,
+
+  input  wire               enable,
+  input  wire signed [13:0] u14,        // PI output, counts
+  input  wire signed [6:0]  resid,      // rounding residual, [-64, 63]
+  input  wire signed [13:0] lo,         // PI lower bound (floor)
+  input  wire        [13:0] clamp,      // hard clamp, counts (<= 8191)
+
+  output wire signed [13:0] u_out
+);
+
+  reg  signed [7:0] acc;                // sigma-delta state, [-64, 63]
+  wire signed [8:0] s = acc + resid;
+  wire up   = (s >= 9'sd64);
+  wire down = (s < -9'sd64);
+
+  wire signed [14:0] u_d = u14 + (up ? 15'sd1 : down ? -15'sd1 : 15'sd0);
+  wire signed [14:0] c15 = {1'b0, clamp};
+  wire signed [14:0] lo15 = (lo > $signed(c15)) ? c15 : lo;
+  wire signed [14:0] u_c = (u_d > c15) ? c15 : (u_d < lo15) ? lo15 : u_d;
+
+  assign u_out = enable ? u_c[13:0] : u14;
+
+  always @(posedge aclk) begin
+    if (!aresetn || !enable)
+      acc <= 8'sd0;
+    else
+      acc <= up ? s - 9'sd128 : down ? s + 9'sd128 : s;
+  end
+
+endmodule

@@ -125,6 +125,8 @@ async def bit_exact_against_model(dut):
                 f"tick {n}: out_sat mismatch"
             assert int(dut.at_floor.value) == int(golden.at_floor), \
                 f"tick {n}: at_floor mismatch"
+            assert signed(dut.resid) == golden.resid, \
+                f"tick {n}: resid HDL {signed(dut.resid)} != model {golden.resid}"
 
 
 @cocotb.test()

@@ -20,6 +20,7 @@ CFG_FIELDS = {
     "capture_sel":    (0, 17, 1, False),
     "out2_enable":    (0, 18, 1, False),
     "trip_ack":       (0, 19, 1, False),
+    "dither_enable":  (0, 20, 1, False),
     "setpoint":       (1, 0, 14, True),
     "kp_mant":        (2, 0, 18, True),
     "kp_shift":       (3, 0, 5, False),

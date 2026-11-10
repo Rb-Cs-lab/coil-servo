@@ -44,6 +44,10 @@ def test_servo_slew():
     run_bench("servo_slew", "tb_servo_slew")
 
 
+def test_servo_dither():
+    run_bench("servo_dither", "tb_servo_dither")
+
+
 def test_servo_error():
     run_bench("servo_error", "tb_servo_error")
 

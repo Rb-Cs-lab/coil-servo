@@ -106,6 +106,7 @@ class FixedPI:
         self.acc = 0                   # s48 integrator accumulator
         # Introspection for cocotb comparison (set by step()):
         self.p = self.i = self.u24 = self.u14 = self.u_pre = 0
+        self.resid = 0      # rounding residual for the dither, [-64, 63]
         self.out_sat = self.at_floor = False
 
     def acc_floor(self) -> int:
@@ -134,6 +135,10 @@ class FixedPI:
         self.u14 = min(max(u_pre, self.floor), self.clamp)
         self.out_sat = u_pre > self.clamp or u_pre < -self.clamp
         self.at_floor = u_pre <= self.floor
+        # the 7 bits rounding dropped, as a signed residual: u24 / 128 =
+        # u_pre + resid / 128. Zero when an output bound is engaged.
+        bounded = u_pre > self.clamp or u_pre < self.floor
+        self.resid = 0 if bounded else ((self.u24 + 64) & 127) - 64
 
         # anti-windup: don't integrate further into whichever bound is hit
         skip = ((u_pre > self.clamp and e22 > 0) or
@@ -154,6 +159,35 @@ def output_mux_fixed(u14: int, deadband_counts: int, out2_enable: bool = True):
     if u14 < -deadband_counts and out2_enable:
         return 0, min(-u14, 8191)
     return 0, 0
+
+
+class SigmaDelta:
+    """First-order sigma-delta on the PI's rounding residual, one step()
+    per 8 ns clock. Bit-exact mirror of modules/servo_dither.v.
+
+    The DAC holds u14 + d with d in {-1, 0, +1}; over time the mean of d is
+    resid / 128, so the gate (which averages over ~0.6 us = 75 clocks) sees
+    the PI output with 7 more bits than the DAC has. The dithered value is
+    clipped to [lo, clamp]: it never exceeds the hard clamp."""
+
+    def __init__(self):
+        self.acc = 0
+
+    def step(self, u14: int, resid: int, lo: int, clamp: int,
+             enable: bool = True) -> int:
+        if not enable:
+            self.acc = 0
+            return u14
+        s = self.acc + resid
+        if s >= 64:
+            d, s = 1, s - 128
+        elif s < -64:
+            d, s = -1, s + 128
+        else:
+            d = 0
+        self.acc = s
+        lo_eff = min(lo, clamp)
+        return max(lo_eff, min(clamp, u14 + d))
 
 
 class SlewLimiter:

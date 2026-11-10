@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .pi import FloatPI, output_mux
-from .fixed_point import FixedPI, adc_quantize, output_mux_fixed
+from .fixed_point import FixedPI, SigmaDelta, adc_quantize, output_mux_fixed
 
 T_S = 128 / 125e6   # PI tick [s]
 
@@ -37,12 +37,15 @@ class SimResult:
 
 def run_loop(channel, controller, deadband_counts: int,
              t_end: float, setpoint_fn, boost_fn=None,
-             plant=None, substeps: int = 8) -> SimResult:
+             plant=None, substeps: int = 8, dither: bool = False) -> SimResult:
     """Run the closed loop for t_end seconds.
 
     controller: a FloatPI or FixedPI instance (deduced by type).
     setpoint_fn(t) -> setpoint in AMPS (drive frame).
     boost_fn(t) -> bool, boost cap engaged (default: never).
+    dither (FixedPI only): run the OUT1 sigma-delta for the tick's 128
+    clocks and hand the plant the tick-average OUT1 (the gate averages
+    over ~0.6 us, longer than a tick, so this is what it sees).
     """
     from .fullarch import FullArchChannel, FullArchPlant
     from .plant import Plant
@@ -51,6 +54,7 @@ def run_loop(channel, controller, deadband_counts: int,
     if boost_fn is None:
         boost_fn = lambda t: False
     fixed = isinstance(controller, FixedPI)
+    sd = SigmaDelta()
     deadband_norm = deadband_counts / 8192.0
     out2_enable = channel.out2_enable
 
@@ -68,6 +72,13 @@ def run_loop(channel, controller, deadband_counts: int,
             e22 = e15 << 7                        # constant over the tick
             u14 = controller.step(e22)
             o1, o2 = output_mux_fixed(u14, deadband_counts, out2_enable)
+            if dither:
+                tot = 0
+                for _ in range(128):
+                    ud = sd.step(u14, controller.resid, controller.floor,
+                                 controller.clamp)
+                    tot += output_mux_fixed(ud, deadband_counts, out2_enable)[0]
+                o1 = tot / 128
             u_norm, v1, v2 = u14 / 8192.0, o1 / 8192.0, o2 / 8192.0
             integ = (controller.acc >> controller.ki_shift) / (1 << 20)
         else:

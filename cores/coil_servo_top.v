@@ -73,6 +73,7 @@ module coil_servo_top #
                                               // 1 = decimated {e, i} pairs
   wire        out2_enable    = cfg_data[18];  // 0 = OUT2 held at 0 (MVP)
   wire        trip_ack       = cfg_data[19];  // TRIPPED -> IDLE
+  wire        dither_enable  = cfg_data[20];  // OUT1 sigma-delta dither
   wire signed [13:0] sp_reg       = cfg_data[45:32];    // W1
   wire signed [17:0] kp_mant      = cfg_data[81:64];    // W2
   wire        [4:0]  kp_shift     = cfg_data[100:96];   // W3
@@ -207,6 +208,7 @@ module coil_servo_top #
   // ------------------------------------------------------------------
   wire signed [13:0] u14;
   wire out_sat, int_railed, at_floor;
+  wire signed [6:0] pi_resid;
   wire signed [47:0] acc_mon;
 
   // PI lower bound (register map W16 and ctrl b18): full architecture ->
@@ -227,7 +229,8 @@ module coil_servo_top #
     .ki_mant(ki_mant), .ki_shift(ki_shift),
     .clamp(out_clamp), .floor(pi_floor),
     .int_hold(int_hold), .int_clear(fsm_int_clear | int_clear_host),
-    .u14(u14), .out_sat(out_sat), .at_floor(at_floor), .acc_mon(acc_mon),
+    .u14(u14), .out_sat(out_sat), .at_floor(at_floor), .resid(pi_resid),
+    .acc_mon(acc_mon),
     .int_railed(int_railed)
   );
 
@@ -243,9 +246,18 @@ module coil_servo_top #
   // mux chain fails 125 MHz timing as one combinational cone (measured
   // -2 ns on the first hardware build). One pipeline flop here splits it;
   // the extra 8 ns is nothing against the 128-cycle PI tick.
+  // OUT1 resolution dither (servo_dither.v): closed loop only
+  wire signed [13:0] u_dith;
+  servo_dither dith_0 (
+    .aclk(aclk), .aresetn(aresetn),
+    .enable(dither_enable & ~open_loop),
+    .u14(u14), .resid(pi_resid), .lo(pi_floor), .clamp(out_clamp),
+    .u_out(u_dith)
+  );
+
   reg signed [13:0] u_drive;
   always @(posedge aclk)
-    u_drive <= !aresetn ? 14'sd0 : (open_loop ? sp_clamped : u14);
+    u_drive <= !aresetn ? 14'sd0 : (open_loop ? sp_clamped : u_dith);
 
   wire signed [13:0] out1, out2;
 
