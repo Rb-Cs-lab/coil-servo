@@ -179,3 +179,16 @@ def test_mock_server_map_rev_matches_the_register_map():
     srv = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(srv)
     assert srv.MockMem.MAP_REV == MAP_REV
+
+
+def test_deploy_post_check(server):
+    from coil_servo_host.deploy import verify_loaded_safe
+    verify_loaded_safe("127.0.0.1", server)          # mock: IDLE, all zero
+    with Board("127.0.0.1", port=server) as b:
+        b.write_words(STS_BASE, [(3 << 24) | (1 << 7)])   # armed high
+    with pytest.raises(SystemExit, match="arm"):
+        verify_loaded_safe("127.0.0.1", server)
+    with Board("127.0.0.1", port=server) as b:
+        b.write_words(STS_BASE, [0])                  # old bitstream
+    with pytest.raises(SystemExit, match="revision 0"):
+        verify_loaded_safe("127.0.0.1", server)

@@ -61,6 +61,35 @@ def refuse_if_running(host: str, port: int, force: bool) -> None:
         raise SystemExit(msg)
 
 
+def verify_loaded_safe(host: str, port: int) -> None:
+    """Post-load check (rewrite brief section 5): the freshly loaded
+    bitstream must report the register map this host knows and sit in its
+    reset-off state -- IDLE, OUT1 command 0, bridge disabled, not armed.
+    Raises SystemExit (deploy reports failure) otherwise."""
+    from coil_servo_model.registers import MAP_REV
+    with Board(host, port=port, timeout=5.0, check_map=False) as b:
+        s = b.sts()
+    problems = []
+    if s["map_rev"] != MAP_REV:
+        problems.append(f"register-map revision {s['map_rev']} (host "
+                        f"expects {MAP_REV}) -- wrong bitstream?")
+    if s["fsm_state_name"] != "IDLE":
+        problems.append(f"state {s['fsm_state_name']} (expected IDLE)")
+    if s["u14"] != 0:
+        problems.append(f"OUT1 command u14 = {s['u14']} (expected 0)")
+    if s["bridge_en"]:
+        problems.append("bridge enable is HIGH")
+    if s["armed"]:
+        problems.append("arm (DIO4) reads HIGH -- disconnect or drop it; "
+                        "the servo will not start until arm is re-raised "
+                        "after servo_enable anyway")
+    if problems:
+        raise SystemExit("deploy loaded the bitstream but the post-check "
+                         "FAILED:\n  " + "\n  ".join(problems))
+    print("post-check OK: IDLE, OUT1 = 0, bridge disabled, not armed, "
+          f"register map rev {s['map_rev']}")
+
+
 def run(cmd, check=True):
     print("+", " ".join(cmd))
     subprocess.run(cmd, check=check)
@@ -99,7 +128,8 @@ def main():
     run(["ssh", target,
          f"nohup python3 /root/coil_servo_server.py --port {args.port} "
          ">/dev/null 2>&1 & sleep 0.5"])
-    print(f"deployed to {host}; verify with: python -m coil_servo_host.check "
+    verify_loaded_safe(host, args.port)
+    print(f"deployed to {host}; next: python -m coil_servo_host.check "
           f"{args.channel}")
 
 
