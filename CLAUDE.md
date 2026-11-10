@@ -17,8 +17,10 @@ quick-reference facts; if they conflict, flag it — don't silently pick one.
 **Rewrite status (2026-11-10): step 1 of 6 done (this file + mvp_architecture.md).**
 The model, HDL, host config and remaining docs still describe the full
 architecture (active clamp, boost rail, I_FS = 125 A) until steps 2–5 land.
-Before step 2, resolve the ⚠ REVIEW items in mvp_architecture.md — above all
-the turn-down physics (§3.3), which changes the model tests the brief lists.
+Turn-off decision made (bridge stays closed, freewheel model by default), so
+step 2's model tests use the freewheel decay, not the brief's TVS-limited
+rates. Remaining ⚠ REVIEW items in mvp_architecture.md (clamp meaning,
+actuator resolution) feed step 3.
 
 ## Board
 
@@ -123,10 +125,11 @@ Power stage as built:
   edges. Normalized plant gain up to ~8 (loopback was 2.03), so the
   commissioned PI gains must be rescaled before real-load tuning.
 - **Unipolar actuator:** the bank only sources current or sources less.
-  Turn-down path is ⚠ REVIEW (mvp_architecture.md §3.3): the analysis there
-  finds the bridge body diodes freewheel the coil (~1 ms L/R-type decay at
-  100 A) rather than the 5KP12CA TVS across the bank setting a 0.2 ms ramp.
-  Settle with a scope capture before modelling it.
+  **Decided 2026-11-10: turn-off keeps the bridge closed** — the firmware
+  never opens the bridge at current. The coil then freewheels through the
+  bridge body diodes (~1.3 ms from 100 A on the MOT, mvp_architecture.md
+  §3.3); model this as the default, with the brief's TVS-clamped behaviour
+  behind a flag until a scope capture of the drain bar confirms it.
 - **Sensing:** LEM LF 310-S → 10 Ω burden → AD8421 (G = 1, PROVISIONAL) →
   IN1: **I_FS = 200 A** at +1 V, 24.4 mA per ADC count.
 - **Safety logic board** (built, tested 2026-11-03): heartbeat → CD74HC123

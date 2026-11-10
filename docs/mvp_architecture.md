@@ -186,6 +186,17 @@ bring-up.
 There is no active clamp: the actuator is unipolar — the bank sources
 current or sources less.
 
+**✓ DECIDED (Santi, 2026-11-10): turn-off keeps the bridge closed.**
+Down-ramps and snap-offs go through the pass bank and the bridge's
+freewheel path; the firmware never opens the bridge at current (it opens
+only at zero current for a flip, or on a heartbeat-latch trip). Opening
+the bridge at current would be ~6× faster but dumps the coil energy into
+the SE-600-5's output capacitors (possible overvoltage shutdown) and takes
+the loop out of control; the faster path is shelved in
+[future_upgrades.md](future_upgrades.md) §6. The model uses the freewheel
+physics below as its default, with the TVS-clamped behaviour kept behind
+a flag until the scope capture confirms which one the hardware shows.
+
 **⚠ REVIEW — the bridge freewheels; the bank TVS does not set the turn-off.**
 The rewrite brief (v2, §3.3) concludes that when the bank throttles back,
 its drain voltage rises until the 5KP12CA conducts (~13 V), giving
