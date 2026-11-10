@@ -208,3 +208,51 @@ During a snap-off the servo is open-loop until the current reaches zero.
 and node A during a throttle-to-zero at moderate current) and whether
 ~1 ms is fast enough for the experiment's sequences. If it is, this stays
 shelved.
+
+## 7. Finer pass-bank drive: lower op-amp gain plus a fixed gate bias (discussed 2026-11-10)
+
+**Why:** the MVP's OPA994 stage is non-inverting with gain ≈ 8 (R_f
+6.98 kΩ / R_g 1 kΩ), mapping OUT1 0…1 V to a 0…8 V gate command. But
+the pass bank only conducts between V_th ≈ 3.53 V (zero current) and
+≈ 4.2 V (100 A), so almost all of OUT1's range is spent below threshold
+or as unused headroom. Consequences ([mvp_architecture.md](mvp_architecture.md)
+§3.1):
+
+- one OUT1 DAC count ≈ **0.14–0.2 A** of coil current (0.27–0.39 A if
+  OUT1 is unterminated) — larger than the 0.1 % stability spec (0.1 A),
+  and the current-source plant doesn't low-pass it, so the loop's ±1-count
+  hunting can appear directly as current noise;
+- ~1.1–1.6 A per millivolt of ground difference between the Red Pitaya
+  and supply 0 V;
+- the integrator must climb through the ~0.44 V dead zone before any
+  current flows, delaying small steps from zero.
+
+**Why a resistor swap alone isn't enough:** the gate must still reach
+~4.2 V for 100 A plus margin, so the lowest workable gain is ~5
+(terminated OUT1). That only improves resolution ~1.6× (≈ 0.09–0.12 A per
+count) — still at the spec limit.
+
+**What it is:** gate = V_bias + G·OUT1, so the full OUT1 range covers only
+the useful window. Example: V_bias ≈ 3.0–3.2 V, G ≈ 1.5 → ≈ **0.025–0.04 A
+per OUT1 count (5–7× finer)**, with the same factor of immunity to ground
+noise and almost no dead-zone delay. Simplest implementation: keep the
+OPA994, sum OUT1 and the bias into its + input through two resistors, and
+set the gain for the ~1.5 V span.
+
+**Constraints:**
+
+- **V_bias below the hottest device's threshold.** V_th falls ~5 mV/K
+  (check the datasheet), so 3.53 V at room temperature is ~3.3 V at
+  +40 K. With the bias above threshold, OUT1 = 0 no longer means zero
+  current.
+- **The bias must be quiet and stable:** the bank is ~200 A per gate
+  volt, so 1 mV of bias noise or drift ≈ 0.2 A. Use a precision reference
+  (REF5030-class), divided and RC-filtered — not a divider off a supply
+  rail. The integrator removes slow drift, not noise.
+- Op-amp supply rail must still cover the maximum gate command.
+
+**Firmware:** no code change. G_pass changes, so the PI gains are rescaled
+and the OUT1 clamp recalibrated (both already required for the MVP).
+
+**Measure first:** coil-current noise at a steady hold with the gain-8
+stage as built, against the 0.1 % spec. If it passes, this stays shelved.
