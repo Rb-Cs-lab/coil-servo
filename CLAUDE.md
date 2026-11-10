@@ -14,23 +14,25 @@ rest of the repo in line is [docs/mvp_rewrite_brief.md](docs/mvp_rewrite_brief.m
 §11 — work it in order, one step per session. This file is the
 quick-reference facts; if they conflict, flag it — don't silently pick one.
 
-**Rewrite status (2026-11-10): steps 1–2 of 6 done.** The model (`model/`)
-now describes the MVP: `channels.py` / `plant.py` (dead zone, measured V_th,
-5 V compliance, freewheel turn-off, bridge-open branch, I_FS = 200 A), float
-PI with a lower bound. The HDL, fixed-point mirror, host config and remaining
-docs still describe the full architecture until steps 3–5; the cocotb
-benches, fixed-point closed-loop tests and the channels.toml test therefore
-run against the legacy `model/coil_servo_model/fullarch.py`, which is
-deleted once they move over. Model findings (see `model/tests/test_float_loop.py` docstring): steps from
-zero wait ~2.7 ms on the dead zone — **decided 2026-11-10: step 3 adds a
-configurable RUN-only PI/integrator floor at ~90 % of the measured dead
-zone** (mvp_architecture.md §3.1); large down-steps undershoot unless the
-setpoint is ramped at ≤ the freewheel rate (operating rule for the control
-computer).
-Turn-off decision made (bridge stays closed, freewheel model by default), so
-step 2's model tests use the freewheel decay, not the brief's TVS-limited
-rates. Remaining ⚠ REVIEW items in mvp_architecture.md (clamp meaning,
-actuator resolution) feed step 3.
+**Rewrite status (2026-11-10): steps 1–3 of 6 done.** Model, fixed-point
+mirror, HDL and cocotb benches describe the MVP (all benches close the loop
+around the MVP plant). Step 3 added (register_map.md): CFG widened to 32
+words; `out2_enable` (OUT2 ≡ 0), RUN-only PI floor `u_floor` (W16),
+over-current trip `trip_level`/`trip_ticks`/`trip_timeout` (W17–19) +
+`trip_ack`, FSM states TRIP/TRIPPED, arm *edge* required to leave IDLE.
+**Host config (step 4) does not yet write the new registers** — with the
+step-3 bitstream and the old host, `trip_level` = 0 trips on entering RUN
+(fail-safe), so do step 4 before using a rebuilt bitstream (step 6). The
+legacy `model/coil_servo_model/fullarch.py` is kept only for the
+channels.toml test until step 4.
+Model findings — operating rules for the control computer (see the
+`model/tests/test_float_loop.py` docstring): ramp the setpoint **down at
+≤ ~50 A/ms** (else undershoot) and **up at ≤ ~200 A/ms** (else up to ~20 %
+overshoot on compliance-limited steps of ~55–95 A); firmware remedy if
+wanted = setpoint slew limiter (CFG word 15, reserved). Fixed-point sims
+show the gain-8 actuator dithering one OUT1 count (~0.12 A): marginal
+against ±0.1 % at 30 A — the ⚠ REVIEW resolution item, bench-measure it.
+Turn-off decision made (bridge stays closed, freewheel model by default).
 
 ## Board
 
@@ -162,20 +164,27 @@ optimise firmware for speed — the analog side sets the bandwidth.
    **MVP caveat (⚠ REVIEW, mvp_architecture.md §3.5):** the clamp limits the
    OUT1 *command*; the current that command produces depends on G_pass, the
    dead zone and FET temperature, so the clamp value must be calibrated from
-   measured G_pass and is not by itself a current limit. The SE-600-5's
-   overcurrent protection is the real hard limit until a measured-current
-   trip exists. Never derive the clamp from the sensor scale (I_FS).
+   measured G_pass and is not by itself a current limit. Never derive the
+   clamp from the sensor scale (I_FS). **The current limit is the
+   over-current trip (decided 2026-11-10, MOT 100 A = the supply's
+   rating):** |IN1| > `trip_level` for `trip_ticks` samples → both DACs to
+   zero at once, coil freewheels with the bridge closed, bridge opens in
+   the zero window (or after `trip_timeout`), latched in TRIPPED until
+   `trip_ack` + a fresh arm edge. The SE-600-5's OCP is the backup.
 2. Reset state is off: all DIO outputs low, both DACs zero, integrator
-   cleared, FSM in IDLE. In the MVP, leaving IDLE also needs an arm *edge*
-   (a level already high at load doesn't count) — rewrite step 3.
+   cleared, FSM in IDLE. Leaving IDLE needs `servo_enable` and an arm
+   *edge* (a level already high at load, after a stop or after a trip
+   doesn't count).
 3. OUT1 and OUT2 mutually exclusive at all times (deadband handoff); in the
-   MVP OUT2 ≡ 0 (`out2_enable` = 0, rewrite step 3).
+   MVP OUT2 ≡ 0 (`out2_enable` = 0). Both DACs are exactly zero on the same
+   clock the bridge-enable pin drops.
 4. Bridge enable requires active assertion; enable-low is safe in both
    polarity states. The logic board generates no dead time — the FSM's
    enable-low window is the only shoot-through protection.
 5. Heartbeat (DIO6) toggles unconditionally while the fabric runs.
 6. Integrator anti-windup, including during clamp phase and bridge-disabled
-   — and, in the MVP, at the lower bound (PI output ≤ 0, OUT1 = 0).
+   — and, in the MVP, at the lower bound (0, or `u_floor` in RUN): the
+   integrator never goes below it.
 
 The hardware protection does not pass through the Pitaya. In the MVP it is
 only the heartbeat latch on the logic board; DIO5_P is unwired. Firmware

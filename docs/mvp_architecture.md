@@ -163,14 +163,32 @@ for OUT1.
 **Dead zone vs. the integrator — ✓ DECIDED (Santi, 2026-11-10): skip the
 dead zone.** With the anti-windup floor at OUT1 = 0, the integrator must
 climb ~0.44 of full scale before any current flows; the model shows a
-0 → 10 A step starting ~2.7 ms late at the rescaled gains. Rewrite step 3
-adds a configurable floor (CFG register, default 0) that, in RUN only,
-bounds the PI output and integrator from below and is where the integrator
-starts after a clear. Set it to ~90 % of the *measured* dead zone (≈ 3.15 V
-of gate, ~0.35 V below the lowest threshold — margin for ~70 K of
-threshold drop at ~−5 mV/K). In the model this brings every step from zero
-inside 1 ms. Outside RUN the outputs stay exactly zero, so the reset-off
-invariant is unchanged. No hardware change.
+0 → 10 A step starting ~2.7 ms late at the rescaled gains. **Implemented in
+rewrite step 3** as CFG word 16 `u_floor` (default 0): in RUN only, it
+bounds the PI output and integrator from below, so a step from zero starts
+from just below conduction. Set it to ~90 % of the *measured* dead zone
+(≈ 3.15 V of gate, ~0.35 V below the lowest threshold — margin for ~70 K of
+threshold drop at ~−5 mV/K). In the model and the HDL bench this brings
+steps from zero inside 1 ms. Outside RUN the lower bound is 0, and with the
+bridge open the outputs are exactly zero, so the reset-off invariant is
+unchanged. No hardware change.
+
+**Model findings from step 3 (operating rules, not firmware):**
+
+- *Large up-steps overshoot.* A step that is compliance-limited (the 5 V
+  rail sets the ramp) but ends below the clamp — roughly 55–95 A on the
+  MOT — overshoots by up to ~20 % (70 A step → ~84 A peak). The integrator
+  winds up during the rise because no output bound is engaged. Ramping the
+  setpoint at ≤ 200 A/ms removes it (0 → 70 A then settles ~1 ms after the
+  ramp ends). Together with the down-ramp rule (≤ ~50 A/ms, section 3.3)
+  this is an operating rule for the control computer; the firmware remedy,
+  if wanted, is the setpoint slew limiter (CFG word 15, reserved;
+  future_upgrades.md section 3).
+- *Actuator dither.* In the fixed-point simulation a steady hold dithers
+  between two adjacent OUT1 codes, ~0.12 A of coil current (~50 mA p-p
+  after the gate lag). At 30 A that is as wide as the whole ±0.1 % band.
+  This is the resolution item above, now visible in simulation; the bench
+  measurement decides.
 
 Model parameters: `V_th` (per FET, measured), `g_fs` (datasheet,
 PROVISIONAL), `R2`, `N_fets`, `gain_opamp`, `out1_termination`; `G_pass`
@@ -258,11 +276,14 @@ question (section 8).
 
 Firmware consequences (unchanged by the freewheel question):
 
-- The PI output's useful range is 0 … +clamp. When u ≤ 0, OUT1 = 0, and the
-  integrator is anti-wound at the zero bound exactly as at the upper clamp.
-- The output mux's OUT2 branch is disabled in the MVP (OUT2 ≡ 0); the
-  deadband becomes an OUT1-only turn-on hysteresis.
-- New status flag `u_floor`: PI output at or below zero, current decaying
+(all implemented in rewrite step 3, see register_map.md)
+
+- The PI output's useful range is floor … +clamp, with the floor 0 (or
+  `u_floor` in RUN). At the floor the integrator is anti-wound exactly as
+  at the upper clamp and never goes below it.
+- The output mux's OUT2 branch is disabled in the MVP (CFG `out2_enable`
+  = 0 → OUT2 ≡ 0); the deadband becomes an OUT1-only turn-on hysteresis.
+- Status flag `u_floor`: PI output on its lower bound, current decaying
   only.
 
 ### 3.4 Ramp up
@@ -297,11 +318,27 @@ What this means in practice:
 - the clamp value must be **calibrated from the measured G_pass and dead
   zone**, with temperature margin, and is PROVISIONAL until then — never
   hardcoded from the sensor scale;
-- the real hard current limit in the MVP is the **SE-600-5's overcurrent
-  protection**;
-- candidate firmware remedy for step 3: a fast trip on *measured* current
-  (IN1 above ~105 % of rated → OUT1 to zero and latch), which restores the
-  intent of invariant 1 independently of the actuator's calibration.
+- **✓ DECIDED (Santi, 2026-11-10): firmware over-current trip at 100 A**
+  (the SE-600-5's rating), implemented in rewrite step 3 (CFG words
+  17–19, FSM states TRIP/TRIPPED). It works on *measured* current, so it
+  restores the intent of invariant 1 independently of the actuator's
+  calibration:
+  1. |IN1| above `trip_level` for `trip_ticks` consecutive 1 µs samples →
+     both DACs to zero on the next clock, setpoint forced to zero,
+     integrator frozen;
+  2. the bridge stays closed, so the coil freewheels down (~1.3 ms from
+     100 A, section 3.3) instead of pushing its energy into the supply;
+  3. once the current is inside the flip zero window the bridge opens —
+     or after `trip_timeout` regardless (e.g. a shorted pass FET that keeps
+     current flowing; then the energy does go into the supply);
+  4. latched in TRIPPED; the host pulses `trip_ack`, and the control
+     computer must re-raise arm.
+  Behaviour at the limit: the trip compares the 1 µs-averaged IN1 reading
+  with the level, so holding a setpoint of exactly 100 A will trip on the
+  dither/noise. Keep operating setpoints a little below the trip level
+  (~98 A), or set the trip slightly above 100 A — the supply's own
+  overcurrent protection then remains the backup;
+- the SE-600-5's overcurrent protection is the backup hard limit.
 
 ---
 
