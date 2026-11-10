@@ -91,19 +91,18 @@ mu-metal or other ferromagnetic hardware nearby responds hysteretically
 and won't pre-emphasize away. Validate with atoms, not just the pickup
 coil.
 
-## 3. Setpoint slew-rate limiter (decision 2026-08-27: not needed)
+## 3. Setpoint slew-rate limiter — ✓ IMPLEMENTED (MVP rewrite step 3, 2026-11-10)
 
-Moved here from design.md §4b. Today a setpoint step ramps the current
-as fast as the rail allows (V/L — that speed is the requirement, and the
-boost cap exists to provide it). If a *physical* reason to ramp slower
-ever appears — mechanical impulse on the coil mounts from fast dB/dt, or
-eddy heating in chamber metal — the right fix is a ramp generator in
-fabric between the setpoint mux and the error subtraction (design.md
-Node B), with the rate as a CFG register (**word 15 is reserved for
-it** — see [register_map.md](register_map.md)). It must NOT be done in
-Python (can't time µs) or by detuning the loop (ruins disturbance
-rejection). Small, well-contained addition; revisit only if the hardware
-people raise dB/dt as a concern.
+No longer a future upgrade. The 2026-08-27 "not needed" decision assumed
+the full architecture, where a setpoint step simply ramped at the rail's
+V/L. On the MVP plant raw steps misbehave: compliance-limited up-steps of
+~55–95 A overshoot by up to ~20 %, and large down-steps undershoot
+(mvp_architecture.md 3.1). The fix is the ramp generator this section
+described — in fabric, between the setpoint mux and the error
+subtraction (`modules/servo_slew.v`), with separate rates away from and
+toward zero (CFG words 15 `slew_up` and 20 `slew_down`; MOT 200 A/ms and
+50 A/ms). Not in Python and not by detuning the loop, as argued here
+originally.
 
 ## 4. Firmware supervisory temperature soft-stop (discussed 2026-08-31)
 

@@ -89,11 +89,15 @@ python -m coil_servo_host.watch mot
 
 ## 3. Analog sanity into a scope (still no load)
 
-Scope on OUT1. Arm the board (drive DIO4, E1 pin 11, to 3.3 V — it has a
-pull-down, so leaving it disconnected means disarmed), then from Python:
+Scope on OUT1. **Order matters (since MVP rewrite step 3): set
+`servo_enable` first, then raise arm.** The FSM leaves IDLE only on a
+rising *edge* of arm (DIO4, E1 pin 11) while `servo_enable` is already 1;
+an arm line that was high before `servo_enable` was set does nothing until
+it is dropped and raised again. Arm has a pull-down, so disconnected means
+disarmed. From Python (the command waits while you connect pin 11 to 3V3):
 
 ```bash
-python -c "from coil_servo_host import Board, load_channel; ch = load_channel('mot'); b = Board(ch['host']); b.apply_config(ch['cfg']); b.write_cfg(sp_source=1, open_loop=1, setpoint=1000, servo_enable=1); input('OUT1 should read ~122 mV; Enter to zero'); b.write_cfg(setpoint=0, servo_enable=0)"
+python -c "from coil_servo_host import Board, load_channel; ch = load_channel('mot'); b = Board(ch['host']); b.apply_config(ch['cfg']); b.write_cfg(sp_source=1, open_loop=1, setpoint=1000, servo_enable=1); input('Now connect pin 11 to 3V3 (arm edge). OUT1 should read ~122 mV; Enter to zero'); b.write_cfg(setpoint=0, servo_enable=0)"
 ```
 
 1000 counts = 122 mV at OUT1. Check OUT2 stays at 0. Repeat with
@@ -110,8 +114,10 @@ pins (pins 1/2)** — never from a 5 V source; E1 is not 5 V tolerant.
 **Digital inputs.** Run `python -m coil_servo_host.watch mot` in one
 terminal and touch jumpers while watching it:
 
-- 3V3 → pin 11 (arm): `armed` goes 1; with `servo_enable=1` the state
-  goes IDLE → RUN and bridge enable (pin 5) goes high on the scope.
+- With `servo_enable=1` already set, 3V3 → pin 11 (arm): `armed` goes 1,
+  the state goes IDLE → RUN and bridge enable (pin 5) goes high on the
+  scope. If arm was connected *before* `servo_enable` was set, nothing
+  happens (by design — an arm edge is required); unplug and replug it.
 - 3V3 → pin 13 (fault): the `fault` flag appears. Remove it: flag clears
   (the *firmware* flag follows the pin; only the hardware interlock
   latches).

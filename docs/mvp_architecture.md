@@ -173,17 +173,18 @@ steps from zero inside 1 ms. Outside RUN the lower bound is 0, and with the
 bridge open the outputs are exactly zero, so the reset-off invariant is
 unchanged. No hardware change.
 
-**Model findings from step 3 (operating rules, not firmware):**
+**Model findings from step 3:**
 
 - *Large up-steps overshoot.* A step that is compliance-limited (the 5 V
   rail sets the ramp) but ends below the clamp — roughly 55–95 A on the
   MOT — overshoots by up to ~20 % (70 A step → ~84 A peak). The integrator
   winds up during the rise because no output bound is engaged. Ramping the
   setpoint at ≤ 200 A/ms removes it (0 → 70 A then settles ~1 ms after the
-  ramp ends). Together with the down-ramp rule (≤ ~50 A/ms, section 3.3)
-  this is an operating rule for the control computer; the firmware remedy,
-  if wanted, is the setpoint slew limiter (CFG word 15, reserved;
-  future_upgrades.md section 3).
+  ramp ends). **✓ DECIDED (Santi, 2026-11-10): the firmware enforces both
+  ramp limits** — ≤ 200 A/ms away from zero, ≤ 50 A/ms toward zero (the
+  down-step rule, section 3.3) — with a setpoint slew limiter in fabric
+  (CFG words 15/20). The integration bench steps 0 → 70 → 20 A with no
+  overshoot or undershoot.
 - *Actuator dither.* In the fixed-point simulation a steady hold dithers
   between two adjacent OUT1 codes, ~0.12 A of coil current (~50 mA p-p
   after the gate lag). At 30 A that is as wide as the whole ±0.1 % band.

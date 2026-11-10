@@ -19,17 +19,20 @@ mirror, HDL and cocotb benches describe the MVP (all benches close the loop
 around the MVP plant). Step 3 added (register_map.md): CFG widened to 32
 words; `out2_enable` (OUT2 ≡ 0), RUN-only PI floor `u_floor` (W16),
 over-current trip `trip_level`/`trip_ticks`/`trip_timeout` (W17–19) +
-`trip_ack`, FSM states TRIP/TRIPPED, arm *edge* required to leave IDLE.
+`trip_ack`, FSM states TRIP/TRIPPED, arm *edge* required to leave IDLE
+(so: set `servo_enable` first, then raise arm), setpoint slew limiter
+`slew_up`/`slew_down` (W15/W20).
 **Host config (step 4) does not yet write the new registers** — with the
 step-3 bitstream and the old host, `trip_level` = 0 trips on entering RUN
-(fail-safe), so do step 4 before using a rebuilt bitstream (step 6). The
+and slew rates of 0 freeze the setpoint (both fail-safe), so do step 4
+before using a rebuilt bitstream (step 6). The
 legacy `model/coil_servo_model/fullarch.py` is kept only for the
 channels.toml test until step 4.
-Model findings — operating rules for the control computer (see the
-`model/tests/test_float_loop.py` docstring): ramp the setpoint **down at
-≤ ~50 A/ms** (else undershoot) and **up at ≤ ~200 A/ms** (else up to ~20 %
-overshoot on compliance-limited steps of ~55–95 A); firmware remedy if
-wanted = setpoint slew limiter (CFG word 15, reserved). Fixed-point sims
+Model findings (see the `model/tests/test_float_loop.py` docstring): raw
+setpoint steps undershoot going down and overshoot up to ~20 % on
+compliance-limited up-steps of ~55–95 A, so **the firmware enforces ramps
+(decided 2026-11-10): ≤ 200 A/ms away from zero, ≤ 50 A/ms toward zero**
+(`servo_slew.v`, CFG words 15/20); the control computer may step. Fixed-point sims
 show the gain-8 actuator dithering one OUT1 count (~0.12 A): marginal
 against ±0.1 % at 30 A — the ⚠ REVIEW resolution item, bench-measure it.
 Turn-off decision made (bridge stays closed, freewheel model by default).
