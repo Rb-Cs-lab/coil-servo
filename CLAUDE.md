@@ -21,11 +21,12 @@ PI with a lower bound. The HDL, fixed-point mirror, host config and remaining
 docs still describe the full architecture until steps 3–5; the cocotb
 benches, fixed-point closed-loop tests and the channels.toml test therefore
 run against the legacy `model/coil_servo_model/fullarch.py`, which is
-deleted once they move over. Model findings that step 3 must decide on
-(see `model/tests/test_float_loop.py` docstring): steps from zero wait
-~2.7 ms on the dead zone unless the integrator is floored just below it, and
-large down-steps undershoot unless the setpoint is ramped at ≤ the freewheel
-rate.
+deleted once they move over. Model findings (see `model/tests/test_float_loop.py` docstring): steps from
+zero wait ~2.7 ms on the dead zone — **decided 2026-11-10: step 3 adds a
+configurable RUN-only PI/integrator floor at ~90 % of the measured dead
+zone** (mvp_architecture.md §3.1); large down-steps undershoot unless the
+setpoint is ramped at ≤ the freewheel rate (operating rule for the control
+computer).
 Turn-off decision made (bridge stays closed, freewheel model by default), so
 step 2's model tests use the freewheel decay, not the brief's TVS-limited
 rates. Remaining ⚠ REVIEW items in mvp_architecture.md (clamp meaning,

@@ -160,14 +160,17 @@ gain with a fixed ~3.4 V gate bias (OUT1 then spans the useful region:
 ~8× better resolution and ground immunity), and/or a differential receiver
 for OUT1.
 
-**Dead zone vs. the integrator.** The PI integrator absorbs the dead zone,
-but with the anti-windup floor at OUT1 = 0 it must climb ~0.44 V of dead
-zone before any current flows: for a small step from zero (e.g. 10 A) at
-the commissioned ki that is ~0.6 ms, and several ms once ki is scaled down
-for the real plant. Candidate firmware remedy for step 3 of the rewrite: a
-configurable OUT1 bias/floor just below the dead-zone edge while in RUN
-(outputs still exactly zero outside RUN, so the reset-off invariant is
-unchanged).
+**Dead zone vs. the integrator — ✓ DECIDED (Santi, 2026-11-10): skip the
+dead zone.** With the anti-windup floor at OUT1 = 0, the integrator must
+climb ~0.44 of full scale before any current flows; the model shows a
+0 → 10 A step starting ~2.7 ms late at the rescaled gains. Rewrite step 3
+adds a configurable floor (CFG register, default 0) that, in RUN only,
+bounds the PI output and integrator from below and is where the integrator
+starts after a clear. Set it to ~90 % of the *measured* dead zone (≈ 3.15 V
+of gate, ~0.35 V below the lowest threshold — margin for ~70 K of
+threshold drop at ~−5 mV/K). In the model this brings every step from zero
+inside 1 ms. Outside RUN the outputs stay exactly zero, so the reset-off
+invariant is unchanged. No hardware change.
 
 Model parameters: `V_th` (per FET, measured), `g_fs` (datasheet,
 PROVISIONAL), `R2`, `N_fets`, `gain_opamp`, `out1_termination`; `G_pass`
