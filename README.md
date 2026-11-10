@@ -13,7 +13,11 @@ no control decisions are made in software.
 - New to the project (or to FPGAs)? Read *How the pieces fit* and *Setup*
   below.
 - Hardware being built (MVP, Nov 2026): [docs/mvp_architecture.md](docs/mvp_architecture.md);
+  what the servo promises the power stage: [docs/servo_interface_brief.md](docs/servo_interface_brief.md);
   original requirements and lab context: [docs/history/BOOTSTRAP.md](docs/history/BOOTSTRAP.md)
+- Programming experimental sequences: [docs/operating_scenarios.md](docs/operating_scenarios.md)
+- Bringing hardware up, step by step: [docs/bringup.md](docs/bringup.md)
+- Options considered and shelved: [docs/future_upgrades.md](docs/future_upgrades.md)
 - Hardware facts, pinout, toolchain versions: [CLAUDE.md](CLAUDE.md)
 - The control-loop design (every number in the loop, and why):
   [docs/design.md](docs/design.md)
@@ -51,14 +55,14 @@ Vocabulary used throughout the repo:
 | Path | What it is |
 |---|---|
 | `cores/*.v` | Verilog building blocks (each is packaged as a Vivado "IP block" — a reusable circuit component). `coil_servo_top.v` is the whole servo and the only one we wrote; the `axi_hub.v`/`axis_*.v` files are unmodified upstream infrastructure you are not expected to read |
-| `modules/*.v` | The servo submodules (PI, decimator, error path, output mux, flip FSM, heartbeat) instantiated by `coil_servo_top` |
+| `modules/*.v` | The servo submodules (PI, decimator, error path, setpoint slew limiter, OUT1 dither, output mux, flip FSM with over-current trip, heartbeat) instantiated by `coil_servo_top` |
 | `projects/coil_servo/` | The servo's block design (Tcl script — text, diffable, no GUI) |
 | `projects/playground/` | Known-good upstream demo; used to smoke-test a new Vivado install |
 | `scripts/`, `Makefile`, `cfg/` | Build machinery and pin constraints (from pavel-demin/red-pitaya-notes, tag `20251012`, MIT) |
-| `docs/` | Design doc and register map |
+| `docs/` | MVP architecture, interface brief, operating scenarios, bring-up checklist, register map, loop design, lab notes, future upgrades |
 | `model/` | Python reference model: plant + float PI (trusted) + bit-exact fixed-point mirror. Run its tests with `pytest` after `pip install -e .` |
 | `sim/` | cocotb testbenches: each servo core is simulated with Icarus Verilog and compared bit-for-bit against the Python fixed-point model. Runs as part of `pytest` |
-| `host/` | Lab-PC tools: `deploy` (bitstream + register server onto the board), `check` (sanity), `watch` (live current/state display), `step` and `sweep` (measurements → CSV), `config/channels.toml` (every provisional value, per board). Boards are reached over **wired Ethernet only** — see [docs/bringup.md](docs/bringup.md) |
+| `host/` | Lab-PC tools: `deploy` (bitstream + register server onto the board, then a safe-state check), `check` (sanity), `watch` (live current/state display), `step` and `sweep` (measurements → CSV), `config` (prints the register values derived from the configuration), `config/channels.toml` (every measured or provisional number, per board). Boards are reached over **wired Ethernet only** — see [docs/bringup.md](docs/bringup.md) |
 
 ## Setup
 
@@ -75,7 +79,8 @@ Needed by anyone touching the loop design; no Vivado required.
    cocotb, and matplotlib. Without the `-e .` part, `pytest` fails with
    import errors.
 4. Check everything: `pytest` from the repo root should end in
-   "54 passed" (model tests + simulated-hardware tests + host-tool tests).
+   "111 passed" (model tests + simulated-hardware tests + host-tool tests;
+   about 2 minutes, most of it the simulated FPGA).
 
 ### B. FPGA build machine (Ubuntu 24.04 or 22.04 only)
 
@@ -170,6 +175,10 @@ If a build dies with an out-of-memory kill, give WSL more RAM: create
    (default password `root` — change it).
 3. **Before connecting the analog front end**, check the input jumpers on
    IN1/IN2 are set to **LV (±1 V)** — the firmware's calibration assumes it.
+4. **After every board reboot** the servo bitstream and the register server
+   are gone (the board boots the stock image). Re-run `deploy` (below); the
+   host tools say "no register server answering … run deploy" when this
+   is the problem. (On 2026-11-03 `check` failed for exactly this reason.)
 
 ## Building and loading the servo bitstream
 
@@ -205,11 +214,15 @@ Python — no Vivado, no rebuild, takes effect immediately**:
 
 | Want to change | How |
 |---|---|
-| PI gains, output clamp, deadband | CFG registers (words 2–7) |
+| PI gains, OUT1 clamp, deadband | `kp`, `ki`, `out_clamp_counts`, `deadband_counts` in channels.toml (CFG words 2–7) |
+| Over-current trip level, persistence, timeout | `trip_*` in channels.toml (CFG words 17–19) |
+| Setpoint ramp limits | `slew_*_amps_per_ms` (CFG words 15, 20) |
+| Dead-zone floor | `floor_frac` or `u_floor_counts` (CFG word 16) |
+| OUT1 dither on/off | `dither_enable` (ctrl bit 20) |
 | Flip timing: zero window, dead time, settle delay, timeout | CFG registers (words 8–12) |
-| Setpoint source (analog IN2 vs. register), boost-cap mode | `ctrl` register bits |
+| Setpoint source (analog IN2 vs. register) | `ctrl` register bit |
 | Polarity/active level of the DIO *inputs* (flip request, arm, fault) | `dio_invert` register (word 13) |
-| Sensor scaling after a burden-resistor change, or LV→HV jumper move | edit `I_FS` in `host/config/channels.toml` (it's a calibration constant — one number) |
+| A new measurement: thresholds, g_fs, op-amp gain, OUT1 termination, burden, in-amp gain | edit the physics block in `host/config/channels.toml`; the sensor scale, clamp and floor are re-derived (`python -m coil_servo_host.config mot` shows them) |
 
 Things that deliberately **do** require editing a file and rebuilding the
 bitstream (~15 min, then reload):
@@ -218,24 +231,45 @@ bitstream (~15 min, then reload):
 |---|---|---|
 | Which physical pin a signal uses | `projects/coil_servo/block_design.tcl` | pin routing is part of the compiled circuit |
 | Polarity of DIO *outputs* (bridge enable/polarity, boost) | named constant in the safety core | the FPGA's power-on state must be safe with zero configuration, so "pin low = FETs off" is fixed in the fabric, not in a register a bug could flip |
+| The register layout itself | `docs/register_map.md` first, then `registers.py` and the HDL; bump `MAP_REV` | the host refuses to configure a bitstream whose map revision it doesn't know |
 | Word widths, decimation ratio | Verilog + `docs/design.md` | changes the arithmetic; must re-pass the testbench and re-review the design doc |
 
 ## Safety model (summary — full list in CLAUDE.md)
 
-The FPGA enforces, independent of any software: a hard output clamp at 100 %
-of each channel's rated current; power-on state = everything off; OUT1/OUT2
-never active simultaneously; bridge polarity never flips at nonzero current
-(and a flip that can't reach zero current times out into a safe hold instead
-of proceeding); a heartbeat on DIO6 that an external monostable can use to
-kill the bridge if the FPGA hangs. The hardware interlock chain does not go
-through the Red Pitaya at all — the firmware can *report* a fault (DIO5) but
-has no way to clear one.
+The FPGA enforces, independent of any software:
+
+- power-on state = everything off, and leaving it needs `servo_enable`
+  from the host **and** a fresh rising edge on the arm line;
+- an **over-current trip on the measured current** (MOT: 100 A) that zeroes
+  the outputs, lets the coil run down with the bridge closed, opens the
+  bridge and latches until acknowledged — plus a hard clamp on the OUT1
+  command;
+- setpoint ramps limited to 200 A/ms up and 50 A/ms down;
+- OUT2 and the boost line held at zero (not fitted in the MVP);
+- bridge polarity never flips at nonzero current (a flip that can't reach
+  zero current parks safely instead of proceeding); software "off" is a
+  graceful ramp-to-zero;
+- a heartbeat on DIO6 that keeps running only while the FPGA does.
+
+The only automatic **hardware** protection in the MVP is the heartbeat
+latch on the logic board: no heartbeat → bridge drivers disabled and
+latched until someone presses reset (it powers up tripped). The SE-600-5's
+own over-current protection backs up the firmware trip. There is no relay
+interlock chain yet, and DIO5 (fault input) is not wired.
+
+**Safety rules for the lab:**
+
+- **No sustained current without water flowing** through the cold plates
+  (~50 W per pass FET at 100 A). The first test round runs uncooled: short
+  pulses, reduced current, a written duty limit.
+- OUT2 and DIO2_P stay unconnected.
+- **Disarm before pressing the latch reset** after any heartbeat trip — the
+  firmware never saw the bridge open and may be wound up.
 
 Losing the network does **not** stop the loop: if the Ethernet cable is
 pulled or the lab PC crashes, the servo keeps running in the FPGA at its
 last register settings. That is deliberate (a network glitch must not drop
-a field mid-experiment) — protection against a genuinely hung board is the
-heartbeat/monostable and the hardware interlock chain, never the network.
+a field mid-experiment).
 
 ## Project status
 
@@ -247,7 +281,9 @@ heartbeat/monostable and the hardware interlock chain, never the network.
 | 4 | cocotb testbench (`sim/`) | ✅ every core plus the integrated servo benched under Icarus |
 | 5 | PI core + flip FSM Verilog (`cores/`) | ✅ all six servo cores benched (PI, decimator, error path, output mux, flip FSM, heartbeat) |
 | 6 | Vivado build of the full design | ✅ built 2026-08-27 (WSL on the lab NUC), timing met after one pipeline fix |
-| 7 | Hardware-in-the-loop scripts (`host/`), dummy-load first | ✅ first deploy 2026-08-27: heartbeat advancing at exactly 125 MHz, LED walk, safe IDLE state, ~1.3 mV ADC offset. Next: board-only I/O tests ([bringup.md](docs/bringup.md) §3b). Still pending: AOUT0 offset trim, XADC readout tool |
+| 7 | Hardware-in-the-loop scripts (`host/`), dummy-load first | ✅ first deploy 2026-08-27: heartbeat advancing at exactly 125 MHz, LED walk, safe IDLE state, ~1.3 mV ADC offset. Still pending: AOUT0 offset trim, XADC readout tool |
+| 8 | **MVP power stage (Nov 2026)** | MVP parts bought; thresholds measured and FETs matched (11-02); logic board built and LED-tested (11-03); water-cooled plates machined and FETs mounted (11-04); pass bank assembled; H-bridge assembly in progress with Jeff |
+| 9 | **MVP rewrite of the repo** ([brief](docs/mvp_rewrite_brief.md) §11) | ✅ steps 1–5 (docs, model, firmware + benches, host, docs sweep). Next: step 6 — rebuild the bitstream on the NUC; the board still runs the 2026-08-27 image, which the new host tools refuse to configure |
 
 ## License
 

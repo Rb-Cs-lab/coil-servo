@@ -1,0 +1,84 @@
+# Coil servo — MVP build and bring-up log (November 2026)
+
+**Channel:** MOT | **Board:** Red Pitaya STEMlab 125-14 at 192.168.0.65
+(wired) | **Power stage:** the MVP (docs/mvp_architecture.md) |
+**Sources:** OneNote "Construction" notes (Santi + Jeff, 11-02 to 11-06)
+and the design decisions of 11-10.
+
+## Build log
+
+- **11-02 — MOSFET thresholds.** V_GS(th) of all 10 pass-bank
+  (IXTN200N10L2, at 3 mA) and 10 bridge (IXFN420N10T, at 8 mA) devices
+  measured: gate tied to drain, series resistor from a bench supply,
+  DMM across gate–source. Pass bank 3.35–3.56 V → installed #1, 2, 4, 7,
+  9, 10 (3.50–3.56 V, 0.06 V spread → ≤ 12 % current-sharing spread at
+  100 A). Bridge 3.51–3.59 V → installed #2, 5, 6, 9 (0.01 V spread).
+  The SE-600-5 was reordered after the wrong model arrived.
+- **11-03 — logic board on the MOT Red Pitaya** (still running the
+  2026-08-27 bitstream). `pip install -e .` then `python -m
+  coil_servo_host.check mot` **failed at first**: after a reboot the
+  board had neither the bitstream nor the register server running. Fixed
+  by hand over ssh:
+
+  ```bash
+  /opt/redpitaya/bin/fpgautil -b /root/coil_servo.bit.bin
+  ```
+
+  ```bash
+  nohup python3 /root/coil_servo_server.py --port 9001 >/dev/null 2>&1 &
+  ```
+
+  After that `check` reported heartbeat ADVANCING, LED walk done,
+  state IDLE, armed 0, fault 0, bridge_en 0, polarity 0, measured
+  **+0.179 A** (at the old I_FS = 125 A: ≈ 1.4 mV IN1 offset, ≈ 0.29 A at
+  the MVP's 200 A scale). The LED acceptance sequence passed
+  (bringup.md 3a). In that test `servo_enable` was set from Python
+  *after* arm was already high, and the old firmware went to RUN on the
+  level — the MVP firmware needs an arm edge after `servo_enable`, so the
+  recipe now enables first, then arms.
+- **11-03 — monostable timing.** First built with 68 kΩ: the timeout was
+  ~1.1 ms, about one heartbeat period, so a pulled heartbeat could
+  recover on an edge. Changed to **220 kΩ / 100 nF: drop ≈ 7.6 ms,
+  consistent**. (The CD74HC123 is specified at 5 V and times differently
+  on the 3.3 V rail; trust the measurement.)
+- **11-04 — cold plates.** Water-cooled plates machined (bridge: 4
+  SOT-227; pass bank: 6 SOT-227 + 6 MP930). FETs mounted with thermal
+  paste.
+- **11-04 — pass bank assembled.** 12 AWG equal-length drain legs to the
+  "input → drain" bus bar; gate/source leads and ballast resistors
+  soldered; source legs to the "output → to source" bus bar; 5KP12CA
+  between the bars; parts labelled; OPA994 perfboard with BNC input
+  wired.
+- **11-06 — H-bridge.** Assembly started; gate-drive pinout fixed
+  (mvp_architecture.md section 4); bridge bus bars ordered.
+
+## Decisions (11-10)
+
+- **Turn-off keeps the bridge closed:** current goes down by freewheeling
+  through the bridge body diodes (~1.3 ms from 100 A); the firmware never
+  opens the bridge at current. (The bank TVS does not conduct in this
+  path.) A faster snap-off later = blocking diode + TVS across the bridge
+  input (future_upgrades.md section 6; parts to be ordered).
+- **Dead-zone floor:** in RUN the PI output rests at ~90 % of the
+  pass-bank dead zone, so steps from zero meet the 1 ms target.
+- **Over-current trip at 100 A** (the supply's rating), on measured
+  current.
+- **Setpoint ramps enforced in firmware:** ≤ 200 A/ms up, ≤ 50 A/ms down
+  (raw steps overshoot or undershoot on this plant).
+- **OUT1 dither** to recover resolution lost to the gain-8 gate stage.
+- **DIO5 (fault input) not wired;** the Red Pitaya outputs nothing until
+  enabled and armed (edge).
+
+## Repo (MVP rewrite, brief section 11)
+
+Steps 1–5 done on 11-10: architecture docs, model, firmware + cocotb
+benches, host tools, documentation. The host now detects "no register
+server" and prints the `deploy` command (the 11-03 problem), and `deploy`
+checks the board comes up in its safe state. Auto-loading the bitstream
+and server at boot (systemd) was **not** done: it would change what state
+the board boots into — propose separately if wanted.
+
+**Next:** step 6 — rebuild the bitstream on the NUC (register-map
+revision 3), keep the August image as
+`coil_servo_fullarch_20260827.bit.bin`, deploy, then bring-up per
+[bringup.md](bringup.md).

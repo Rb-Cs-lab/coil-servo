@@ -17,6 +17,39 @@ wrong by 2¹⁴ still simulates *something* — so every conversion is written
 down here where it can be checked by eye, instead of living implicitly in
 the Verilog. Numeric examples use the MOT channel; formulas are per-channel.
 
+> **MVP changes (rewrite step 3, 2026-11-10) — read this first.** The
+> signal path below (ADC, error, decimator, PI arithmetic, formats) is
+> unchanged. Numbers in sections 0–4 still use the original
+> full-architecture scaling (I_FS = 1.25 × rated = 125 A, clamp 6554
+> counts = 0.8 V ≈ rated); the MVP uses **I_FS = 200 A** (sensor-derived)
+> and an OUT1 clamp calibrated from the pass bank (~4474 counts). What
+> the MVP adds or changes, each bit-exact in
+> `model/coil_servo_model/fixed_point.py` and benched against the HDL:
+>
+> - **Between Node B and the subtraction — setpoint slew limiter**
+>   (`modules/servo_slew.v`): the selected setpoint moves at most
+>   `slew_up` (away from zero) / `slew_down` (toward zero) per clock, in
+>   2⁻¹⁴ counts; an FSM-forced zero bypasses it, open loop bypasses it.
+> - **Node D/E — lower bound.** The output bound is
+>   `min(max(u, floor), clamp)`. In the MVP (`out2_enable` = 0) the floor
+>   is 0, or `u_floor` (≈ 90 % of the pass-bank dead zone) while the FSM
+>   is in RUN; with `out2_enable` = 1 it is −clamp as below. Anti-windup
+>   skips accumulation into either bound, and a non-negative floor also
+>   bounds the integrator (acc ≥ floor ≪ (7 + ki_shift)).
+> - **Node E — the clamp limits the OUT1 *command*, not the current**
+>   (mvp_architecture.md 3.5); the current limit is the FSM's
+>   **over-current trip** on the decimated measurement.
+> - **Node F — OUT2 disabled:** `out2_enable` = 0 holds OUT2 at 0; the
+>   deadband is an OUT1 turn-on hysteresis. Both outputs are gated
+>   combinationally by enable, so they are zero on the clock the bridge
+>   opens.
+> - **Between Node E and F — OUT1 dither** (`modules/servo_dither.v`): a
+>   first-order sigma-delta adds the 7 bits rounding drops back as a
+>   ±1-count toggle every clock, clipped to [floor, clamp].
+> - **Section 3 FSM — arm edge and trip:** leaving IDLE needs a rising
+>   arm edge; states 8 TRIP / 9 TRIPPED (register_map.md). The boost
+>   output (DIO2) is held low by configuration.
+
 ---
 
 ## 0. Per-channel normalization

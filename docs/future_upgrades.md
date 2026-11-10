@@ -261,3 +261,115 @@ and the OUT1 clamp recalibrated (both already required for the MVP).
 
 **Measure first:** coil-current noise at a steady hold with the gain-8
 stage as built, against the 0.1 % spec. If it passes, this stays shelved.
+
+## 8. Full-architecture features left out of the MVP (moved here in MVP rewrite step 5)
+
+The original design (docs/history/BOOTSTRAP.md, the 2026-09 interface
+brief) had several power-stage features the November 2026 MVP does not
+build. The firmware support for some of them still exists (OUT2,
+the boost output) but is held off by configuration. This section keeps
+the reasoning so they can be revisited.
+
+### 8a. Active clamp on OUT2
+
+**What it was:** a shunt N-FET bank from the bridge input to return, with
+a source-sense resistor and a local error amplifier, sinking current in
+proportion to the OUT2 command (a transconductance), with a TVS in
+parallel as the passive backstop. During ramp-downs and flips the coil
+current would recirculate through it at a compliance voltage of ~30 V,
+so the current falls at dI/dt ≈ V_clamp/L (~55 µs from 100 A on the MOT
+pair) while it absorbs ½LI² ≈ 0.08 J per event plus regulation power.
+
+![Clamp concept: shunt N-FET bank with source-sense resistor and error amplifier servoing sink current to the OUT2 command; TVS in parallel](img/clamp_concept.svg)
+
+**Why not in the MVP:** the MVP turns current down by letting the coil
+freewheel through the bridge body diodes (~1.3 ms from 100 A,
+mvp_architecture.md 3.3), which is fast enough for the first experiments
+and needs no extra hardware. The cheaper route to a fast snap-off is
+section 6 (blocking diode + TVS); the active clamp adds *servoed*
+ramp-downs on top of that.
+
+**Firmware:** already there — CFG ctrl b18 `out2_enable` = 1 restores the
+OUT1/OUT2 handoff with a deadband, and the PI's lower bound becomes
+−`out_clamp`. The model (`model/coil_servo_model/plant.py`) would need a
+clamp branch again (it existed in the deleted full-architecture model,
+see git history before rewrite step 4).
+
+### 8b. Boost rail (~15 V capacitor bank switched by DIO2)
+
+**What it was:** a capacitor-fed ~15 V rail switched in during fast ramps
+(E1 pin 7 = DIO2_P), with a ~3 V hold rail for continuous operation, so
+the linear pass bank would burn little on long holds. On 3 V alone the
+MOT could only ramp at ~0.2 A/µs.
+
+**Why not in the MVP:** the single 5 V SE-600-5 rail already ramps 0 →
+100 A in ~0.4 ms (compliance-limited), inside the 1 ms spec, at the cost
+of ~300 W in the pass bank at 100 A CW — handled by the water-cooled
+plates. A stuck boost switch at current would have put ~1.4 kW into the
+bank; not having one removes that fault case.
+
+**Firmware:** the auto/manual boost logic is still in
+`cores/coil_servo_top.v`; the MVP configuration keeps `boost_mode` = 0 and
+`boost_manual` = 0 so DIO2 stays low (asserted by the integration bench).
+
+### 8c. Per-FET source-sense loops in the pass bank
+
+**What it was:** each pass FET with its own op-amp loop sensing its
+source resistor, all following a shared reference from OUT1. That makes
+the bank a precise transconductance (no dead zone, current per volt set
+by the sense resistors, not by g_fs and V_th) and forces equal sharing.
+
+**Why not in the MVP:** six FETs with 30 mΩ ballast resistors share
+within ~12 % at 100 A (measured thresholds, model test), and the
+dead zone is handled in firmware (the RUN floor). The price is a plant
+gain that depends on g_fs and temperature, and coarse resolution
+(mitigated by the OUT1 dither, section 7 for the rest).
+
+### 8d. Shunt-sense inner current loop
+
+**What it would be:** a single precision shunt in the bank's return and
+one fast analog loop (op-amp) that servos the *total* bank current onto
+the OUT1 command. Compared with 8c it is one loop instead of six, and it
+turns OUT1 into a true current command: no dead zone, no g_fs or
+temperature dependence in the plant gain, and the ground-noise
+sensitivity of the gain-8 stage disappears. The digital loop then only
+corrects the slow errors of the shunt and LEM.
+
+**Cost:** a 4-terminal shunt rated for 100 A (~1 mΩ → 10 W at 100 A), a
+fast precision op-amp stage, and stability work on the inner loop (the
+FET gate capacitance is in it). **Measure first:** if the bench shows the
+plant-gain spread (temperature, g_fs) or ground noise limits the hold,
+this is the structural fix.
+
+### 8e. Hold capacitor across the rail (C_hold)
+
+A large low-ESR capacitor bank across the 5 V rail at the bridge input
+would supply the fast ramp current locally (the SE-600-5's own transient
+response then matters less) and give the bridge-open-at-current energy
+(~0.08 J) somewhere to go other than the supply's output capacitors.
+Open unknown in mvp_architecture.md section 8; decide after scoping the
+rail during ramps and one heartbeat trip at moderate current.
+
+### 8f. Relay interlock chain
+
+**What it was:** a hardware chain — coolant flow switch, thermal cutouts
+on the coils and heatsinks, a leak pad, over-current and
+over-temperature comparators — driving a latching relay that removes
+power, with a fault flag reported to the Red Pitaya on DIO5_P (read-only,
+no clear path from firmware).
+
+**MVP instead:** the heartbeat monostable + latch on the logic board is
+the only automatic hardware trip; the firmware over-current trip (100 A,
+register_map.md words 17–19) and the supply's OCP cover over-current;
+the first test round runs uncooled with short pulses and an explicit duty
+limit. DIO5_P is not wired. A firmware temperature soft-stop
+(section 4) is the cheap intermediate step once coil/plate temperatures
+are on the XADC inputs; the relay chain is what continuous operation at
+100 A with water cooling should eventually have.
+
+### 8g. Low-ripple supplies for science coils
+
+The SE-600-5's ~150 mV / 50 kHz ripple puts ≲ 0.03 % on the MOT current
+(worst case, mvp_architecture.md section 7), acceptable for a MOT
+gradient. Coils used for precision fields (Feshbach bias, see section 1)
+should get a Delta SM15-100-class supply (~8 mV ripple → ≲ 0.001 %).

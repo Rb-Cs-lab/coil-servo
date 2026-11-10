@@ -8,32 +8,35 @@ measurements, and configuration — never for control decisions. You don't
 need to be a software engineer or an FPGA developer to work here; the
 documentation is written for physicists and defines its jargon as it goes.
 
-## Where the project stands
+## Where the project stands (Nov 2026)
 
-- **Firmware: done and commissioned on a real board.** The design is
-  verified in simulation (56 automated tests), the FPGA build meets
-  timing, and it was brought up on the MOT channel's Red Pitaya on
-  2026-08-27: heartbeat and its cut-out, arm/fault/flip inputs, the hard
-  output clamp, OUT1/OUT2 mutual exclusion, and the full flip sequence
-  with dead time (scope-captured) all behave exactly as simulated. A
-  loopback test (OUT1 cabled to IN1) closed the first real feedback loop:
-  ~3.5 kHz bandwidth, on-target to 0.04 %, and the step/sweep measurement
-  tools were validated against known truth. Record:
-  [docs/lab_notes_2026-08-27.md](docs/lab_notes_2026-08-27.md).
-- **Power electronics: being designed, not built.** The pass bank, active
-  clamp, H-bridge, current sensor chain, rails, and protection circuits
-  are being worked out with an external circuit designer (Ben Brown,
-  Harvard). The contract between the servo and that hardware is
-  [docs/servo_interface_brief.md](docs/servo_interface_brief.md) —
-  revised 2026-09-08 after his first review; section 6 lists the open
-  questions.
-- **Not yet built:** the heartbeat watchdog monostable (external,
-  required before running real current unattended) and thermal switches
-  in the interlock chain.
-- **Next hardware milestone:** dummy-load campaign per
-  [docs/bringup.md](docs/bringup.md) §4, once a power stage exists. Values
-  marked PROVISIONAL in `host/config/channels.toml` get replaced by
-  measurements then.
+- **The hardware being built is the MVP, MOT channel only**
+  ([docs/mvp_architecture.md](docs/mvp_architecture.md)): one 5 V / 100 A
+  Mean Well supply, an H-bridge of four IXFN420N10T with isolated drivers,
+  the two MOT coils in series with a LEM current sensor, and a **low-side
+  linear pass bank** of six IXTN200N10L2 driven from the Red Pitaya's OUT1
+  through a gain-8 op-amp stage. A small logic board turns the Red
+  Pitaya's heartbeat into a latching hardware trip.
+  - Status: parts bought; FET thresholds measured and matched (11-02);
+    logic board built and LED-tested (11-03); water-cooled plates
+    machined and FETs mounted (11-04); pass bank assembled; H-bridge
+    assembly in progress with Jeff.
+- **Firmware: rewritten for the MVP and verified in simulation (Nov
+  2026).** On top of the August design it now has a dead-zone floor for
+  the pass bank, an over-current trip at 100 A, setpoint ramp limits, an
+  OUT1 dither for finer resolution, and a required arm *edge*. **The new
+  bitstream still has to be built on the NUC** (rewrite step 6); the board
+  runs the August image until then, and the new host tools refuse to
+  configure it.
+- **Commissioned in August on a loopback** (OUT1 cabled to IN1, no power
+  stage): ~3.5 kHz bandwidth, on-target to 0.04 %, the flip sequence
+  scope-captured. Record: [docs/lab_notes_2026-08-27.md](docs/lab_notes_2026-08-27.md).
+  Bring-up of the MVP so far: [docs/lab_notes_2026-11.md](docs/lab_notes_2026-11.md).
+- **Next hardware milestone:** the bring-up checklist,
+  [docs/bringup.md](docs/bringup.md) — first at low current (a 3 A bench
+  supply test version is planned), then the dummy-load campaign on the
+  SE-600-5. Values marked PROVISIONAL in `host/config/channels.toml` get
+  replaced by measurements then.
 
 ## Your first hour
 
@@ -58,61 +61,73 @@ documentation is written for physicists and defines its jargon as it goes.
    pytest
    ```
 
-   You should see **56 passed** in ~20 s (Icarus Verilog must be
-   installed for the FPGA simulations — see README "Setup A"). If you get
-   `No module named coil_servo_host`, you're running a Python other than
-   the activated `.venv` one.
+   You should see **111 passed** in about 2 minutes (Icarus Verilog must
+   be installed for the FPGA simulations — see README "Setup A"). If you
+   get `No module named coil_servo_host`, you're running a Python other
+   than the activated `.venv` one.
 
 3. Read, in this order:
    - [README.md](README.md) — how the three computers fit together, all
-     setup steps, and the "what's a knob vs. what's a rebuild" table.
-   - [docs/servo_interface_brief.md](docs/servo_interface_brief.md) —
-     the system as a black box, with the full schematic: what each port
-     does, what the servo can do (ramp rates, stability), what it needs
-     from the power stage, and the power budget.
-   - [docs/design.md](docs/design.md) — the signed-off control-loop
-     design. Every number in the loop and why. If code and this document
-     disagree, the code is wrong.
+     setup steps, the safety model, and the "what's a knob vs. what's a
+     rebuild" table.
+   - [docs/mvp_architecture.md](docs/mvp_architecture.md) — the power
+     stage as built, with the schematic, the measured parts, and the
+     analysis of what OUT1 actually does (dead zone, freewheel turn-off).
+   - [docs/servo_interface_brief.md](docs/servo_interface_brief.md) — the
+     servo as a black box: every port, what it guarantees, the power
+     budget, the open questions.
    - [docs/operating_scenarios.md](docs/operating_scenarios.md) — what
      happens in every situation an experimental cycle produces (ramps,
-     snap-offs, field reversals, faults). Read this before writing
+     turn-offs, field reversals, trips). Read this before writing
      sequences.
-   - [docs/register_map.md](docs/register_map.md) — how Python talks to
-     the FPGA.
+   - [docs/design.md](docs/design.md) — the control-loop arithmetic (the
+     signal path is unchanged by the MVP; its output-stage sections
+     describe the original full architecture).
+   - [docs/register_map.md](docs/register_map.md) — every setting and
+     status flag.
    - [docs/bringup.md](docs/bringup.md) — the hardware checklist.
    - [docs/future_upgrades.md](docs/future_upgrades.md) — designed but
-     shelved options (ppm-class stability, eddy-current feedforward,
-     temperature soft-stop, slew limiter), with their reasoning.
+     shelved options, including the parts of the original design the MVP
+     left out (active clamp, boost rail, interlock chain …).
 
 ## The lab setup
 
 - **Build machine:** the lab NUC, running Ubuntu under WSL2 with Vivado
   2025.1. Only needed to rebuild the FPGA bitstream
-  (`make coil_servo.bit.bin` there). This Windows PC has no Vivado.
+  (`make coil_servo.bit.bin` there). The Windows lab PC has no Vivado.
 - **Boards:** reached over **wired Ethernet only, never WiFi**. The MOT
   board is at `192.168.0.65` (channel name `mot` in
   `host/config/channels.toml`).
 - **Day-to-day tools** (from the activated `.venv`):
-  `python -m coil_servo_host.deploy mot` loads the bitstream (refuses if
-  the servo is active), `...check mot` is a quick health check,
-  `...watch mot` is the live status display, `...step` / `...sweep`
-  measure the loop.
+  - `python -m coil_servo_host.deploy mot` loads the bitstream (refuses if
+    the servo is active) and checks the board came up safe;
+  - `...check mot` is a quick health check;
+  - `...watch mot` is the live status display;
+  - `...config mot` prints the register values derived from
+    channels.toml;
+  - `...step` / `...sweep` measure the loop.
 - **The bitstream does not survive a reboot** — after a power cycle,
-  redeploy.
+  redeploy (the tools tell you so).
+- **Starting the servo:** set `servo_enable` from the host first, *then*
+  raise arm (DIO4). An arm line that was already high does nothing until
+  it is dropped and raised again.
 
 ## How to review or extend the work
 
 The verification is layered — each layer is checked against the one below:
 
-1. `docs/design.md` defines the design (review this with physics eyes).
-2. `model/` implements it in trusted floating-point Python, including the
-   plant (coil + pass bank + clamp).
+1. `docs/mvp_architecture.md` and `docs/design.md` define the plant and the
+   loop (review these with physics eyes).
+2. `model/` implements them in trusted floating-point Python, including
+   the MVP plant (pass bank with dead zone, 5 V compliance, freewheel
+   turn-off, bridge-open fault path).
 3. `model/coil_servo_model/fixed_point.py` is a bit-exact integer mirror.
 4. The Verilog in `modules/` and `cores/` is compared against that mirror
-   **bit-for-bit, every update cycle** by the testbenches in `sim/`.
+   **bit-for-bit, every update cycle** by the testbenches in `sim/`; the
+   integration bench closes the loop around the MVP plant and checks the
+   safety rules on the pins every clock.
 5. `host/` tools are tested against a mock server, without hardware.
-6. The bench campaign confirmed the built bitstream matches all of the
-   above on a real board.
+6. The bench campaign confirms the built bitstream on a real board.
 
 Change any layer, run `pytest`, and disagreements between layers are
 caught immediately. If you add or change behavior, extend the matching
@@ -133,24 +148,25 @@ rules, and working conventions. Habits established here:
 - **Deliverables for the lab** (notes, summaries, briefs) go out as
   OneNote-pasteable HTML; the repo keeps `.md` copies so GitHub renders
   them.
-- Good first prompts: *"read the interface brief and explain the power
+- Good first prompts: *"read mvp_architecture.md and explain the power
   stage to me"*, *"walk me through what happens during a field reversal"*,
-  *"run pytest and explain what the integration bench verifies"*, or
-  *"here are Ben's answers to section 6 — update the brief and
-  channels.toml."*
+  *"what happens if the heartbeat stops at 50 A?"*, or *"here are the
+  dummy-load measurements — update channels.toml."*
 
-## Safety ground rules (also enforced in the FPGA, but know them)
+## Safety ground rules (know them; the firmware enforces its part)
 
-- The hard output clamp is 100 % of rated current, in fabric; OUT1/OUT2
-  can never drive simultaneously; the bridge never flips at nonzero
-  current; reset state is everything-off.
-- The hardware interlock chain does not pass through the Red Pitaya.
-  Firmware only *reports* a fault (pin 13) — never write or accept code
-  that tries to clear one. Thermal protection belongs in that chain too.
-- `servo_enable` off = graceful ramp-to-zero, not an instant bridge drop.
-- Don't run real current unattended until the heartbeat monostable
-  exists.
-- First power-stage runs: dummy resistive load only, per
+- **No sustained current without water flowing** through the cold plates.
+  The first test round is uncooled: short pulses, reduced current, a
+  written duty limit.
+- The firmware trips at 100 A measured current, limits setpoint ramps,
+  never flips the bridge at current, starts everything-off, and needs an
+  arm edge to start. `servo_enable` off = graceful ramp-to-zero.
+- The only automatic hardware trip is the heartbeat latch on the logic
+  board (it powers up tripped). **Disarm before pressing its reset button**
+  — after a heartbeat loss the firmware may be wound up.
+- OUT2 and DIO2_P stay unconnected in the MVP; DIO5 (fault) is not wired.
+- Never write or accept code that tries to clear a hardware fault.
+- First power-stage runs: low current, dummy resistive load, per
   [docs/bringup.md](docs/bringup.md).
 
 Questions with no written answer yet probably belong in the docs — add

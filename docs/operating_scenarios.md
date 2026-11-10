@@ -1,229 +1,255 @@
-# Coil servo — operating scenarios in the experimental cycle
+# Coil servo — operating scenarios in the experimental cycle (MVP)
 
 **Purpose:** a playbook for whoever programs the experimental sequences.
 For each situation the machine will produce during ramping and experimental
 cycles — normal and off-nominal — this describes what the control computer
-does and what the servo board (FPGA firmware + power-stage commands) does in
+does and what the servo board (FPGA firmware) and the MVP power stage do in
 response. Companion to [servo_interface_brief.md](servo_interface_brief.md)
-(the electrical contract) and [design.md](design.md) (the loop design).
+(the electrical contract), [mvp_architecture.md](mvp_architecture.md) (the
+power stage as built) and [register_map.md](register_map.md) (every
+setting).
 
-**All timing numbers here are PROVISIONAL** — they assume the illustrative
-~30 V clamp, the ~15 V boost rail, and coil resistances that are still
-pending Kelvin measurement. They are for budgeting shot timing, not for
-gospel. The eddy-current settling time of the chamber is entirely unknown
-and is called out wherever it matters.
+*Rewritten 2026-11-10 (MVP rewrite step 5) for the power stage as built:
+one 5 V rail, no boost, no active clamp — current goes down by
+freewheeling through the bridge.*
 
-## 1. Who does what (30-second recap)
+**Timing numbers are for the MOT channel and PROVISIONAL** — they come
+from the model with provisional coil/cable resistances and the datasheet
+g_fs. The chamber's eddy-current settling time is entirely unknown and is
+called out wherever it matters.
+
+## 1. Who does what
 
 | Actor | Role during a cycle |
 |---|---|
-| Control computer | Analog setpoint into IN2 (signed, same amps-per-volt as the sensor); pulses flip request (E1 pin 9); holds arm (pin 11) high during shots |
-| Servo board | PI loop at 976.6 kS/s (one correction every 1.02 µs); H-bridge flip state machine; hard clamp at 100 % of rated current; boost-rail switching |
-| Power stage | Pass bank sources current (commanded by OUT1); active clamp pulls it down (OUT2); H-bridge sets direction; boost cap gives ramp headroom |
-| Interlock chain | Independent hardware protection; the board only *reports* its state (pin 13) |
-| Heartbeat monostable | External circuit that kills bridge enable if the board's 954 Hz heartbeat (pin 15) stops |
+| Control computer | Analog setpoint into IN2 (signed, 20 A per volt at the computer); pulses flip request (E1 pin 9); raises arm (pin 11) to start |
+| Servo board (FPGA) | PI loop (one correction every 1.02 µs); setpoint ramp limits (≤ 200 A/ms up, ≤ 50 A/ms down); over-current trip (100 A); H-bridge flip sequence; heartbeat |
+| Pass bank | Low-side linear MOSFET bank driven by OUT1 through the gain-8 op-amp stage: **can only source current or source less** |
+| H-bridge | Sets the current direction; when the bank throttles, the coil current **freewheels** through one switch and a body diode — that is how current goes down |
+| Logic board | The only automatic hardware trip: no heartbeat → bridge drivers disabled and latched until someone presses reset |
+| SE-600-5 supply | 5 V / 100 A; its own over-current protection is the backup current limit |
 
-## 2. Normal-operation scenarios
+## 2. Normal operation
 
-### S1 — Start of run: arm and enable
+### S1 — Start of run: enable, then arm
 
-Control computer raises arm (pin 11); software (or a standing config) has
-`servo_enable = 1`. Board: state IDLE → RUN, bridge enable (pin 5) goes
-high, loop starts servoing the measured current onto whatever IN2 says.
-If IN2 is at zero, the board holds zero actively (small corrections around
-zero, outputs near code zero). Nothing conducts until the setpoint moves.
+1. The latch on the logic board must be reset (red LED off, green on).
+2. The host sets `servo_enable = 1` (standing configuration; `step` and
+   `sweep` do it themselves).
+3. **Then** the control computer raises arm (pin 11). The board needs a
+   rising *edge* of arm while `servo_enable` is already set — an arm line
+   that was high beforehand (or high when the bitstream loaded, or high
+   through a trip) does nothing until it is dropped and raised again.
 
-### S2 — Ramp to a setpoint (routine, e.g. MOT load field)
+Board: IDLE → RUN, bridge enable (pin 5) goes high, and OUT1 rests at the
+**floor** — about 90 % of the pass bank's dead zone, just below where any
+current flows. Nothing conducts until the setpoint moves.
 
-Control computer ramps the IN2 voltage. Board: the PI loop tracks it —
-pass bank (OUT1) commanded up, integrator taking out the steady-state
-error. On the hold rail (~3 V) alone the current can only approach its
-natural limit exponentially (open-loop time constant L/R — ≈ 0.9 ms for the
-MOT pair), so slow, small ramps need nothing special.
+### S2 — Ramp to a setpoint
 
-### S3 — Fast ramp (boost engaged)
+The control computer steps or ramps IN2. The firmware passes the setpoint
+on at no more than **200 A/ms** (away from zero), and the loop tracks it:
+0 → 50 A takes 0.25 ms, then settles to 0.1 % within ~1 ms. On the 5 V
+rail the coil could rise slightly faster (~0.3 A/µs at zero current,
+~0.17 A/µs near 100 A), so ramps are paced by the firmware limit, not
+physics. **Why the limit exists:** a raw step to ~55–95 A would overshoot
+by up to ~20 % (the integrator winds up while the 5 V rail limits the
+rise); the ramp removes that completely.
 
-When the requested slew exceeds what the hold rail can push
-(dI/dt > (V_rail − I·R)/L), the boost cap (pin 7) provides the headroom.
-In auto mode (the config default) the board closes the boost switch at the
-start of each ramp-up from zero — at servo enable and at post-flip
-re-enable — and opens it once the measured current first reaches ~87.5 %
-of the setpoint; it never engages on ramp-*downs* (setpoint forced to
-zero → boost forced off). **A large setpoint step in mid-run does not
-re-engage auto boost** — such a ramp slews on the hold rail unless the
-sequence switches to manual boost control around it (`boost_mode = 0`,
-pin follows the `boost_manual` register bit). While boosted, the coil
-charges at roughly dI/dt ≈ V_boost/L.
-The hard clamp guarantees the *command* never exceeds 100 % of rated
-current no matter how aggressive the setpoint ramp is; the loop simply
-rides the clamp until the setpoint comes back within range (anti-windup
-keeps the integrator honest during this, so there is no overshoot when it
-un-clamps).
+**Sequence tip:** step the setpoint if you just want it there fast; shape
+the analog ramp yourself only if you want something *slower* than
+200 A/ms (e.g. adiabatic ramps). The board follows whichever is slower.
 
-**Sequence tip:** you can command an instantaneous setpoint step and let
-the servo slew at its physical maximum, or shape the analog ramp yourself
-if you want a defined dI/dt (e.g. for adiabaticity). Both are fine; the
-board follows whichever is slower — your ramp or physics.
+### S3 — Steady hold
 
-### S4 — Steady hold
+The integrator holds the operating point against slow drifts (coil
+warming, FET threshold drift). With the OUT1 dither on (configuration
+default) the simulated hold sits within one ADC count (24 mA) of the
+setpoint; the real figure is a bench measurement. Keep holds **at or
+below ~98 A**: the over-current trip is at 100 A and noise at exactly
+100 A would trip it.
 
-Pass bank only, boost off, integrator holding the operating point against
-thermal drift of the coil resistance. Bench-measured stability class:
-tail noise 17 mA rms on the loopback plant, on-target to 0.04 % — the real
-coil will low-pass the DAC steps and do better. This is the "do nothing"
-state; the loop needs no attention from the sequence.
+**Uncooled first test round:** no long holds — short pulses at reduced
+current within the written duty limit (each pass FET dissipates ~50 W at
+100 A).
 
-### S5 — Fast turn-off (snap-off for time-of-flight / molasses)
+### S4 — Controlled down-ramp to a lower current
 
-Control computer steps IN2 to zero. Board: PI output swings negative, the
-output multiplexer hands off from OUT1 to OUT2 (mutually exclusive, small
-dead-band), and the active clamp absorbs the coil's stored energy
-(½LI² ≈ 0.08 J for the MOT pair at 100 A) at roughly dI/dt ≈ V_clamp/L.
-When the current reaches zero the loop settles back to holding zero. The
-bridge stays closed and enabled throughout — a snap-off is *not* a flip.
+Control computer lowers IN2. The firmware passes the setpoint on at no
+more than **50 A/ms** toward zero; the coil freewheels down at least that
+fast at these currents, so the current follows the ramp with no
+undershoot. (A raw step down, e.g. 80 → 20 A, would undershoot towards
+zero before recovering — the reason for the limit.)
+
+### S5 — Turn-off (snap to zero for time-of-flight / molasses)
+
+Control computer steps IN2 to zero. **Today** this is the same as S4: the
+setpoint ramps down at 50 A/ms, so 100 A → 0 takes ~2 ms. The bridge
+stays closed and enabled — a turn-off is not a flip. The coil could fall
+faster on its own (freewheel ≈ 1.3 ms from 100 A) — see the open item in
+section 5.
+
+The fastest turn-off the MVP hardware can do is the freewheel; a much
+faster snap-off (~50 µs) needs the blocking diode + TVS upgrade
+(future_upgrades.md section 6) and a firmware change once those parts
+are fitted.
 
 ### S6 — Field reversal (H-bridge flip)
 
 The two-step choreography (full contract in the
 [interface brief](servo_interface_brief.md)):
 
-1. Control computer pulses flip request (pin 9, ≥ 1 µs).
+1. Control computer pulses flip request (pin 9, ≥ 1 µs; only while armed
+   and in RUN).
 2. Control computer swaps the IN2 sign any time while the flip runs.
 
-Board sequence, autonomous once triggered: internally force the setpoint
-to zero and ramp down (clamp does the work, as in S5) → wait for the
-measured current to sit inside the zero window (default ±0.5 A) for
-~66 µs → drop bridge enable → 1 µs dead time → toggle polarity (pin 3)
-→ 1 µs dead time → re-enable bridge → resume servoing the (now
-negative) setpoint. The polarity edge is guaranteed strictly inside the
-enable-low window — verified on the scope during commissioning.
+Board sequence, autonomous once triggered:
 
-**Budget for the sequence:** electrical time ≈ ramp-down + 66 µs dwell +
-2 µs bridge window + ramp-up (see the table in section 4 — order 0.3–0.5 ms
-at full current). On top of that comes **chamber eddy-current settling,
-which is unmeasured and may dominate** — leave a generous placeholder and
-measure it with atoms or a probe coil before trusting fast reversals.
+1. Force the setpoint to zero. This bypasses the 50 A/ms limit; OUT1
+   drops to zero and the coil freewheels down (~0.8 ms from 50 A, ~1.3 ms
+   from 100 A).
+2. Wait for the measured current to stay inside the zero window
+   (±0.5 A) for ~66 µs.
+3. Drop bridge enable, wait the 1 µs dead time, toggle polarity (pin 3),
+   wait another 1 µs, re-enable the bridge. The polarity edge always
+   falls strictly inside the enable-low window.
+4. Wait the settle delay (100 µs placeholder for chamber eddy currents).
+5. Ramp up to the new (sign-swapped) setpoint at 200 A/ms.
 
-### S7 — Ramping *through* zero without a flip (deliberate behavior)
+**Budget:** see section 4 — about 1.2 ms for a 50 A reversal, plus
+**chamber eddy-current settling, which is unmeasured and may dominate**.
+
+### S7 — Ramping *through* zero without a flip (deliberate behaviour)
 
 If the sequence ramps IN2 through zero to the other sign without pulsing
 the flip line, the current follows it down to zero and **stays at zero**,
 with the `sp_sign_mismatch` status flag raised — the bridge polarity can
-only produce one direction of current, and the board will not flip on its
-own. This is by design: a reversal is a disruptive, milliseconds-long
-event the experiment must schedule explicitly, never a side effect of a
-setpoint ramp crossing zero. If you meant it as a reversal, add the flip
-pulse (S6); if the negative excursion was unintentional, nothing bad
-happened — the field just clipped at zero.
+only produce one direction of current, and the board never flips on its
+own. If you meant a reversal, add the flip pulse (S6); if not, nothing
+bad happened — the field just clipped at zero.
 
 ### S8 — Between shots: dropping arm
 
-Arm (pin 11) low between shots is fine and costs nothing: losing arm
-mid-run does **not** drop the bridge or disturb the current — it only
-blocks *new* bridge enables and flip requests. So a sequence can hold
-current through an arm gap, but should re-assert arm before the next flip.
+Arm low between shots is fine: losing arm mid-run does **not** drop the
+bridge or disturb the current — it only blocks flip requests (and, in
+IDLE, starting). Re-raise arm before the next flip.
 
 ### S9 — End of day / controlled stop
 
-Software sets `servo_enable = 0` (or the operator runs the shutdown
-recipe). Board: graceful ramp-to-zero via the clamp, then bridge enable
-drops. Never an instantaneous bridge-open at current. Power stages can
-then be de-energized.
+The host sets `servo_enable = 0`. Board: setpoint forced to zero, the coil
+freewheels down, and the bridge opens once the current is inside the zero
+window — never an instantaneous bridge-open at current. Then the power
+stage can be switched off. To run again later: `servo_enable = 1`, then a
+fresh arm edge (S1).
 
 ### S10 — Diagnostics (not during atom shots)
 
-`check` / `watch` read status without disturbing the loop and are safe any
-time. `step` and `sweep` (and open-loop mode) drive the coil for
-characterization — bench and dummy-load use only; never in a sequence.
-The capture FIFO can record any shot's current waveform at full rate for
+`check` and `watch` only read status and are safe any time. `step` and
+`sweep` drive the coil for characterization — bench and dummy-load use
+only, never in a sequence. In **open-loop** mode OUT1 is a gate command,
+not a current: `step --open-loop --amps X` converts X through the model
+(PROVISIONAL), and `sweep` needs the function generator's offset above the
+dead zone. The capture FIFO can record any shot's current waveform for
 post-shot inspection without affecting the loop.
 
 ## 3. Off-nominal scenarios
 
-### F1 — Setpoint asks for more than rated current
+### F1 — Setpoint asks for more than rated / over-current trip
 
-The command clamps at 100 % of the channel rating and the `out_sat` flag
-shows the loop is riding the limit. The current sits at rated until the
-setpoint returns; anti-windup prevents any overshoot on the way back.
-(The *measurement* range extends to 125 % of rated, so a real overshoot
-from plant dynamics would still be seen and recorded.)
+If the measured current exceeds **100 A** for ~4 µs, the firmware trips:
+both outputs drop to zero on the next clock, the bridge stays closed
+while the coil freewheels down (~1.3 ms), then opens once the current is
+near zero (or after 3 ms regardless) and latches in **TRIPPED**. Every
+host tool warns. To resume: find out why, `Board.pulse("trip_ack")`, then
+drop and re-raise arm. The OUT1 clamp (the command limit, set to ask for
+~100 A) and the supply's over-current protection sit behind the trip.
 
 ### F2 — Flip requested but current can't reach zero
 
-If the measured current never sits inside the zero window (broken clamp,
-shorted pass bank, sensor fault), the flip times out into **TIMEOUT_HOLD**:
-bridge stays closed, board keeps servoing toward zero, no polarity change
-happens. The shot is lost; the hardware is not. Recovery is a deliberate
-operator acknowledgment (`b.pulse("flip_fault_ack")` — recipe in
-[register_map.md](register_map.md)); the board will not retry on its own.
+If the current never sits inside the zero window (e.g. a shorted pass FET
+or a sensor fault), the flip times out (20 ms) into **TIMEOUT_HOLD**: the
+bridge stays closed, the board keeps pulling toward zero, and the
+polarity does not change. The shot is lost; the hardware is not. Recovery
+is a deliberate acknowledgment (`b.pulse("flip_fault_ack")`, recipe in
+[register_map.md](register_map.md)). A shorted pass FET would also push
+the current up to the trip level (F1).
 
-### F3 — Interlock trips mid-ramp
+### F3 — Control computer or network dies mid-sequence
 
-The interlock chain acts on the power stage directly — the board is not in
-that path and cannot veto or clear it. The board *sees* the fault line
-(pin 13), raises the `fault` status flag, and every measurement tool warns
-loudly. The loop itself keeps computing (anti-windup prevents wind-up
-while the plant is dead), so status readouts stay meaningful for
-diagnosing what happened.
+Nothing changes at the coil: the loop runs in the FPGA, and IN2 is
+analog — the board keeps following whatever voltage is present. If the
+analog output died to 0 V, that reads as "setpoint zero" and the current
+ramps down (S5).
 
-### F4 — Control computer or network dies mid-sequence
+### F4 — Heartbeat trip (Red Pitaya dies, hangs, reboots or is redeployed)
 
-Nothing changes at the coil: the loop runs entirely in the FPGA and holds
-its last configuration, and IN2 is analog — the board keeps following
-whatever voltage is present. If the analog out also died to 0 V, that
-reads as "setpoint zero" and the current ramps gracefully to zero (S5).
-Protection against a *hung board* is not the network's job — see F5.
+The heartbeat (pin 15) stops, the monostable on the logic board drops
+after ~7.6 ms, and the latch disables the bridge drivers. **This opens the
+bridge at whatever current is flowing:** the coil current is pushed back
+into the supply through the body diodes (~0.2 ms from 100 A), which may
+trip the SE-600-5's over-voltage protection (open question). The latch
+stays tripped until someone presses reset — it never re-arms on its own.
 
-### F5 — The board itself dies (hang, accidental redeploy, reboot)
+**If the heartbeat dropped but the Red Pitaya kept running** (a loose
+DIO6 wire), the firmware never learns the bridge opened: it keeps
+integrating against zero current and its output may wind up to the clamp.
+**Operating rule: disarm (arm low) before pressing the latch reset**, and
+set `servo_enable = 0` if in doubt — then re-enable and re-arm (S1).
 
-The heartbeat (pin 15) stops — verified on the bench, including deliberate
-kill and recovery. The external retriggerable monostable must then gate
-bridge enable off, and must *not* re-enable on its own when the heartbeat
-returns (operator action required). **This monostable is still to be
-built** — until it exists, never leave high current unattended.
+### F5 — Power-on / boot with the power stage connected
 
-### F6 — Power-on / boot with the power stage connected
+The logic board's latch powers up **tripped**, and every E1 line has a
+10 kΩ pull-down, so the bridge stays disabled through the Red Pitaya's
+~1 s Linux boot. After a reboot the bitstream and register server are not
+running and there is no heartbeat, so the latch stays tripped. Order:
+deploy (which checks the board comes up IDLE, OUT1 = 0, bridge off,
+disarmed), `check`, then reset the latch, then S1.
 
-During the ~1 s Linux boot the E1 pins are undefined; after the FPGA
-loads, everything resets to off (bridge disabled, DACs zero, all outputs
-low). The gate driver's own pull-downs (required in the interface brief)
-cover the boot window. Consequence for operations: booting the Pitaya
-with the power stage energized is safe *only* once those pull-downs exist.
+### F6 — Glitches on the flip line
 
-### F7 — Glitches on the flip line
+The flip input is synchronized and edge-detected; pulses must be
+≥ 1 µs. A genuine noise edge while armed would start a real (safe, but
+shot-ruining) flip sequence — route the flip line cleanly and keep it
+disconnected or disarmed when not in use.
 
-The flip input is synchronized and edge-detected; pulses must be ≥ 1 µs.
-A genuine noise edge while armed would start a real (safe, but
-shot-ruining) flip sequence — so route the flip line cleanly and keep it
-disconnected/disarmed when not in use (internal pull-down = no request).
+### F7 — Supply protection trips
 
-## 4. Timing budgets (PROVISIONAL — for shot planning only)
+The SE-600-5's over-current or over-voltage protection may shut it down
+(F1 backup, F4 energy return). The current then decays with the bridge
+still closed and the servo sees the current fall away; its output rides
+up to the clamp (anti-windup keeps the integrator there). **Set
+`servo_enable = 0` first** — otherwise the returning supply meets OUT1 at
+the clamp and the current jumps to the trip level — then power-cycle the
+supply per its manual, re-enable and re-arm.
 
-Assumes 15 V boost, 30 V clamp (illustrative), provisional resistances.
-dI/dt ≈ V/L near zero current; ramps at high current are slightly slower
-(up) / faster (down) by the I·R term.
+## 4. Timing budget (MOT channel, PROVISIONAL — for shot planning)
 
-| Channel | L | Rated | Boost ramp 0 → rated | Clamp ramp rated → 0 | Flip, electrical only |
-|---|---|---|---|---|---|
-| MOT anti-Helmholtz | 16 µH | 100 A | ~120 µs | ~55 µs | ~0.25 ms |
-| Z shim | 29 µH | 60 A | ~120 µs | ~60 µs | ~0.25 ms |
-| X / Y shim | 57 µH | 60 A | ~230 µs | ~115 µs | ~0.4 ms |
+| Move | Time | Set by |
+|---|---|---|
+| Ramp up 0 → 50 A / 0 → 100 A | 0.25 ms / 0.5 ms, then settle ~1 ms | Firmware limit 200 A/ms (physics allows ~0.4 ms to 100 A) |
+| Ramp down 100 → 50 A / 100 → 0 A (IN2) | 1 ms / 2 ms | Firmware limit 50 A/ms |
+| Forced zero (flip, stop, trip) from 50 A / 100 A | ~0.8 ms / ~1.3 ms | Body-diode freewheel |
+| Flip at 50 A, electrical | ~1.2 ms = 0.8 ms freewheel + ~70 µs zero check + 2 µs bridge window + 0.1 ms settle (placeholder) + 0.25 ms ramp up | FSM + physics |
+| Flip at 100 A, electrical | ~2 ms | same |
 
-Flip electrical = clamp ramp + 66 µs zero dwell + 2 µs bridge window +
-boost ramp back. **Add chamber eddy settling (unknown) on top.** The
-loop's own settling (bench: ±1 % in 259 µs on a step) overlaps these
-numbers, it doesn't add to them.
+**Add chamber eddy settling (unknown) on top of every flip and snap-off.**
+Shims (placeholders until their stages exist): the freewheel from 60 A
+takes ~1.4 ms (Z) and ~2.7 ms (X/Y).
 
-## 5. Open unknowns that shape sequence design
+## 5. Open items that shape sequence design
 
-- **Eddy-current settling after flips/snap-offs** — unmeasured; dominates
-  the usable reversal time budget. Measure early.
-- **Clamp voltage** — sets every ramp-*down* number above; ~30 V is
-  illustrative. Also: is the clamp rated for repeated ½LI² dumps at the
-  planned duty cycle?
-- **Boost cap recharge time** — repeated fast ramps within one shot are
-  limited by how fast the cap recovers; ask the electronics designer.
-- **PI gains** — current values are placeholders until the open-loop step
-  response of the real coil is measured; loop settling numbers will move.
-- **Coil resistances** — Kelvin measurement pending; affects hold-rail
-  headroom and the high-current end of ramp rates.
+- **Fast snap-off to zero (proposal, not decided):** a step of IN2 to zero
+  currently ramps at 50 A/ms (2 ms from 100 A), slower than the coil's own
+  freewheel (1.3 ms). The undershoot the down-limit prevents cannot
+  happen when the target is zero. Option: let the setpoint jump to zero
+  when the target is inside the zero window, so a snap-off freewheels at
+  full speed.
+- **Eddy-current settling after flips and snap-offs** — unmeasured;
+  dominates the usable reversal budget. Measure early (`settle_us`).
+- **PI gains** — loopback values rescaled by the model's plant gain;
+  set them from the measured step response.
+- **Bridge-open-at-current** (F4) — does the supply trip on the returned
+  energy?
+- **Hold noise** with the gain-8 stage and dither, against the 0.1 %
+  spec.
+- **Uncooled duty limit** for the first test round.
