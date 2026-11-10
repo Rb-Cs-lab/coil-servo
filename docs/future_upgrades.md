@@ -152,3 +152,59 @@ with the pending XADC readout tool (§5).
 - **AOUT0 transducer offset trim** (register word reserved) and an
   **XADC temperature/rail readout tool** — pending features rather than
   design decisions; listed in the repo TODOs.
+
+## 6. Fast turn-off for the MVP: blocking diode + TVS across the bridge input (discussed 2026-11-10)
+
+**Why:** in the MVP as built ([mvp_architecture.md](mvp_architecture.md)
+§3.3) the actuator is unipolar and the coil current can only fall through
+the H-bridge's freewheel loop (one conducting switch + the opposite
+low-side body diode), at a diode drop plus I·R: **~1.3 ms from 100 A on
+the MOT** (Z shim ~1.5 ms, X/Y ~2.7 ms). If sequences need faster
+snap-offs — e.g. switching the MOT gradient off before imaging — the coil
+must be made to push against a higher voltage, since dI/dt ≈ −V/L.
+
+**Why the obvious fixes don't work:** a higher-voltage TVS across the pass
+bank, or a varistor across the supply on its own, never conducts. With
+the bridge closed the freewheel loop doesn't pass through the bank at
+all; with the bridge open the current returns through the bank's body
+diodes and into the supply's output capacitors at ~7.5 V, and a part in
+parallel with those can't push the voltage above them. The coil varistors
+(S20K20, knee ~33 V each) likewise stay off — and if they were ever made
+to clamp, the two coils in series would put ~2 × 80 V ≈ 160 V at 100 A
+across the 100 V bridge MOSFETs.
+
+**What it is:**
+
+1. **Blocking diode** in series with the supply's + lead (before the rail
+   bar), rated for 100 A continuous — a power Schottky on a heatsink.
+   Lets supply current flow forward, stops returning coil current from
+   charging the supply.
+2. **TVS across the bridge input** (rail bar ↔ return bar), e.g. a
+   5KP30CA-class part (V_BR ≈ 33 V). With the bridge opened at current,
+   the coil current flows through Q2's and Q3's body diodes into this TVS,
+   which holds the coil at ≈ −V_TVS: dI/dt ≈ 30 V / 16 µH ≈ **2 A/µs**,
+   **100 A → 0 in ~50 µs** on the MOT. The energy (½LI² ≈ 0.08 J plus
+   V_TVS·∫I dt ≈ 0.15 J total per event) is well within a 5KP-class part.
+   Keep V_TVS comfortably below the 100 V MOSFET rating and below the
+   coil-varistor knee (2 × 33 V for the pair) so the varistors stay out of
+   it.
+3. **Firmware:** a deliberate "snap-off" action that opens the bridge at
+   current (a new FSM path and CFG/trigger — register map first). This
+   relaxes the current rule that the bridge only opens at zero current or
+   on a fault, so it needs a safety review: the bridge-open window must
+   still never toggle polarity, and re-enabling must wait for the zero
+   window as in a flip.
+
+**Bonus:** the same two parts fix the open bring-up risk for heartbeat
+trips at current — the coil energy lands in the TVS instead of the
+SE-600-5's output capacitors (no overvoltage-protection trip).
+
+**Costs:** the blocking diode drops ~0.5 V at 100 A (~50 W, needs
+cooling) and takes that headroom off the 5 V rail — compliance at 100 A
+falls from ~2.8–3.2 V to ~2.3–2.7 V across the bank, still adequate.
+During a snap-off the servo is open-loop until the current reaches zero.
+
+**Measure first:** the actual freewheel turn-off on the scope (drain bar
+and node A during a throttle-to-zero at moderate current) and whether
+~1 ms is fast enough for the experiment's sequences. If it is, this stays
+shelved.
