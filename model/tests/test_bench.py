@@ -264,7 +264,7 @@ def test_fixed_point_step_needs_the_dither_to_settle_in_band():
 def test_small_steps_from_zero_are_slow_with_the_90_percent_floor():
     # DOCUMENTED: from the floor (10 % of the dead zone below conduction),
     # the integrator climbs at ki * error -- for a 2 A step that takes
-    # ~1.5 ms before current flows. Production steps (tens of A) are 10x+
+    # ~1.4 ms before current flows. Production steps (tens of A) are 10x+
     # faster. Not a fault; the bench procedure tests steps from a held
     # current, or raises the floor once the dead zone is measured.
     res = float_run(BENCH, lambda t: 2.0, 4e-3)

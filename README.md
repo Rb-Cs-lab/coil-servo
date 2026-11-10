@@ -16,7 +16,9 @@ no control decisions are made in software.
   what the servo promises the power stage: [docs/servo_interface_brief.md](docs/servo_interface_brief.md);
   original requirements and lab context: [docs/history/BOOTSTRAP.md](docs/history/BOOTSTRAP.md)
 - Programming experimental sequences: [docs/operating_scenarios.md](docs/operating_scenarios.md)
-- Bringing hardware up, step by step: [docs/bringup.md](docs/bringup.md)
+- Bringing hardware up, step by step: [docs/bringup.md](docs/bringup.md);
+  the first low-current campaign on a 3 A bench supply:
+  [docs/bench_supply_test.md](docs/bench_supply_test.md)
 - Options considered and shelved: [docs/future_upgrades.md](docs/future_upgrades.md)
 - Hardware facts, pinout, toolchain versions: [CLAUDE.md](CLAUDE.md)
 - The control-loop design (every number in the loop, and why):
