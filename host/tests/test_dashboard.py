@@ -642,3 +642,20 @@ def test_stream_sends_all_devices(sim):
         lines = [ln for ln in r.iter_lines() if ln.startswith("data:")]
     assert len(lines) == 2
     assert "mot" in json.loads(lines[0][5:])
+
+
+# ---- start-up helpers ----------------------------------------------------------
+
+def test_lan_address_and_port_check():
+    import socket
+
+    from coil_servo_host.dashboard.__main__ import (DEFAULT_PORT,
+                                                    lan_address, port_free)
+    assert DEFAULT_PORT != 8080                  # KoheronControl's port
+    # names are skipped (no DNS); the first numeric host gives the address
+    assert lan_address(["rp-zshim.local", "127.0.0.1"]) == "127.0.0.1"
+    assert lan_address(["rp-zshim.local", None]) is None
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        s.listen(1)
+        assert not port_free("127.0.0.1", s.getsockname()[1])

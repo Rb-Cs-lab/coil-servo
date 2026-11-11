@@ -61,7 +61,7 @@ documentation is written for physicists and defines its jargon as it goes.
    pytest
    ```
 
-   You should see **219 passed** in about 2 minutes (Icarus Verilog must
+   You should see **220 passed** in about 2 minutes (Icarus Verilog must
    be installed for the FPGA simulations — see README "Setup A"). If you
    get `No module named coil_servo_host`, you're running a Python other
    than the activated `.venv` one.

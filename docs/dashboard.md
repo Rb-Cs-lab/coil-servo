@@ -21,7 +21,7 @@ options (`--help` lists them all):
 
 | Option | Meaning |
 |---|---|
-| `--port 8080` | the network port (default 8080) |
+| `--port 8081` | the network port (default 8081; 8080 is taken by KoheronControl, the laser-controller software, on the lab PCs). If the port is busy the dashboard says so and stops |
 | `--channels mot,test` | only these cards (card ids or profile names; default: every card in `host/config/dashboard.toml`) |
 | `--cards file.toml` | another card list instead of `host/config/dashboard.toml` |
 | `--simulate` | no hardware: every board runs on the simulation (see below); `--simulate mot` simulates only the MOT board |
@@ -46,12 +46,14 @@ A yellow **SIMULATION** banner is shown at the top of the page.
 
 ## Opening the page
 
-- **On the lab PC:** <http://localhost:8080>. Only this address gives you
+- **On the lab PC:** <http://localhost:8081>. Only this address gives you
   the controls (see below).
-- **From any other PC on the lab LAN:** `http://<lab-pc-ip>:8080`. To
-  find the lab PC's address, run `ipconfig` in a Command Prompt on it and
-  take the *IPv4 Address* of the **wired** Ethernet adapter (something like
-  `192.168.0.10`). The dashboard prints its guess at start-up.
+- **From any other PC on the lab LAN:** `http://<lab-pc-ip>:8081`. The
+  dashboard prints this address at start-up: the lab PC's own address on
+  the network the boards are on (e.g. `192.168.0.61`). A PC that is also
+  on Wi-Fi has a second address; the start-up message lists it as "not on
+  the boards' network, don't use". (By hand: `ipconfig`, the *IPv4
+  Address* of the **wired** Ethernet adapter.)
 - **Windows Firewall:** the first time it starts, Windows asks whether
   Python may accept connections. Allow it on **private** networks (the lab
   LAN), not public ones. If you clicked it away, other PCs cannot connect:
@@ -206,8 +208,8 @@ corrupt each other's record. The capture panel says so.
 | Everything else (apply profile, enable, setpoint, acknowledges, step, sweep) | **the lab PC only** |
 
 "The lab PC" means requests from the PC's own loopback address, i.e. a
-browser on that PC opened at `http://localhost:8080`. Opening the LAN
-address (`http://192.168.0.x:8080`) on the lab PC itself counts as a
+browser on that PC opened at `http://localhost:8081`. Opening the LAN
+address (`http://192.168.0.x:8081`) on the lab PC itself counts as a
 remote viewer. The list is configurable with `--allow` (addresses or
 networks, e.g. `--allow 127.0.0.1,::1,192.168.0.10`), but think twice: the
 coils carry up to 100 A, and the person pressing a button should be
@@ -393,11 +395,11 @@ the page. Example from Python on the lab PC:
 ```python
 import json, urllib.request
 req = urllib.request.Request(
-    "http://localhost:8080/api/devices/mot/actions/capture",
+    "http://localhost:8081/api/devices/mot/actions/capture",
     data=b"{}", method="POST",
     headers={"Content-Type": "application/json", "X-Coil-Servo": "1"})
 print(json.load(urllib.request.urlopen(req)))
-state = json.load(urllib.request.urlopen("http://localhost:8080/api/devices/mot"))
+state = json.load(urllib.request.urlopen("http://localhost:8081/api/devices/mot"))
 print(state["state"], state["i_amps"])
 ```
 
