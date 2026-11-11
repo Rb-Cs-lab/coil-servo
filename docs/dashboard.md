@@ -77,7 +77,18 @@ One card per channel in `channels.toml`:
   Amber boxes are informational (OUT1 at the command clamp, integrator
   railed).
 - **badges** — `BENCH` for a bench-test profile (a channel with
-  `bench = true` in channels.toml), `SIM` for a simulated board.
+  `bench = true` in channels.toml, e.g. `mot_bench`, the 3 A bench-supply
+  campaign of [bench_supply_test.md](bench_supply_test.md)); its card also
+  shows the bench supply's current limit. `SIM` marks a simulated board.
+
+`mot` and `mot_bench` are two profiles for the **same board**
+(192.168.0.65), so both cards show that board. Every few seconds the
+dashboard reads the board's settings and asks which channels.toml profile
+they match (the same check `watch` and `check` print). A card whose
+profile the board does *not* hold gets a red **PROFILE MISMATCH** box:
+"the board holds the 'mot_bench' settings" (the other card is the one in
+use), or "UNKNOWN / mixed" (not configured since the bitstream was loaded,
+or changed by hand). With both cards open, exactly one of them is red.
 
 Click a card for the channel page.
 
@@ -99,8 +110,10 @@ Click a card for the channel page.
   = this page), open loop on/off, heartbeat, and the register-map
   revision.
 - **Configuration:** what `python -m coil_servo_host.config <channel>`
-  prints (sensor scale, pass-bank gain, dead zone, floor, clamp, trip,
-  ramps, dither), then the board's **read-back** configuration compared
+  prints (supply limit for bench profiles, sensor scale, pass-bank gain,
+  dead zone, floor, clamp, trip, zero window, ramps, PI gains, dither,
+  board LEDs), which profile the board holds, then the board's
+  **read-back** configuration compared
   field by field with the profile. Red rows differ — after a fresh deploy
   every row differs until the profile is applied. *Live fields* are the
   ones that change in normal operation (enable, setpoint, …).
@@ -165,8 +178,12 @@ written to the action log with the client's IP address.
   safe; also ends a running step or sweep. It does not open the bridge
   at current.
 - **Apply profile [mot]** — writes the channel's configuration from
-  `channels.toml` (gains, clamp, floor, trip, ramps, dither) and reads it
-  back. Only in IDLE.
+  `channels.toml` (gains, clamp, floor, trip, ramps, dither, and the
+  board-LED pattern: LED 7 lit = bench settings) and reads it back. Only
+  in IDLE. The dialog says which profile the board holds now. Applying
+  `mot_bench` is for the current-limited bench supply only, never with
+  the SE-600-5 (and the reverse: see the switching checklist in
+  bench_supply_test.md).
 - **Enable** — sets `servo_enable = 1` with the chosen setpoint source:
   *this page* (the setpoint register, starting at 0 A) or *IN2* (the
   control computer). The board then **waits in IDLE for a rising edge on
@@ -186,7 +203,8 @@ written to the action log with the client's IP address.
   step the setpoint 2 ms into a capture, ramp back down, disable. The
   result appears in the capture plot and is saved (`..._step.csv`).
   *Open loop* drives OUT1 with the command the model predicts for that
-  current. **First runs: dummy resistive load only.**
+  current; or give *OUT1 counts* to set the open-loop command directly,
+  bypassing the model (as `step --counts`, for scanning the dead zone). **First runs: dummy resistive load only.**
 - **Swept-sine** — as `python -m coil_servo_host.sweep`: the board goes to
   open loop with **IN2 driving OUT1 directly**. It needs a function
   generator on IN2 with its offset above the pass-bank dead zone (~0.44 V
