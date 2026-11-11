@@ -167,8 +167,9 @@ rules, and working conventions. Habits established here:
   never flips the bridge at current, starts everything-off, and needs an
   arm edge to start. `servo_enable` off = graceful ramp-to-zero.
 - The only automatic hardware trip is the heartbeat latch on the logic
-  board (it powers up tripped). **Disarm before pressing its reset button**
-  — after a heartbeat loss the firmware may be wound up.
+  board (it powers up tripped). **Stop the servo (`servo_enable` = 0,
+  state IDLE) before pressing its reset button** — after a heartbeat loss
+  the firmware may be wound up, and dropping arm alone does not stop it.
 - OUT2 and DIO2_P stay unconnected in the MVP; DIO5 (fault) is not wired.
 - Never write or accept code that tries to clear a hardware fault.
 - First power-stage runs: low current, dummy resistive load, per

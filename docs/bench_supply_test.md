@@ -359,7 +359,7 @@ tens of mV at the generator (the whole 0–3 A range is ~25 OUT1 counts).
 
 **Carries over** (no need to repeat in detail): wiring and polarity of
 every signal; the FSM — arming, flips, zero-window qualification, trips,
-TRIPPED/acknowledge, heartbeat latch and the disarm-before-reset rule;
+TRIPPED/acknowledge, heartbeat latch and the stop-before-reset rule;
 OUT1 termination and op-amp gain; the dead-zone onset (at the same
 temperature); the IN1 offset (same sensor scale, if no R_G jumper); the
 turn-off path (freewheel or TVS); the bridge dead time; that the register

@@ -135,10 +135,12 @@ tested 2026-11-03; 10 kΩ pull-down on every line).
 | Fault, DIO5_P (13) | in | Report-only | **Not wired in the MVP** |
 | Heartbeat, DIO6_P (15) | out | ~954 Hz square wave from power-on, unconditionally; stops only if the FPGA is dead or being reprogrammed | Retriggers a CD74HC123 monostable (220 kΩ / 100 nF, measured drop ~7.6 ms) → 74HC74 latch with reset button; the latch **powers up tripped** and never re-arms itself |
 
-**Operating rule:** disarm (DIO4 low) before pressing the latch reset.
-If the heartbeat was lost while the Red Pitaya kept running, the
-firmware never saw the bridge open and its integrator may be wound up —
-reset would re-close the bridge with OUT1 near the clamp.
+**Operating rule:** stop the servo (`servo_enable` = 0 from the host;
+the FSM ramps to zero and opens the bridge — state IDLE) before pressing
+the latch reset. If the heartbeat was lost while the Red Pitaya kept
+running, the firmware never saw the bridge open and its integrator may be
+wound up — reset would re-close the bridge with OUT1 near the clamp.
+Dropping arm is not enough: losing arm mid-run never drops the bridge.
 
 ### Field-reversal choreography (contract for the control computer)
 

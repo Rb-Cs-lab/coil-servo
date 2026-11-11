@@ -443,7 +443,10 @@ outputs nothing until explicitly armed**:
   running (e.g. a loose DIO6 wire, as in test step 4), the firmware does
   not know the bridge opened; it keeps integrating against zero current,
   so pressing reset re-closes the bridge with OUT1 possibly at the clamp.
-  **Operating rule: disarm (DIO4 low) before pressing reset.**
+  **Operating rule: stop the servo (`servo_enable` = 0, wait for IDLE)
+  before pressing reset.** (Corrected 2026-11-11 from "disarm (DIO4 low)":
+  losing arm mid-run never drops the bridge, so disarming does not
+  protect anything here.)
 
 The full-design interlock chain (flow switch, thermal cutouts, leak pad,
 OC/OT comparators → latching relay) is **not in the MVP**; the heartbeat

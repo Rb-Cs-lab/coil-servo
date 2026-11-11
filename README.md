@@ -113,7 +113,7 @@ and AMD supports 2025.1 only on Ubuntu 22.04/24.04.
    gotcha), so install it from the 22.04 pool:
 
    ```bash
-   wget http://mirrors.edge.kernel.org/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.2_amd64.deb && sudo apt install ./libtinfo5_6.3-2ubuntu0.2_amd64.deb
+   wget http://mirrors.edge.kernel.org/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.3_amd64.deb && sudo apt install ./libtinfo5_6.3-2ubuntu0.3_amd64.deb
    ```
 
    (If that 404s, the package was revised again: browse
@@ -269,8 +269,10 @@ interlock chain yet, and DIO5 (fault input) is not wired.
   (~50 W per pass FET at 100 A). The first test round runs uncooled: short
   pulses, reduced current, a written duty limit.
 - OUT2 and DIO2_P stay unconnected.
-- **Disarm before pressing the latch reset** after any heartbeat trip — the
-  firmware never saw the bridge open and may be wound up.
+- **Stop the servo (`servo_enable` = 0, state IDLE) before pressing the
+  latch reset** after any heartbeat trip — the firmware never saw the
+  bridge open and may be wound up. Dropping arm alone is *not* enough: it
+  never stops a running servo.
 
 Losing the network does **not** stop the loop: if the Ethernet cable is
 pulled or the lab PC crashes, the servo keeps running in the FPGA at its

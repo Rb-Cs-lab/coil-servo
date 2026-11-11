@@ -80,7 +80,31 @@ checks the board comes up in its safe state. Auto-loading the bitstream
 and server at boot (systemd) was **not** done: it would change what state
 the board boots into — propose separately if wanted.
 
-**Next:** step 6 — rebuild the bitstream on the NUC (register-map
-revision 3), keep the August image as
-`coil_servo_fullarch_20260827.bit.bin`, deploy, then bring-up per
-[bringup.md](bringup.md).
+## Step 6 — MVP bitstream (11-11)
+
+The NUC is no longer available; Vivado 2025.1 was installed on a lab
+laptop under WSL2 (Ubuntu 24.04) following README "Setup B" (the libtinfo5
+package had been revised to `6.3-2ubuntu0.3`; the Linux "Self Extracting
+Web Installer" is needed, not the Windows one).
+
+| Build | Result | Fix |
+|---|---|---|
+| 1 | WNS −2.169 ns, 232 failing endpoints: `slew_0` (−2.17), `pi_0` (−1.80), `fsm_0` (−1.03), two marginal | slew limiter split into measure/move phases; PI extra pipeline stage (registered sum, bounds, floor compares); FSM window/trip compares registered; dither output registered |
+| 2 | WNS −0.015 ns, 1 endpoint (`slew_0/acc`) | rate choice registered in the measure phase |
+| 3 | **WNS +0.072 ns, WHS +0.053 ns, 0 failing** | — |
+
+Build 3 (from `aa2a92f1`) is `bitstreams/coil_servo.bit.bin`, SHA-256
+`3e9f15a3…f416`. **Next:** first deploy with arm low and the power stage
+off, then bring-up per [bringup.md](bringup.md).
+
+## First deploy of the MVP bitstream (11-11)
+
+Board only: power stage off, arm low, nothing on the SMA inputs.
+`deploy mot` loaded the image (69 ms) and its post-check passed: IDLE,
+OUT1 = 0, bridge disabled, not armed, register map rev 3. `check mot`:
+heartbeat ADVANCING, board settings UNKNOWN before (expected after a load),
+`mot` settings after, **configuration written and read back OK** (the
+32-word CFG block works on hardware), OUT2/boost 0, dither on, state IDLE,
+not armed, not tripped. Measured current at zero with nothing on IN1:
+**+0.189 A** (≈ 1 mV, the Red Pitaya's own input offset; positive = the
+safe direction for the trip). Re-measure with the LEM chain connected.
