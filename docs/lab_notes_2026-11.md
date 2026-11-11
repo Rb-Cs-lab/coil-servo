@@ -214,3 +214,40 @@ Deployed; `check mot`: **firmware: register map rev 4, commit 103a127**
 IDLE, not armed, not tripped. Zero reading +0.306 A, offsets not yet
 calibrated — run `python -m coil_servo_host.zero mot --write --apply` with
 the real sensor chain connected, powered and no current flowing.
+
+## Test 1 — gate stage (11-11, no high current)
+
+Setup (test_campaign.md): OPA994 board on a separate 5.184 V bench supply,
+OUT1 → op-amp BNC (no terminator) teed to scope CH1, ×10 probes on the
+gates of pass FETs #4 (CH2), #1 (CH3), #10 (CH4), all grounds on the source
+bar; high-current side open. Open loop, OUT1 swept 0–4474 counts
+(raw data: logs/t1_gate_sweep.json, logs/t1_gate_decay.npz).
+
+- **Wiring fault found first:** the gates stayed at ~0 V. The op-amp's
+  supply sat 5 V too low relative to the source bar (pin 7 +0.39 V, pin 4
+  −5.1 V): its − terminal was not tied to the source bar and its + was
+  effectively at ground (the source bar is earthed through the scope).
+  Fixed: 5 V supply − → source bar, supply floating from earth. Then pin 7
+  +5.18 V, pin 4 0 V.
+- **OUT1 at the op-amp input: 285.4 µV per DAC count, offset −81 mV at
+  code 0** → OUT1 is **unterminated** and swings 2.34× the nominal
+  122 µV/count (Red Pitaya open-circuit output ≈ 2.34 V full scale).
+- **Op-amp gain 7.94** (gates #4 and #10; design 7.98). Gate #1 read a
+  constant ~0.1–0.15 V low on the replacement probe and agreed within 2 %
+  at full bandwidth — probe, not circuit (one op-amp output feeds all gates).
+- **Gate ceiling 5.17–5.18 V** (the op-amp's 5.184 V rail, rail-to-rail),
+  reached from ~2550 OUT1 counts: as wired, the firmware clamp (4474
+  counts, computed for a terminated OUT1) never acts; the op-amp rail caps
+  the gate at ~5.2 V (model: bank ≈ 190–200 A at that gate voltage).
+- **No oscillation:** 312 MS/s, full bandwidth: input 2 mV rms, gates
+  4–6 mV rms, only 1–5 mV lines at 125 MHz (Red Pitaya clock) and harmonics.
+- **Fail-safe on op-amp power loss:** gates fall together to ~0.1–0.2 V,
+  τ ≈ 4.5 ms (the op-amp output follows its own supply's discharge), below
+  0.5 V within ~8.5 ms.
+- **Consequences:** with OUT1 unterminated one count ≈ 2.27 mV of gate ≈
+  0.27 A of bank current (model), the dead zone sits at ~1830 counts, and the
+  configured floor (3234) and clamp (4474) are wrong for this wiring.
+  Recommendation: fit a 50 Ω BNC feed-through at the op-amp input (halves
+  volts/count and the offset, matches `out1_terminated = true`), re-run the
+  sweep, then put the measured OUT1 scale/offset and the 5.18 V ceiling into
+  channels.toml.
