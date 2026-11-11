@@ -18,7 +18,8 @@ no control decisions are made in software.
 - Programming experimental sequences: [docs/operating_scenarios.md](docs/operating_scenarios.md)
 - Watching the boards live (and operating them by hand from the lab PC):
   the web dashboard, [docs/dashboard.md](docs/dashboard.md)
-- Bringing hardware up, step by step: [docs/bringup.md](docs/bringup.md);
+- Bringing hardware up, step by step: [docs/bringup.md](docs/bringup.md)
+- The test campaign (who does what, scope channels, pass criteria): [docs/test_campaign.md](docs/test_campaign.md);
   the first low-current campaign on a 3 A bench supply:
   [docs/bench_supply_test.md](docs/bench_supply_test.md) (channel
   `mot_bench`; switching back to 100 A:
