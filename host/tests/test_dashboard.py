@@ -459,6 +459,10 @@ def test_one_device_per_board_and_cards():
     assert bench["i_rated"] == 2.5
     rows = dict(devices["mot"].info("mot_bench")["summary"])
     assert "supply limit" in rows
+    # the measured gate-stage calibration, read-only (Test 1, 2026-11-11)
+    assert "1.168 V" in rows["measured: OUT1 full scale"]
+    assert "-41.3 mV" in rows["measured: OUT1 offset"]
+    assert "5.18 V" in rows["measured: gate ceiling"]
 
 
 def test_cards_file_is_checked(tmp_path):

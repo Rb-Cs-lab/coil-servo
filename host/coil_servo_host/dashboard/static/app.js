@@ -732,7 +732,7 @@ function updateDetail() {
   $("#d-supply").innerHTML = prof.i_supply_max != null
     ? `bench supply limit ${prof.i_supply_max} A · rated ${prof.i_rated} A` : "";
   $("#d-u").textContent = !(on && st.out1_volts != null) ? "—"
-    : st.out1_mode === "off" ? "0 V (outputs off)"
+    : st.out1_mode === "off" ? `${st.out1_volts.toFixed(4)} V (DAC code 0: outputs off)`
     : `${st.out1_volts.toFixed(4)} V (${st.out1_counts} counts${
         st.out1_mode === "open" ? ", open loop: the clamped setpoint" : ""})`;
   $("#d-pi").textContent = on && st.pi_volts != null

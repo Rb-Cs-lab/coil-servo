@@ -177,6 +177,27 @@ def out1_actual(s: dict, rb: dict | None) -> tuple[int, str]:
     return (u if u > db else 0), mode
 
 
+def measured_rows(m) -> list:
+    """The measured OUT1/gate-stage calibration (channels.toml physics,
+    Test 1, 2026-11-11) as read-only (label, text) rows for the
+    Configuration panel. Empty for a value that is not set."""
+    rows = []
+    if getattr(m, "out1_fs_volts", None) is not None:
+        rows.append(("measured: OUT1 full scale",
+                     f"{m.out1_fs_volts:.4g} V at the op-amp input per "
+                     f"full-scale OUT1 (out1_fs_volts; replaces the nominal "
+                     f"1 V terminated / 2 V unterminated)"))
+    if getattr(m, "out1_offset_volts", None) is not None:
+        rows.append(("measured: OUT1 offset",
+                     f"{m.out1_offset_volts * 1e3:+.1f} mV at DAC code 0 "
+                     f"(out1_offset_volts; added to every OUT1 voltage shown)"))
+    if getattr(m, "V_opamp_max", None) is not None:
+        rows.append(("measured: gate ceiling",
+                     f"{m.V_opamp_max:.3g} V (V_opamp_max: the op-amp rail; "
+                     f"gates cannot be driven higher)"))
+    return rows
+
+
 class _LockedBoard:
     """The two Board calls zero.measure_offsets makes, each under the
     device's board lock -- so the status poll keeps running between the
@@ -670,7 +691,7 @@ class CoilServoChannel(Device):
                "summary": [], "compare": [], "live": {}}
         if ch:
             out["header"] = summary_header(ch)
-            out["summary"] = summary_rows(ch)
+            out["summary"] = summary_rows(ch) + measured_rows(ch["model"])
         with self._lock:
             rb = self.readback
             out["readback_age_s"] = (

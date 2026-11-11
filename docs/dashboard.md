@@ -144,7 +144,8 @@ Click a card for its page.
   carries, in volts at the op-amp input and in DAC counts — and, smaller,
   the **PI command (u14)**, the controller's output. They differ: with the
   bridge disabled (IDLE) or after a trip the firmware holds OUT1 at
-  exactly 0 V ("0 V (outputs off)") while the PI value stays at its last
+  DAC code 0 — which measures −0.041 V, not 0 V, so the header shows
+  "−0.0413 V (DAC code 0: outputs off)" — while the PI value stays at its last
   value (the integrator is held, not cleared); in open loop OUT1 carries
   the setpoint, limited to the clamp, not the PI value. Then any alarms
   and the big
@@ -177,8 +178,12 @@ Click a card for its page.
 - **Configuration:** what `python -m coil_servo_host.config <channel>`
   prints (supply limit for bench profiles, sensor scale, pass-bank gain,
   dead zone, floor, clamp, trip, zero window, ramps, PI gains, dither,
-  board LEDs) for this card's profile, which profile the board holds,
-  then the board's **read-back** configuration compared field by field
+  zero offsets, board LEDs) for this card's profile, plus three read-only
+  *measured* rows from the gate-stage test (Test 1, 2026-11-11): OUT1 full
+  scale (`out1_fs_volts`), the OUT1 offset at DAC code 0
+  (`out1_offset_volts`) and the gate ceiling (`V_opamp_max`). They come
+  from `channels.toml`; change them there. Then which profile the board
+  holds, and the board's **read-back** configuration compared field by field
   with this card's profile. Red rows differ — after a fresh deploy every
   row differs until the profile is applied. *Live fields* are the ones
   that change in normal operation (enable, setpoint, …).
