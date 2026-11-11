@@ -310,9 +310,11 @@ def test_in_amp_gain_changes_the_scale(tmp_path):
 
 
 def test_sensor_offsets_convert_and_are_bounded(tmp_path):
+    import re
     from coil_servo_host.config import CONFIG_PATH
-    text = CONFIG_PATH.read_text(encoding="utf-8").replace(
-        "in1_offset_amps = 0.0", "in1_offset_amps = -5.8", 1)
+    # replace the first ([mot]) in1_offset_amps line, whatever is stored
+    text = re.sub(r"(?m)^in1_offset_amps = .*$", "in1_offset_amps = -5.8",
+                  CONFIG_PATH.read_text(encoding="utf-8"), count=1)
     p = tmp_path / "channels.toml"
     p.write_text(text, encoding="utf-8")
     ch = load_channel("mot", p)

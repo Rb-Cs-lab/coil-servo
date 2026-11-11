@@ -59,9 +59,22 @@ def mock_server():
     proc.wait(timeout=5)
 
 
+def _sim_config_text() -> str:
+    """channels.toml with the measured IN1/IN2 zero offsets set to 0: the
+    simulated boards have no sensor offset unless a test adds one
+    (sim_sensor_offset), so the real board's calibration must not apply."""
+    import re
+    text = CONFIG_PATH.read_text(encoding="utf-8")
+    return re.sub(r"(?m)^(in[12]_offset_amps) = [^#\n]*", r"\1 = 0.0 ", text)
+
+
 def make_app(tmp_path, *, only=("mot",), sim_old=(), policy=None, **kw):
     log = ActionLog(tmp_path)
     kw.setdefault("cfg_refresh_s", 0.05)
+    if "config_path" not in kw:
+        cfg = tmp_path / "channels_sim.toml"
+        cfg.write_text(_sim_config_text(), encoding="utf-8")
+        kw["config_path"] = cfg
     devices, cards = build_dashboard(list(only) if only else None,
                                      simulate=["*"], sim_old=sim_old,
                                      logdir=tmp_path, action_log=log,
@@ -334,7 +347,7 @@ def test_monitoring_never_writes_cfg_real_board(mock_server, monkeypatch):
 def test_stop_works_when_a_profile_is_refused(tmp_path):
     """A channels.toml profile the loader refuses blocks control as that
     profile -- but never Stop."""
-    text = CONFIG_PATH.read_text()
+    text = _sim_config_text()
     mot = text[text.index("[mot]"):text.index("[mot_bench]")]
     cfg = tmp_path / "channels.toml"
     cfg.write_text(mot.replace("V_rail = 5.0", "V_rail = 9.0", 1))
@@ -511,7 +524,7 @@ def test_shared_board_profile_switch(tmp_path):
 
 
 def test_unknown_keys_are_tolerated(tmp_path):
-    text = CONFIG_PATH.read_text()
+    text = _sim_config_text()
     mot = text[text.index("[mot]"):text.index("[mot_bench]")]
     cfg = tmp_path / "channels.toml"
     cfg.write_text(mot.replace("[mot]", "[mot]\nsome_future_key = 1"))
@@ -742,7 +755,7 @@ def test_firmware_identity_shown(mock_server):
 
 def _zero_app(tmp_path, offset):
     cfg = tmp_path / "channels.toml"
-    cfg.write_text(CONFIG_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+    cfg.write_text(_sim_config_text(), encoding="utf-8")
     return make_app(tmp_path, config_path=cfg, sim_sensor_offset=offset), cfg
 
 

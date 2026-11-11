@@ -250,4 +250,5 @@ def test_zero_calibration_measures_raw_codes(server, tmp_path):
     assert ch["cfg"]["in1_offset"] == raw_in1
     assert ch["cfg"]["in2_offset"] == raw_in2
     # other sections untouched
-    assert load_channel("mot_bench", cfg_path)["cfg"]["in1_offset"] == 0
+    assert (load_channel("mot_bench", cfg_path)["cfg"]["in1_offset"]
+            == load_channel("mot_bench")["cfg"]["in1_offset"])
