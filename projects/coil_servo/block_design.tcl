@@ -79,10 +79,10 @@ cell pavel-demin:user:axis_red_pitaya_adc adc_0 {
 # Build ID for STS word 6 (register_map.md): the first 7 hex digits of the
 # git commit this bitstream is built from, bit 28 set if the work tree had
 # uncommitted changes. 0 if git is unavailable.
-if {[catch {exec git rev-parse --short=7 HEAD} commit]} {
+if {[catch {exec git rev-parse --short=7 HEAD} commit] ||
+    [scan $commit %x build_id] != 1} {
   set build_id 0
 } else {
-  set build_id [expr {0x$commit}]
   if {![catch {exec git status --porcelain --untracked-files=no} dirty] &&
       $dirty ne ""} {
     set build_id [expr {$build_id | 0x10000000}]
