@@ -203,3 +203,21 @@ def test_sync_shadow_picks_up_another_clients_write(server):
         old.sync_shadow()
         old.write_cfg(led=3)                     # shares word 0
         assert old.read_cfg()["servo_enable"] == 1
+
+
+def test_leaving_open_loop_only_from_idle(server):
+    """Open-loop wind-up guard (found on the loopback, 2026-11-11): while
+    the FSM runs, open_loop 1 -> 0 is refused, or deferred when it comes
+    with a stop; from IDLE it is applied."""
+    from coil_servo_model.registers import MAP_REV
+    with Board("127.0.0.1", port=server) as b:
+        b.write_cfg(open_loop=1, servo_enable=1)
+        b.write_words(STS_BASE, [(MAP_REV << 24) | 1])      # state RUN
+        with pytest.raises(RuntimeError, match="open loop"):
+            b.write_cfg(open_loop=0)
+        b.write_cfg(servo_enable=0, open_loop=0)            # a stop
+        rb = b.read_cfg()
+        assert rb["servo_enable"] == 0 and rb["open_loop"] == 1
+        b.write_words(STS_BASE, [MAP_REV << 24])            # state IDLE
+        assert b.stop() == "IDLE"
+        assert b.read_cfg()["open_loop"] == 0

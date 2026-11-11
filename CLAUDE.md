@@ -66,7 +66,12 @@ Turn-off decision made (bridge stays closed, freewheel model by default).
   parameter), so `check`/`deploy`/the dashboard print the exact firmware
   version (today only map_rev 3 + the file's SHA-256 over ssh identify it);
 - **shot-synchronous capture:** start the capture FIFO on an arm edge / flip
-  request / setpoint step, with pre-trigger (proposal in docs/dashboard.md).
+  request / setpoint step, with pre-trigger (proposal in docs/dashboard.md);
+- **hold the PI integrator cleared while `open_loop` = 1:** today it keeps
+  integrating against an error the open-loop drive doesn't correct, and
+  switching to closed loop while running applies the wound-up value to OUT1
+  (loopback 2026-11-11: tripped the board). Host-side guard in
+  `Board.write_cfg`/`Board.stop` until then.
 
 ## Board
 

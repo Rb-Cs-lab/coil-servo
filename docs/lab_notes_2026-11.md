@@ -145,3 +145,27 @@ Redeployed; heartbeat back.
   heartbeat pulled → red latched; re-plugged → red stays, amber off; stop →
   IDLE; reset → amber stays off; re-enable + arm edge → RUN; stop → IDLE.
   The logic board passes with the MVP firmware.
+
+## Loopback test with the MVP firmware (11-11)
+
+OUT1 → IN1 with one SMA cable (IN1 high-impedance), floor set to 0 for the
+test, logic board connected, no power stage. Run from the lab PC.
+
+- **Open loop (scaling):** OUT1 command 0 / 500 / 1000 / 1800 counts → IN1
+  −570 / 447 / 1459 / 3080 counts, ±1–2 counts. **Loopback factor 2.026**
+  (2.034 / 2.025 / 2.027 per segment; Aug: 2.03). The −570-count (≈ −70 mV)
+  reading at code 0 is the DAC's resting offset (≈ −35 mV, ×2 unterminated;
+  Aug: same) — harmless in the MVP, it sits inside the pass-bank dead zone.
+- **Closed loop:** setpoint 819 counts ("20 A") → IN1 mean 819.00 (±1–2),
+  OUT1 684; 2048 ("50 A") → IN1 2047.93 (±1), OUT1 1290 — matching the
+  predicted (setpoint + 570)/2.026.
+- **Over-current trip:** setpoint 4506 ("110 A") in closed loop → TRIPPED,
+  bridge enable low; stop + `trip_ack` → IDLE. ✓
+- **Finding — open-loop integrator wind-up:** the first switch from open to
+  closed loop *tripped the board*: in open loop the PI keeps integrating
+  (setpoint 0 against the −570 offset) and wound up to ~4400 counts, which
+  hit OUT1 the moment closed loop took over. On the real coil that would be
+  a jump towards ~100 A. Fixed host-side the same day (`Board.write_cfg`
+  applies open_loop 1 → 0 only from IDLE/TRIPPED; `Board.stop()`; step and
+  sweep use it); firmware fix (hold the integrator cleared in open loop)
+  queued for the next rebuild.

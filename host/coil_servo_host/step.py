@@ -99,7 +99,7 @@ def finish(b: Board) -> None:
     """Ramp back down and disable (graceful stop in fabric)."""
     b.write_cfg(setpoint=0)
     time.sleep(0.05)
-    b.write_cfg(servo_enable=0, open_loop=0)
+    b.stop()            # leaves open loop only once IDLE (see Board.write_cfg)
 
 
 def main():

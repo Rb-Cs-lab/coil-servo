@@ -120,10 +120,38 @@ class Board:
                 f"(python -m coil_servo_host.deploy <channel>).")
         self._map_checked = True
 
+    def _field(self, name: str) -> int:
+        """A CFG field's value in the local shadow."""
+        word, lsb, width, _ = CFG_FIELDS[name]
+        return (self._cfg >> (32 * word + lsb)) & ((1 << width) - 1)
+
     def write_cfg(self, **fields) -> None:
         """Update named CFG fields, preserving everything else via the local
-        shadow, and write only the words that changed."""
+        shadow, and write only the words that changed.
+
+        Leaving open loop (open_loop 1 -> 0) is only applied while the FSM
+        is IDLE or TRIPPED: the firmware's PI keeps integrating in open loop
+        against an error the open-loop drive does not correct, so switching
+        to closed loop while running would apply a wound-up integrator to
+        OUT1 (found on the loopback, 2026-11-11: it tripped the board).
+        - together with servo_enable=0 (a stop): open_loop is left at 1 --
+          the stop then runs with OUT1 = the forced-zero setpoint = 0 -- and
+          is cleared by Board.stop() or the next enable from IDLE;
+        - otherwise: refused with RuntimeError."""
         self._check_map()
+        if (fields.get("open_loop") == 0 and self._field("open_loop") == 1):
+            state = self.sts()["fsm_state_name"]
+            if state not in ("IDLE", "TRIPPED"):
+                if fields.get("servo_enable") == 0:
+                    fields = {k: v for k, v in fields.items()
+                              if k != "open_loop"}
+                else:
+                    raise RuntimeError(
+                        f"refusing to leave open loop while the servo runs "
+                        f"(state {state}): the PI integrator winds up in "
+                        f"open loop and would jump OUT1. Stop first "
+                        f"(Board.stop()), then switch to closed loop and "
+                        f"re-arm.")
         touched = set()
         for name, value in fields.items():
             if (name == "out_clamp" and self.max_clamp is not None
@@ -141,6 +169,25 @@ class Board:
         for w in sorted(touched):
             self.write_words(CFG_BASE + 4 * w,
                              [(self._cfg >> (32 * w)) & 0xFFFFFFFF])
+
+    def stop(self, wait: bool = True, timeout: float = 5.0) -> str:
+        """Graceful stop: servo_enable = 0 (the firmware forces the setpoint
+        to zero, lets the current fall into the zero window and opens the
+        bridge). With wait, poll until IDLE, then leave open loop and clear
+        the integrator. Returns the final state name."""
+        self.write_cfg(servo_enable=0)
+        state = self.sts()["fsm_state_name"]
+        if not wait:
+            return state
+        t_end = time.monotonic() + timeout
+        while state not in ("IDLE", "TRIPPED") and time.monotonic() < t_end:
+            time.sleep(0.02)
+            state = self.sts()["fsm_state_name"]
+        if state == "IDLE":
+            if self._field("open_loop"):
+                self.write_cfg(open_loop=0)
+            self.pulse("int_clear")
+        return state
 
     def pulse(self, field: str) -> None:
         """1-then-0 on a CFG bit (int_clear, fifo_rst, flip_fault_ack)."""

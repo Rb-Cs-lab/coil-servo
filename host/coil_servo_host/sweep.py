@@ -44,7 +44,7 @@ def prepare(b: Board, ch: dict) -> None:
 
 
 def finish(b: Board) -> None:
-    b.write_cfg(servo_enable=0, open_loop=0)
+    b.stop()            # leaves open loop only once IDLE (see Board.write_cfg)
 
 
 def analyse(data, i_fs: float, min_stim: float, last_f: float | None):
