@@ -191,8 +191,12 @@ Power the op-amp stage only (pass-bank drains not powered).
 A dummy load in place of the coils. **Start every step at a few amps.**
 The first characterization can use a current-limited bench supply in
 place of the SE-600-5 — the low-current test profile `mot_bench` (5 V,
-3 A limit, LEM wound 10×) and its step-by-step procedure are in
+3 A limit, one coil) and its step-by-step procedure are in
 [bench_supply_test.md](bench_supply_test.md); then repeat on the SE-600-5.
+Switching between the two is the channel name only (`mot_bench` / `mot`)
+plus the hardware items in its
+[switching checklist](bench_supply_test.md#switching-between-bench-and-100-a);
+board LED 7 lit = bench settings loaded.
 
 1. **IN1 offset.** At zero current, read `i_meas` (or `check`). Record
    the offset; it must be well below the flip zero window (±0.5 A) before
