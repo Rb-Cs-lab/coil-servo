@@ -61,7 +61,7 @@ documentation is written for physicists and defines its jargon as it goes.
    pytest
    ```
 
-   You should see **210 passed** in about 2 minutes (Icarus Verilog must
+   You should see **219 passed** in about 2 minutes (Icarus Verilog must
    be installed for the FPGA simulations — see README "Setup A"). If you
    get `No module named coil_servo_host`, you're running a Python other
    than the activated `.venv` one.
@@ -104,7 +104,8 @@ documentation is written for physicists and defines its jargon as it goes.
   - `...check mot` is a quick health check;
   - `...watch mot` is the live status display;
   - `python -m coil_servo_host.dashboard` is the web dashboard: every
-    board live in a browser for anyone on the lab LAN, manual control
+    board live in a browser for anyone on the lab LAN (cards for MOT,
+    the shims and the Test setup), manual control
     from the lab PC only (`--simulate` to try it without hardware;
     [docs/dashboard.md](docs/dashboard.md));
   - `...config mot` prints the register values derived from

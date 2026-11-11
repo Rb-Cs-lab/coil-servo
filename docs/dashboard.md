@@ -22,20 +22,24 @@ options (`--help` lists them all):
 | Option | Meaning |
 |---|---|
 | `--port 8080` | the network port (default 8080) |
-| `--channels mot` | only these channels (default: every channel in `host/config/channels.toml`) |
-| `--simulate` | no hardware: every channel runs on the simulation (see below); `--simulate mot` simulates only `mot` |
+| `--channels mot,test` | only these cards (card ids or profile names; default: every card in `host/config/dashboard.toml`) |
+| `--cards file.toml` | another card list instead of `host/config/dashboard.toml` |
+| `--simulate` | no hardware: every board runs on the simulation (see below); `--simulate mot` simulates only the MOT board |
 | `--bind 127.0.0.1` | serve this PC only, invisible to the LAN (default `0.0.0.0` = every network adapter) |
 | `--logdir D:\coil-logs` | where logs and captures go (default `logs\` in the repo) |
 | `--poll 0.05` | status poll interval in seconds (default 0.1 = 10 times per second) |
 | `--allow 127.0.0.1,::1` | who may control (see *Who may do what*) |
 
-**Simulation mode** (`--simulate`) needs no board: each channel is driven
+**Simulation mode** (`--simulate`) needs no board: each board is driven
 by the Python model of the MVP power stage (`model/coil_servo_model`), so
 you can try every button safely. The status follows the setpoint through
 the configured ramps and the compliance limits; a capture runs the exact
 integer PI of the FPGA against the plant model. Extra buttons stand in for
 the outside world: *raise arm / drop arm* (the DIO4 line from the control
-computer) and *inject trip*. In the swept-sine setup a simulated function
+computer), *inject trip*, and *cut drive / restore drive* (the drive
+disappears behind the board's back, as when the logic-board latch trips or
+the supply is off: it shows the amber *possible latch trip* guess). In the
+swept-sine setup a simulated function
 generator on IN2 steps through frequencies. `--sim-old-bitstream mot`
 makes a simulated board report the old register map, to see that warning.
 A yellow **SIMULATION** banner is shown at the top of the page.
@@ -58,7 +62,11 @@ A yellow **SIMULATION** banner is shown at the top of the page.
 
 ### Overview
 
-One card per channel in `channels.toml`:
+One card per entry in `host/config/dashboard.toml`: **MOT, Z shim, X
+shim, Y shim and Test setup**. Each card is a *view* of one board with one
+settings profile from `channels.toml` (the card shows `profile [mot]`).
+At the top, a permanent note: the red FAULT LED of the safety logic board
+cannot be seen from here (see *What the page cannot see* below).
 
 - **dot and address** — green: connected to the board's register server;
   red: offline (the card says why — e.g. the board is off or not deployed
@@ -71,32 +79,62 @@ One card per channel in `channels.toml`:
 - **current** — the measured coil current in amps (IN1, averaged over the
   1 µs PI tick), with the active setpoint underneath, and a sparkline of
   the last minute.
-- **red boxes** — conditions that need a person: TRIPPED, TIMEOUT_HOLD,
-  the fault input, a setpoint whose sign disagrees with the bridge
-  polarity, a stuck fabric heartbeat, and **OLD BITSTREAM** (see below).
-  Amber boxes are informational (OUT1 at the command clamp, integrator
-  railed).
-- **badges** — `BENCH` for a bench-test profile (a channel with
-  `bench = true` in channels.toml, e.g. `mot_bench`, the 3 A bench-supply
-  campaign of [bench_supply_test.md](bench_supply_test.md)); its card also
-  shows the bench supply's current limit. `SIM` marks a simulated board.
+- **red boxes** — only conditions where a person must act on the coil:
+  TRIPPED, TIMEOUT_HOLD, the fault input, a setpoint whose sign disagrees
+  with the bridge polarity, a stuck fabric heartbeat, and **OLD
+  BITSTREAM** (see below).
+- **amber boxes** — worth a look, not an emergency: the board's settings
+  match no profile (fresh deploy: apply one), a profile the config loader
+  refused, OUT1 at the command clamp, integrator railed, and the
+  **possible latch trip** guess (below).
+- **grey lines** — information: *look only, the control computer owns
+  this coil*; *repeating capture every N s*.
+- **NO FRESH DATA** — the values are greyed out when the last status is
+  more than ~1 s old (the poll stopped) or the dashboard server itself
+  stops answering. Frozen numbers are never shown as live.
+- **badges** — `BENCH` on the Test setup card; `SIM` marks a simulated
+  board.
 
-`mot` and `mot_bench` are two profiles for the **same board**
-(192.168.0.65), so both cards show that board. Every few seconds the
-dashboard reads the board's settings and asks which channels.toml profile
-they match (the same check `watch` and `check` print). A card whose
-profile the board does *not* hold gets a red **PROFILE MISMATCH** box:
-"the board holds the 'mot_bench' settings" (the other card is the one in
-use), or "UNKNOWN / mixed" (not configured since the bitstream was loaded,
-or changed by hand). With both cards open, exactly one of them is red.
+**The Test setup card** (profile `mot_bench`, the 3 A bench-supply
+campaign of [bench_supply_test.md](bench_supply_test.md)) is drawn
+differently on purpose: purple dashed border with a hatched top edge, a
+`BENCH` badge, and the bench supply's current limit and rating (3 A
+supply, 2.5 A rated) on the card.
 
-Click a card for the channel page.
+**One board, two cards.** MOT and Test setup are two profiles for the
+**same board** (192.168.0.65). The dashboard keeps one connection to it.
+Every couple of seconds it reads the board's settings and works out which
+profile they match (the same check `watch` and `check` print):
 
-### Channel page
+- the card whose profile the board holds shows it live;
+- the other card is greyed out: **"board in use as Test setup"** (or
+  "… as MOT") — not red, because nothing is wrong;
+- if the settings match neither (not configured since the bitstream was
+  loaded, or changed by hand), both cards show the board with an amber
+  "match no profile — apply a profile".
 
-- **Header:** state, current, setpoint, the OUT1 command (the PI output
-  sent to the pass-bank gate driver, in volts at the op-amp input and in
-  DAC counts), any alarms, and the big **STOP** button.
+To switch, Stop, open the other card and press *Apply profile*. When the
+test rig gets its own Red Pitaya, only `board_host` of `[mot_bench]` in
+channels.toml changes; the cards then show two independent boards.
+
+**Possible latch trip (amber).** The logic board's latch is invisible to
+the Pitaya, but its effect is not: the current collapses while the Pitaya
+still enables the bridge. The card shows the guess when, for more than
+0.2 s, the servo is in RUN with the bridge enabled and a setpoint above
+5 % of rated, but the measured current is below 1 % of rated (or 2 ADC
+counts). The same symptom comes from the supply being off or tripped, or
+an open circuit — the text says so. It is amber because it is an
+inference, not a measured signal.
+
+Click a card for its page.
+
+### Card page
+
+- **Header:** the card's title and profile, state, current, setpoint, the
+  OUT1 command (the PI output sent to the pass-bank gate driver, in volts
+  at the op-amp input and in DAC counts), any alarms, and the big
+  **STOP** button. On a greyed card it says which role the board is in
+  ("in use as MOT", with a link) and how to switch.
 - **Live charts:** measured current and active setpoint (the setpoint
   *after* the firmware's ramp limiter), and the OUT1 command, over a
   selectable span from 10 s to 10 min. The points are the 10-per-second
@@ -112,11 +150,20 @@ Click a card for the channel page.
 - **Configuration:** what `python -m coil_servo_host.config <channel>`
   prints (supply limit for bench profiles, sensor scale, pass-bank gain,
   dead zone, floor, clamp, trip, zero window, ramps, PI gains, dither,
-  board LEDs), which profile the board holds, then the board's
-  **read-back** configuration compared
-  field by field with the profile. Red rows differ — after a fresh deploy
-  every row differs until the profile is applied. *Live fields* are the
-  ones that change in normal operation (enable, setpoint, …).
+  board LEDs) for this card's profile, which profile the board holds,
+  then the board's **read-back** configuration compared field by field
+  with this card's profile. Red rows differ — after a fresh deploy every
+  row differs until the profile is applied. *Live fields* are the ones
+  that change in normal operation (enable, setpoint, …).
+
+### What the page cannot see
+
+The safety logic board's heartbeat latch (and its red FAULT LED) is not
+wired back to the Red Pitaya — DIO5 is unconnected in the MVP. A latch
+trip therefore only shows up indirectly: the current drops while the
+Pitaya still enables the bridge (the amber *possible latch trip* guess).
+Both the overview and every card page say so permanently. When in doubt,
+look at the logic board.
 
 ### Old bitstream
 
@@ -134,14 +181,20 @@ themselves be misread. Fix: deploy the current bitstream
 976.6 kS/s (one point per 1.024 µs PI tick, 16384 points) from the FPGA's
 capture memory and plots it against time in ms. This is the tool for
 "what is the current actually doing" — ripple, a ramp, ringing after a
-step. *Repeat every N s* takes one automatically (N ≥ 1; 0 = off).
+step. *Repeat every N s* takes one automatically (N ≥ 1; 0 = off); the
+card then says "repeating capture every N s".
 
 Captures are **started by the PC, not by the experiment**: they land at a
 random moment relative to a shot (see the proposal below). A capture
 writes only the two capture-control bits (`capture_sel`, `fifo_rst`); it
-never touches the loop and is safe during a sequence. Each capture is saved
-as `logs\captures\<channel>_<date>-<time>_capture.csv` with columns
-`t_s, i_amps, setpoint_amps` (same format as `step`).
+never touches the loop and is allowed during a sequence. Each capture is
+saved as `logs\captures\<board>_<date>-<time>_capture.csv` with columns
+`t_s, i_amps, setpoint_amps` (same format as `step`). Manual captures are
+kept; repeating ones (`..._auto.csv`) are deleted after one hour.
+
+While the dashboard captures, **do not run `step` or `sweep` from a
+terminal** on the same board: they use the same capture memory and would
+corrupt each other's record. The capture panel says so.
 
 ## Who may do what
 
@@ -164,9 +217,12 @@ Why: the boards' register server has no authentication of its own (it
 trusts the private wired LAN), and a mistaken click from a desk elsewhere
 could drive current while someone works on the coils. Every action that
 can drive current asks for **confirmation** in a dialog first; STOP never
-does. **During experimental sequences the page is look-only** — the
-control computer drives the setpoint through IN2 and the arm line, and a
-click here would interfere.
+does.
+
+**During experimental sequences the page is look-only, enforced:** while
+the servo is enabled with the setpoint from IN2 (the control computer owns
+the coil), the dashboard refuses every action except STOP and captures,
+with "look only" as the reason. To take over by hand, press STOP first.
 
 Every control request — accepted or refused, from any address — is
 written to the action log with the client's IP address.
@@ -176,25 +232,30 @@ written to the action log with the client's IP address.
 - **STOP** — `servo_enable = 0`: the firmware ramps the current down at
   the configured rate (50 A/ms on the MOT) and returns to IDLE. Always
   safe; also ends a running step or sweep. It does not open the bridge
-  at current.
-- **Apply profile [mot]** — writes the channel's configuration from
-  `channels.toml` (gains, clamp, floor, trip, ramps, dither, and the
-  board-LED pattern: LED 7 lit = bench settings) and reads it back. Only
-  in IDLE. The dialog says which profile the board holds now. Applying
-  `mot_bench` is for the current-limited bench supply only, never with
-  the SE-600-5 (and the reverse: see the switching checklist in
-  bench_supply_test.md).
+  at current. STOP needs only a reachable board with the current
+  bitstream — never a valid profile.
+- **Apply profile [mot]** (on the MOT card; **[mot_bench]** on Test
+  setup) — writes that profile's configuration from `channels.toml`
+  (gains, clamp, floor, trip, ramps, dither, and the board-LED pattern:
+  LED 7 lit = bench settings) and reads it back. Only in IDLE. The dialog
+  says which profile the board holds now. For `mot_bench` it shows a red
+  box: **only with the current-limited bench supply connected, never with
+  the SE-600-5**; going back from bench to production settings it warns
+  that the production power stage must be connected (see the switching
+  checklist in bench_supply_test.md).
 - **Enable** — sets `servo_enable = 1` with the chosen setpoint source:
   *this page* (the setpoint register, starting at 0 A) or *IN2* (the
   control computer). The board then **waits in IDLE for a rising edge on
   arm (DIO4)**: the page shows "raise arm now" with a countdown. An arm
   line that is already high does not count — drop it and raise it again.
   After 30 s without RUN (or on a trip) `servo_enable` is set back to 0,
-  exactly like the command-line tools. Enable is refused when the board's
-  configuration differs from the profile (apply the profile first).
+  exactly like the command-line tools. Enable, Set current, Step and
+  Sweep act as the card's profile and are refused unless the board holds
+  it (apply the profile first) — so you cannot run the Test setup's
+  board with the MOT's settings by mistake, or the reverse.
 - **Set current** — the setpoint register in amps (only with the source
-  *this page*); refused above the rated current (100 A on the MOT). The
-  firmware ramps to it.
+  *this page*); refused above the profile's rated current (100 A on the
+  MOT, 2.5 A on the Test setup). The firmware ramps to it.
 - **trip_ack** — after an over-current trip: TRIPPED → IDLE. Find the cause
   first. Running again needs Enable and a fresh arm edge.
 - **flip_fault_ack** — TIMEOUT_HOLD → RUN.
@@ -223,20 +284,32 @@ All under `--logdir` (default `logs\` in the repo, not tracked by git):
 
 | File | Contents |
 |---|---|
-| `status\<channel>_<YYYY-MM-DD>.csv` | every status poll: time, state, flags, current, setpoint (amps), OUT1 (counts and volts), map revision |
-| `actions_<YYYY-MM-DD>.csv` | every control request with the client's IP and the result; connection changes |
-| `captures\<channel>_<date>-<time>_<kind>.csv` | captures, steps (`t_s, i_amps, setpoint_amps`) and sweeps (`f_hz, mag, phase_deg, stim_amps`) |
+| `status\<board>_<YYYYMMDD-HHMM>.csv` | every status poll: time, state, flags, current, setpoint (amps), OUT1 (counts and volts), map revision, profile held. One file per 10 minutes; **only the last hour is kept** |
+| `actions_<YYYY-MM-DD>.csv` | every control request with the client's IP and the result; connection changes. One file per day, **kept in full** (the audit trail) |
+| `captures\<board>_<date>-<time>_<kind>.csv` | captures, steps (`t_s, i_amps, setpoint_amps`) and sweeps (`f_hz, mag, phase_deg, stim_amps`); repeating captures (`_auto`) are kept one hour, the rest are kept |
 
-At 10 polls per second the status log grows by ~70 MB per channel per
-day; `--log-every 10` keeps one poll in ten. A new file starts at local
-midnight. In memory the dashboard keeps the last 10 minutes
-(`--history`).
+At 10 polls per second an hour of status is ~3 MB per board; when a new
+10-minute file starts, files that ended more than an hour ago are deleted.
+`--log-every 10` keeps one poll in ten. `<board>` is the first
+channels.toml profile of that board (`mot` for the MOT board, also when
+it holds the bench settings — the *profile* column says which). In memory
+the dashboard keeps the last 10 minutes (`--history`).
 
 ## How it works (for maintainers)
 
-- `host/coil_servo_host/dashboard/`: `servo_channel.py` (one background
-  thread per channel: **one** TCP connection to the board's register
-  server, polled at 10 Hz and shared by all browsers), `app.py` (the web
+- **Devices and cards.** A *device* is one board: `servo_channel.py`
+  runs one background thread per board_host with **one** TCP connection to
+  its register server, polled at 10 Hz and shared by all browsers; its
+  profiles are every channels.toml table with that board_host. A *card*
+  is a view of a device with one profile; the list is
+  `host/config/dashboard.toml` (id, title, profile, optional
+  `style = "bench"`). Without that file there is one card per
+  channels.toml table. Actions that drive current take the card's
+  profile as a parameter and are refused unless the board holds it.
+- An unexpected error in a poll takes the board "offline" with the
+  message and reconnects; the snapshot carries `age_s`/`stale`, so the
+  page never shows a dead poll as live.
+- `host/coil_servo_host/dashboard/`: `servo_channel.py`, `app.py` (the web
   server, [Starlette](https://www.starlette.io/) on uvicorn), `access.py`
   (allowlist), `logs.py`, `static/` (plain HTML/JS/CSS, no build step;
   `plot.js` is a small built-in plotting module, so nothing is loaded
@@ -251,7 +324,13 @@ midnight. In memory the dashboard keeps the last 10 minutes
   memory.
 - `host/coil_servo_host/simboard.py` is the simulated board; the tests in
   `host/tests/test_dashboard.py` run against it and against the real
-  `Board` talking to the mock register server.
+  `Board` talking to the mock register server. The simulated MOT board
+  switches its physics to the bench supply when the bench settings are
+  applied (LED 7), and has a *cut drive* button that imitates a latch
+  trip or a dead supply.
+- The dashboard tests need Starlette and httpx (`pip install -e .[dev]`);
+  without them pytest skips the file, and the skip reason is printed in
+  the test summary.
 
 ## Proposal: shot-synchronous capture (firmware feature, not built)
 
@@ -282,25 +361,28 @@ self-contained step.
 Everything the page shows comes from a small HTTP/JSON interface that
 other programs — the experiment-control software, or a future dashboard
 for lasers and other lab electronics — can use too. The server is built
-around a generic *device* (`dashboard/device.py`): each servo channel is
+around a generic *device* (`dashboard/device.py`): each servo board is
 one device of kind `coil_servo`; a laser controller would be another
 device class with its own snapshot and actions, served by the same
-endpoints.
+endpoints, and its own entries in `dashboard.toml`.
 
 | Request | Answer |
 |---|---|
-| `GET /api/devices` | list of devices: name, kind, available actions, current state |
-| `GET /api/devices/<name>` | the current state (snapshot), e.g. `state`, `i_amps`, `sp_amps`, `u14`, `out1_volts`, `flags`, `alarms`, `connection`, `map_ok` |
+| `GET /api/cards` | the overview's cards: `id`, `title`, `profile`, `device`, `style` |
+| `GET /api/devices` | list of devices (boards): name, kind, available actions, current state |
+| `GET /api/devices/<name>` | the current state (snapshot), e.g. `state`, `i_amps`, `sp_amps`, `u14`, `out1_volts`, `flags`, `alarms`, `warnings`, `connection`, `map_ok`, `held` (profiles the board holds), `profiles`, `age_s`, `stale`, `sequence_lock`, `stop_block`, `control_block` |
 | `GET /api/devices/<name>/history?span=60` | the last *span* seconds as columns `t` (Unix time), `i_amps`, `sp_amps`, `u14`, `out1_volts` |
-| `GET /api/devices/<name>/info` | profile, derived values, CFG read-back vs profile |
+| `GET /api/devices/<name>/info?profile=mot_bench` | one profile's derived values and the CFG read-back compared with it |
 | `GET /api/devices/<name>/capture` | the latest capture: `t`, `kind`, `dt_s`, `i_amps[]`, `sp_amps[]`, `file` |
 | `GET /api/stream` | server-sent events: one `data:` line per 0.1 s with every device's snapshot |
 | `GET /api/whoami` | your address and what you may do |
 | `POST /api/devices/<name>/actions/<action>` | run an action; JSON body with its parameters |
 
 POST requests need the header `X-Coil-Servo: 1` and a JSON body; actions
-that can drive current also need `"confirm": true`. The same allowlist
-applies as for the page. Example from Python on the lab PC:
+that can drive current also need `"confirm": true`, and take `"profile":
+"mot"` (or `"mot_bench"`) — `apply_profile` requires it, the others
+default to the profile the board holds. The same allowlist applies as for
+the page. Example from Python on the lab PC:
 
 ```python
 import json, urllib.request
