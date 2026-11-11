@@ -59,6 +59,15 @@ real benefit (DAC linearity, op-amp at tens of MHz) is a bench measurement.
 Does not help ground noise (future_upgrades.md §7 would).
 Turn-off decision made (bridge stays closed, freewheel model by default).
 
+**Queued for the next firmware rebuild** (needs a register-map revision,
+`docs/register_map.md` first, and a Vivado build):
+- **build-ID register:** an STS word with the git commit the bitstream was
+  built from, stamped in at build time (Makefile passes it to the top as a
+  parameter), so `check`/`deploy`/the dashboard print the exact firmware
+  version (today only map_rev 3 + the file's SHA-256 over ssh identify it);
+- **shot-synchronous capture:** start the capture FIFO on an arm edge / flip
+  request / setpoint step, with pre-trigger (proposal in docs/dashboard.md).
+
 ## Board
 
 Red Pitaya STEMlab 125-14 Low Noise, Zynq 7010 (`xc7z010clg400-1`).
