@@ -23,7 +23,7 @@ current host tools.
 
 | File | Built from | Register map | Build host | Timing | Hardware-verified |
 |---|---|---|---|---|---|
-| `coil_servo.bit.bin` | commit `103a127` (rev 4: IN1/IN2 zero-offset registers, build-ID register, open-loop integrator clear) | rev 4 | lab laptop, WSL2 Ubuntu 24.04, Vivado 2025.1, 2026-11-11 | met — WNS +0.156 ns, WHS +0.074 ns, 0 failing endpoints | not yet — deploy pending |
+| `coil_servo.bit.bin` | commit `103a127` (rev 4: IN1/IN2 zero-offset registers, build-ID register, open-loop integrator clear) | rev 4 | lab laptop, WSL2 Ubuntu 24.04, Vivado 2025.1, 2026-11-11 | met — WNS +0.156 ns, WHS +0.074 ns, 0 failing endpoints | deployed on the MOT board 2026-11-11: check reports rev 4, commit 103a127, configuration read back OK |
 | `coil_servo_rev3_20261111.bit.bin` | commit `aa2a92f1` (first MVP build) | rev 3 | lab laptop, 2026-11-11 | met — WNS +0.072 ns | yes — MOT board 2026-11-11: deploy/check, logic-board acceptance, loopback ([lab notes](../docs/lab_notes_2026-11.md)). Superseded |
 | `coil_servo_fullarch_20260827.bit.bin` | HDL as of the 2026-08-27 bring-up (full architecture) | rev 0 | lab NUC, WSL2, Vivado 2025.1 | met | yes — MOT board, 2026-08-27. Superseded |
 

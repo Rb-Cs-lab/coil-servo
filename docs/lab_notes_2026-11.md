@@ -202,3 +202,15 @@ current with the bridge closed. **No powered runs with this offset.**
 Actions: demagnetise the LEM (slowly decaying AC through the primary) or
 replace it; firmware IN1 offset-correction register proposed for the next
 rebuild.
+
+## Register-map rev 4 deployed (11-11, afternoon)
+
+Rev 4 adds IN1/IN2 zero-offset registers (prompted by the −5.8 A LEM),
+a build-ID register and the open-loop integrator clear. Built from
+`103a127` on the laptop (first attempt stopped on a Tcl error in the
+build-ID script, fixed): **WNS +0.156 ns, WHS +0.074 ns, 0 failing**.
+Deployed; `check mot`: **firmware: register map rev 4, commit 103a127**
+(no uncommitted-changes flag), configuration written and read back OK,
+IDLE, not armed, not tripped. Zero reading +0.306 A, offsets not yet
+calibrated — run `python -m coil_servo_host.zero mot --write --apply` with
+the real sensor chain connected, powered and no current flowing.
