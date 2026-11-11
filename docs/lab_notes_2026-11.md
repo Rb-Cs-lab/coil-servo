@@ -169,3 +169,36 @@ test, logic board connected, no power stage. Run from the lab PC.
   applies open_loop 1 → 0 only from IDLE/TRIPPED; `Board.stop()`; step and
   sweep use it); firmware fix (hold the integrator cleared in open loop)
   queued for the next rebuild.
+
+## H-bridge and current-sensing bench test (colleague, before integration, reported 11-11)
+
+Bridge alone, driven by hand (logic board not connected): gate drivers
+UCC5350 with RO-0515S isolated supplies (+5 V from an isolated bench supply),
+3.3 V logic; IN+ high on the active diagonal, IN+ low on the other, all IN−
+low; bridge supply a 5 V CV bench supply; 4 AWG welding-cable jumpers with
+ring lugs between the MOSFETs (main cabling is 4/0 — check 4 AWG heating
+before 100 A CW).
+
+1. Gate drivers and shoot-through check: passed.
+2. Q4 gate read 0 V (Q1 16 V), no load current: loose connection, fixed.
+3. Resistive load: Q1/Q4 → +5 V, Q2/Q3 → −5 V, all off → 0 V. Passed.
+4. Coil + LEM LF 310-S (±15 V bench supply, 10 Ω burden, AD8421 G = 1 →
+   49.9 Ω → IN1): 1.12 A each way; burden −35 mV (Q1/Q4) and −23 mV
+   (Q2/Q3), i.e. ±6 mV about −29 mV. Reversal passed. Scale 5.4 mV/A vs
+   5.0 expected — within the uncertainty of a ±6 mV meter reading and a
+   bench-supply ammeter at 1 A; calibrate with the Red Pitaya on the 3 A
+   bench run.
+
+**Open finding — LEM zero offset: −29 mV on the burden ≈ −2.9 mA output ≈
+−5.8 A primary-equivalent** (datasheet ±0.2 A class). Unchanged with the
+AD8421 disconnected, after power-cycling ±15 V, and with the LEM flipped
+180° → internal to the sensor (magnetised core, e.g. primary current while
+the LEM was unpowered, or a sensor fault). **Consequences for the servo as
+built** (no offset correction in firmware): the loop would deliver ~5.8 A
+more than the setpoint; the trip would sit ~5.8 A high (bench: 8.6 A real,
+above the 3 A supply — would never fire); the zero window (±0.5 A) would
+never qualify, so a stop would park in RAMP_DOWN servoing ~5.8 A real
+current with the bridge closed. **No powered runs with this offset.**
+Actions: demagnetise the LEM (slowly decaying AC through the primary) or
+replace it; firmware IN1 offset-correction register proposed for the next
+rebuild.
