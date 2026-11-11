@@ -464,12 +464,13 @@ async def over_current_trip_through_the_pins(dut):
 
 @cocotb.test()
 async def bench_profile_holds_2a_and_trips_below_the_supply_limit(dut):
-    """The mot_bench register values (I_FS 20 A, 10x slew codes, small
-    gains, trip 2.8 A, zero window 0.1 A) against the MOT plant on a 3 A
-    current-limited supply: the loop holds 2 A within ~1 ADC count (dither
-    on, gate-averaged), then a 2.9 A setpoint trips the firmware before the
-    supply's limit is reached, the coil freewheels, the bridge opens inside
-    the zero window, and the FSM latches in TRIPPED."""
+    """The mot_bench register values (clamp 4000, trip 2.8 A = 115 counts,
+    4 samples) against one MOT coil on a 3 A current-limited supply (no IN1
+    offset in the bench): the loop holds 2 A within one ADC count (24 mA;
+    dither on, gate-averaged), then a 2.9 A setpoint trips the firmware
+    before the supply's limit (~123 counts) is reached, the coil
+    freewheels, the bridge opens inside the zero window, and the FSM
+    latches in TRIPPED."""
     await setup(dut, bench_cfg(setpoint=0))
     await arm(dut)
     world = World(dut, sp_amps=2.0, ch=BENCH, cfg_fn=bench_cfg)
