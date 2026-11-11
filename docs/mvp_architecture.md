@@ -410,7 +410,14 @@ E1 line has a 10 kΩ pull-down.
   datasheet formula doesn't predict either value; trust the measurement.)
 - **74HC74 latch** with a B3F-1000 reset button: when the monostable drops,
   the latch trips and stays tripped until someone presses reset. The
-  board never re-arms itself and **powers up tripped**.
+  board never re-arms itself and **powers up tripped**. As built, the trip
+  is **edge-triggered**: D held high, CLK (pin 3) driven by the
+  monostable's 1Q̄ (CD74HC123 pin 4), which rises when the heartbeat is
+  lost. (That wire was missing on 11-11 and was added; lab_notes_2026-11.md.)
+  **⚠ REVIEW:** a reset pressed while the heartbeat is still absent clears
+  the latch, and the returning heartbeat produces no new trip edge — so
+  press reset only with green on. A level-sensitive trip (monostable on
+  the asynchronous preset/clear) would close this gap.
 - **74HC10 NAND:** drivers enabled (IN− low) only if DIO1_P AND monostable
   OK AND latch not tripped.
 - **74HC04 #2 drives the status LEDs** (1 kΩ each): green = ALIVE, amber =

@@ -219,7 +219,12 @@ latch reset** — if the heartbeat dropped while the Pitaya kept running, the
 integrator may be wound up and reset would re-close the bridge with OUT1 at
 the clamp. (Corrected 2026-11-11: the earlier "disarm (DIO4 low)" rule did
 not work — losing arm mid-run never drops the bridge, by design. To run
-again after the reset: `servo_enable` = 1, then a fresh arm edge.)
+again after the reset: `servo_enable` = 1, then a fresh arm edge.) **Also
+press reset only with the heartbeat present (green on):** the latch trips
+on the monostable's *edge* (74HC74 CLK ← CD74HC123 1Q̄; that wire was
+missing on 11-11 and has been added), so a reset during heartbeat loss
+clears it with no new trip when the heartbeat returns — design weakness,
+level-sensitive trip to be reviewed (lab_notes_2026-11.md).
 
 ## Open unknowns — config values only, never hardcoded
 
