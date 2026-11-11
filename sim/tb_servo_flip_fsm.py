@@ -386,6 +386,7 @@ async def trip_timeout_zero_opens_at_once(dut):
     dut.tick.value = 1
     await RisingEdge(dut.aclk)
     dut.tick.value = 0
+    await RisingEdge(dut.aclk)          # comparisons registered (tick_d)
     await RisingEdge(dut.aclk)
     assert state(dut) == S_TRIP and dut.out_kill.value == 1
     await RisingEdge(dut.aclk)

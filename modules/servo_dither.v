@@ -15,7 +15,8 @@
 //
 // The dithered value is clipped to [lo, clamp] -- it never exceeds the hard
 // clamp (safety invariant 1). enable low: output = u14 exactly, sigma-delta
-// state cleared.
+// state cleared. The output is registered (timing): it reflects the inputs
+// and sigma-delta state of the previous clock.
 
 module servo_dither
 (
@@ -28,7 +29,7 @@ module servo_dither
   input  wire signed [13:0] lo,         // PI lower bound (floor)
   input  wire        [13:0] clamp,      // hard clamp, counts (<= 8191)
 
-  output wire signed [13:0] u_out
+  output reg  signed [13:0] u_out
 );
 
   reg  signed [7:0] acc;                // sigma-delta state, [-64, 63]
@@ -41,9 +42,8 @@ module servo_dither
   wire signed [14:0] lo15 = (lo > $signed(c15)) ? c15 : lo;
   wire signed [14:0] u_c = (u_d > c15) ? c15 : (u_d < lo15) ? lo15 : u_d;
 
-  assign u_out = enable ? u_c[13:0] : u14;
-
   always @(posedge aclk) begin
+    u_out <= !aresetn ? 14'sd0 : (enable ? u_c[13:0] : u14);
     if (!aresetn || !enable)
       acc <= 8'sd0;
     else
