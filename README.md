@@ -269,8 +269,10 @@ interlock chain yet, and DIO5 (fault input) is not wired.
   (~50 W per pass FET at 100 A). The first test round runs uncooled: short
   pulses, reduced current, a written duty limit.
 - OUT2 and DIO2_P stay unconnected.
-- **Disarm before pressing the latch reset** after any heartbeat trip — the
-  firmware never saw the bridge open and may be wound up.
+- **Stop the servo (`servo_enable` = 0, state IDLE) before pressing the
+  latch reset** after any heartbeat trip — the firmware never saw the
+  bridge open and may be wound up. Dropping arm alone is *not* enough: it
+  never stops a running servo.
 
 Losing the network does **not** stop the loop: if the Ethernet cable is
 pulled or the lab PC crashes, the servo keeps running in the FPGA at its

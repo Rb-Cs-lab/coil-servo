@@ -213,10 +213,13 @@ optimise firmware for speed — the analog side sets the bandwidth.
 
 The hardware protection does not pass through the Pitaya. In the MVP it is
 only the heartbeat latch on the logic board; DIO5_P is unwired. Firmware
-never writes code that tries to clear a fault. **Operating rule: disarm
-(DIO4 low) before pressing the latch reset** — if the heartbeat dropped while
-the Pitaya kept running, the integrator may be wound up and reset would
-re-close the bridge with OUT1 at the clamp.
+never writes code that tries to clear a fault. **Operating rule: stop the
+servo (`servo_enable` = 0, wait for IDLE — bridge_en low) before pressing the
+latch reset** — if the heartbeat dropped while the Pitaya kept running, the
+integrator may be wound up and reset would re-close the bridge with OUT1 at
+the clamp. (Corrected 2026-11-11: the earlier "disarm (DIO4 low)" rule did
+not work — losing arm mid-run never drops the bridge, by design. To run
+again after the reset: `servo_enable` = 1, then a fresh arm edge.)
 
 ## Open unknowns — config values only, never hardcoded
 

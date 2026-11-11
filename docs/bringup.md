@@ -103,27 +103,40 @@ Take all 3.3 V for jumper tests **from E1 pins 1/2**, never from 5 V.
 ### 3a. Logic-board acceptance test (LEDs)
 
 Green = ALIVE (heartbeat OK), amber = BRIDGE EN (drivers enabled),
-red = FAULT (latch tripped). Before step 3, set `servo_enable` from
-Python **first** (the FSM needs an arm *edge* after it):
+red = FAULT (latch tripped). Run `watch` in a second window to see the
+state live. Two helper commands (from the repo root):
+
+*enable* — apply the configuration and set `servo_enable`:
 
 ```bash
-python -c "from coil_servo_host import Board, load_channel; ch = load_channel('mot'); b = Board(ch['host']); b.apply_config(ch['cfg']); b.write_cfg(servo_enable=1); print(b.sts()['fsm_state_name'])"
+.venv\Scripts\python.exe -c "from coil_servo_host import Board, load_channel; ch=load_channel('mot'); b=Board(ch['host']); b.apply_config(ch['cfg']); b.write_cfg(servo_enable=1); print(b.sts()['fsm_state_name'])"
 ```
 
-| Step | Action | Green | Amber | Red |
-|---|---|---|---|---|
-| 1 | Power the logic board, heartbeat running | on | off | **on** (powers up tripped) |
-| 2 | Press reset | on | off | off |
-| 3 | Arm: jumper pin 11 to 3V3 (FSM → RUN, DIO1 high) | on | on | off |
-| 4 | Pull the DIO6 (heartbeat) wire | off | off | on |
-| 5 | Re-plug DIO6 | on | off | on (stays latched) |
-| 6 | **Remove the arm jumper**, press reset | on | off | off |
-| 7 | Re-arm (jumper pin 11 to 3V3 again; drop it first if still in) | on | on | off |
+*stop* — `servo_enable` = 0 (graceful ramp to zero, bridge opens, IDLE):
 
-Step 6 is the operating rule: **disarm before pressing reset** — the
-firmware never saw the bridge open in step 4 and its integrator may be
-wound up. Finish with `b.write_cfg(servo_enable=0)` and remove the
-jumper.
+```bash
+.venv\Scripts\python.exe -c "from coil_servo_host import Board, load_channel; import time; ch=load_channel('mot'); b=Board(ch['host']); b.write_cfg(servo_enable=0); time.sleep(0.5); print(b.sts()['fsm_state_name'])"
+```
+
+| Step | Action | Green | Amber | Red | `watch` |
+|---|---|---|---|---|---|
+| 1 | Power the logic board, heartbeat running | on | off | **on** (powers up tripped) | IDLE |
+| 2 | Press reset | on | off | off | IDLE |
+| 3 | Plug the arm jumper (pin 11 → 3V3) **first**, then *enable* | on | off | off | IDLE, armed=1 — no edge after enable, so it correctly stays off |
+| 4 | Unplug and re-plug the arm jumper (an edge) | on | **on** | off | RUN, bridge=1 |
+| 5 | Pull the DIO6 (heartbeat) wire | off | off | on | still RUN, bridge=1 (the firmware cannot see the latch) |
+| 6 | Re-plug DIO6 | on | off | on (stays latched) | RUN |
+| 7 | *stop*, **then** press reset | on | off | off | IDLE, bridge=0 |
+| 8 | *enable*, then unplug and re-plug arm | on | on | off | RUN |
+| 9 | *stop*, remove the arm jumper | on | off | off | IDLE |
+
+Steps 3–4 test the arm-edge rule. Step 7 is the operating rule: **stop
+the servo before pressing reset** — the firmware never saw the bridge
+open in step 5 and its integrator may be wound up. Dropping arm is not
+enough: losing arm mid-run never drops the bridge, so after a reset the
+bridge would re-close at once. If *stop* prints RAMP_DOWN instead of IDLE,
+the zero-current reading is outside the zero window (check the IN1
+offset against `zero_win_amps`).
 
 **Monostable timeout:** scope DIO6 and the monostable output while
 pulling DIO6: the drop must come a few ms after the last heartbeat edge
@@ -230,7 +243,7 @@ board LED 7 lit = bench settings loaded.
 5. **Heartbeat trip at current.** At a few amps, pull DIO6: the bridge
    opens at current and the energy goes back into the supply. Watch the
    SE-600-5 (does its over-voltage protection trip?) and scope the rail.
-   Disarm, `servo_enable=0`, reset the latch, re-arm.
+   `servo_enable=0` (wait for IDLE), reset the latch, re-enable, re-arm.
 6. **Hold noise.** Hold a steady current with `dither_enable` = 1 and = 0
    and capture the current noise (`step` capture or a scope on IN1),
    against the 0.1 % spec. This decides the resolution follow-ups
@@ -296,7 +309,7 @@ python -c "import numpy, matplotlib.pyplot as plt; d = numpy.genfromtxt('step.cs
   pulling toward zero. Check the IN1 offset against `zero_win_amps`;
   acknowledge per [register_map.md](register_map.md).
 - **Red LED on (latch tripped)** — heartbeat lost (board rebooted, wire
-  loose, redeploy). Disarm, `servo_enable=0`, fix the cause, press reset,
+  loose, redeploy). `servo_enable=0` (wait for IDLE), fix the cause, press reset,
   then enable and arm.
 - **`sp_sign_mismatch`** — the setpoint sign disagrees with the bridge
   polarity; the loop sits at zero until they agree.

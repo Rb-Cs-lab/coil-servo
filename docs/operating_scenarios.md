@@ -195,8 +195,9 @@ stays tripped until someone presses reset — it never re-arms on its own.
 **If the heartbeat dropped but the Red Pitaya kept running** (a loose
 DIO6 wire), the firmware never learns the bridge opened: it keeps
 integrating against zero current and its output may wind up to the clamp.
-**Operating rule: disarm (arm low) before pressing the latch reset**, and
-set `servo_enable = 0` if in doubt — then re-enable and re-arm (S1).
+**Operating rule: stop the servo (`servo_enable = 0`, wait for IDLE)
+before pressing the latch reset** — dropping arm alone does not stop a
+running servo. Then re-enable and give a fresh arm edge (S1).
 
 ### F5 — Power-on / boot with the power stage connected
 
