@@ -24,3 +24,6 @@ where = ["model", "host"]
 
 [tool.pytest.ini_options]
 testpaths = ["model/tests", "sim", "host/tests"]
+# -rs: always print why a test was skipped (e.g. the dashboard tests when
+# Starlette/httpx are not installed: pip install -e .[dev])
+addopts = "-rs"

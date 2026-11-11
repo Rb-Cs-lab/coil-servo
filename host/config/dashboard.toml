@@ -1,0 +1,46 @@
+# Cards on the dashboard's overview page, in display order
+# (python -m coil_servo_host.dashboard, docs/dashboard.md).
+#
+# Each card is a view of one board with one settings profile:
+#   id       short name used in the page address (#/card/<id>)
+#   title    what the card is called on the page
+#   profile  a table in channels.toml: the board's address (board_host)
+#            and the settings this card stands for
+#   style    "bench" draws the card differently (test setup on the
+#            current-limited bench supply); leave it out otherwise
+#
+# Cards whose profiles share a board_host are views of ONE board, with one
+# connection: the card whose settings the board holds shows it live, the
+# other is greyed out ("board in use as ..."). Today MOT and Test setup are
+# both the MOT board (192.168.0.65); when the test rig gets its own Red
+# Pitaya, change board_host of [mot_bench] in channels.toml and nothing
+# here.
+#
+# Later instruments (lasers, other lab electronics) get their own entries
+# here once a device class exists for them.
+
+[[card]]
+id = "mot"
+title = "MOT"
+profile = "mot"
+
+[[card]]
+id = "z"
+title = "Z shim"
+profile = "z_shim"
+
+[[card]]
+id = "x"
+title = "X shim"
+profile = "x_shim"
+
+[[card]]
+id = "y"
+title = "Y shim"
+profile = "y_shim"
+
+[[card]]
+id = "test"
+title = "Test setup"
+profile = "mot_bench"
+style = "bench"

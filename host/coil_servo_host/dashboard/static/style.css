@@ -145,3 +145,36 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
   transform: translateX(-50%); background: var(--text); color: var(--bg);
   padding: 8px 14px; border-radius: 6px; max-width: 80vw; z-index: 10; }
 #toast.error { background: var(--bad); color: #fff; }
+
+/* test setup (bench profile) cards: a different colour and a hatched
+   border, so they are never mistaken for a production channel */
+:root { --bench: #7a3fb5; --bench-bg: #f3ecfa; }
+@media (prefers-color-scheme: dark) {
+  :root { --bench: #c294f0; --bench-bg: #2a2036; }
+}
+.badge.bench { background: var(--bench-bg); color: var(--bench);
+  border: 1px solid var(--bench); }
+.card.bench, .panel.bench { border: 2px dashed var(--bench);
+  background-image: repeating-linear-gradient(135deg, var(--bench-bg) 0 10px,
+    transparent 10px 20px);
+  background-size: 100% 10px; background-repeat: no-repeat; }
+.card.bench .name, .bench-title { color: var(--bench); }
+.supply { color: var(--bench); font-weight: 600; }
+
+/* a card whose board currently holds another card's profile */
+.card.inuse { opacity: 0.55; }
+.inuse-msg { font-size: 16px; font-weight: 700; color: var(--muted); }
+
+/* no fresh status: values greyed out */
+.stale .current, .stale .state, .stale .spark { opacity: 0.35; }
+.stale-msg { background: var(--warn-bg); color: var(--warn);
+  font-weight: 700; padding: 3px 8px; border-radius: 4px; }
+
+.info-item { background: var(--bg); color: var(--muted);
+  padding: 3px 8px; border-radius: 4px; border: 1px solid var(--border); }
+.fault-note { border-left: 4px solid var(--warn); background: var(--warn-bg);
+  padding: 6px 10px; border-radius: 4px; margin: 0 0 14px; }
+.danger-box { background: var(--bad-bg); color: var(--bad);
+  border: 2px solid var(--bad); border-radius: 6px; padding: 8px 10px;
+  font-weight: 700; }
+.card.bench.alarm { border: 2px solid var(--bad); }

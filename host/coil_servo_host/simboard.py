@@ -27,7 +27,15 @@ sigma-delta dither in captures (approximated by its average).
 
 Inputs a real board gets from the outside world are sim-only methods:
 set_arm(level) is the DIO4 arm line; inject_trip() forces an over-current
-trip. IN2 is 0 V, except in the swept-sine configuration (open_loop = 1,
+trip; set_power(False) takes the drive away behind the board's back (the
+logic-board heartbeat latch tripping, the supply off, an open circuit):
+the Pitaya keeps bridge_en high but the current decays to zero.
+
+One board can hold several channels.toml profiles (mot / mot_bench share
+the MOT board). Pass the others as `variants`: when a CFG write changes
+the board-LED pattern to a variant's, the simulation switches to that
+variant's physics (bench supply limit, scale) -- as if the matching
+power stage were connected. IN2 is 0 V, except in the swept-sine configuration (open_loop = 1,
 sp_source = 0), where a simulated function generator steps through
 frequencies so a sweep has something to measure.
 """
@@ -66,10 +74,14 @@ def pack_sts(**fields) -> list:
 class SimBoard(Board):
     def __init__(self, ch: dict, map_rev: int = MAP_REV,
                  max_clamp: int | None = None, check_map: bool = True,
-                 seed: int | None = None, clock=time.monotonic):
+                 seed: int | None = None, clock=time.monotonic,
+                 variants=()):
         """ch: load_channel() result. map_rev: what the simulated bitstream
-        reports (0 simulates the old 2026-08-27 image)."""
+        reports (0 simulates the old 2026-08-27 image). variants: other
+        load_channel() results for the same board (see the module doc)."""
         self.ch = ch
+        self.variants = [ch] + [v for v in variants if v is not ch]
+        self.power = True
         self.m = ch["model"]
         self.i_fs = ch["i_fs"]
         self.map_rev = map_rev
@@ -139,6 +151,12 @@ class SimBoard(Board):
             self.bridge_en = True
         self.arm = bool(level)
 
+    def set_power(self, on: bool) -> None:
+        """False: the drive disappears (latch tripped, supply off, open
+        circuit) while the firmware still thinks the bridge is enabled."""
+        self._advance()
+        self.power = bool(on)
+
     def inject_trip(self) -> None:
         """Pretend the current crossed trip_level."""
         self._advance()
@@ -172,6 +190,11 @@ class SimBoard(Board):
 
     def _on_cfg(self, old: dict, new: dict) -> None:
         now = self._clock()
+        if new["led"] != old["led"]:
+            for v in self.variants:
+                if v.get("cfg", {}).get("led") == new["led"]:
+                    self.ch, self.m, self.i_fs = v, v["model"], v["i_fs"]
+                    break
         if old["fifo_rst"] and not new["fifo_rst"]:
             # FIFO restarts: remember where the window begins
             self.fifo = {"t0": now, "I": self.I, "sp": self.sp,
@@ -223,7 +246,9 @@ class SimBoard(Board):
                 i_cmd = min(i_cmd, m.I_supply_max)
             self.mismatch = self.state == "RUN" and \
                 self.sp < -64 * m.amps_per_lsb
-            if self.bridge_en and self.state != "TRIP":
+            if self.bridge_en and self.state != "TRIP" and not self.power:
+                self.I = max(self.I - (m.V_f + self.I * m.R_fw) / m.L * h, 0)
+            elif self.bridge_en and self.state != "TRIP":
                 rise = max(m.V_rail - self.I * m.R_series
                            - m.v_bank_min(self.I), 0.0) / m.L
                 fall = (m.V_f + self.I * m.R_fw) / m.L

@@ -68,8 +68,9 @@ class Device:
         """Time series of the last span_s seconds, as columns."""
         return {"t": []}
 
-    def info(self) -> dict:
-        """Configuration and other slowly-changing details."""
+    def info(self, profile: str | None = None) -> dict:
+        """Configuration and other slowly-changing details (for one of the
+        device's settings profiles, if it has several)."""
         return {}
 
     def latest_capture(self) -> dict | None:

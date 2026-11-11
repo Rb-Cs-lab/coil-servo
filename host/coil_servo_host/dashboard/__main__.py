@@ -1,6 +1,6 @@
 """Coil-servo web dashboard.
 
-    python -m coil_servo_host.dashboard                 # all channels
+    python -m coil_servo_host.dashboard                 # all cards
     python -m coil_servo_host.dashboard --channels mot  # just the MOT
     python -m coil_servo_host.dashboard --simulate      # no hardware needed
 
@@ -14,7 +14,7 @@ import socket
 from pathlib import Path
 
 from ..config import CONFIG_PATH
-from . import DEFAULT_LOGDIR, build_channels
+from . import CARDS_PATH, DEFAULT_LOGDIR, build_dashboard
 from .access import DEFAULT_ALLOW, AccessPolicy
 from .logs import ActionLog
 
@@ -33,17 +33,20 @@ def main(argv=None):
                         "network interface, so the LAN can view; "
                         "127.0.0.1 = this PC only)")
     p.add_argument("--channels", default="",
-                   help="comma-separated channel names (default: every "
-                        "channel in the config file)")
+                   help="comma-separated card ids or profile names "
+                        "(default: every card in dashboard.toml)")
     p.add_argument("--config", type=Path, default=CONFIG_PATH,
                    help="channels.toml to use")
+    p.add_argument("--cards", type=Path, default=CARDS_PATH,
+                   help="dashboard.toml: which cards the overview shows")
     p.add_argument("--simulate", nargs="?", const="*", default="",
                    metavar="CHANNELS",
                    help="run on the model instead of hardware: all "
-                        "channels, or the comma-separated ones given")
+                        "boards, or the comma-separated cards/profiles "
+                        "given")
     p.add_argument("--sim-old-bitstream", default="", metavar="CHANNELS",
-                   help="simulated channels whose bitstream reports the old "
-                        "register map (to see the 'old bitstream' display)")
+                   help="simulated cards/profiles whose bitstream "
+                        "reports the old register map (to see that display)")
     p.add_argument("--poll", type=float, default=0.1,
                    help="status poll interval in seconds (default 0.1 = "
                         "10 Hz)")
@@ -53,8 +56,8 @@ def main(argv=None):
                    help=f"where logs and captures go (default {DEFAULT_LOGDIR})")
     p.add_argument("--log-every", type=int, default=1,
                    help="write every Nth polled status to the CSV log "
-                        "(default 1 = all; ~70 MB per channel per day at "
-                        "10 Hz)")
+                        "(default 1 = all). Only the last hour of status is "
+                        "kept on disk (~3 MB per board at 10 Hz)")
     p.add_argument("--allow", default=",".join(DEFAULT_ALLOW),
                    help="addresses/networks allowed to control (default: "
                         "this PC only, %(default)s)")
@@ -71,8 +74,9 @@ def main(argv=None):
     from .app import create_app
 
     action_log = ActionLog(args.logdir)
-    devices = build_channels(
+    devices, cards = build_dashboard(
         _split(args.channels) or None, config_path=args.config,
+        cards_path=args.cards,
         simulate=_split(args.simulate) if args.simulate != "*" else ["*"],
         sim_old=_split(args.sim_old_bitstream), logdir=args.logdir,
         action_log=action_log, poll_interval=args.poll,
@@ -81,9 +85,9 @@ def main(argv=None):
     policy = AccessPolicy(allow=tuple(_split(args.allow)),
                           remote_capture=args.allow_remote_capture,
                           remote_stop=args.allow_remote_stop)
-    app = create_app(devices, policy, action_log)
+    app = create_app(devices, policy, action_log, cards=cards)
 
-    print(f"coil-servo dashboard: {', '.join(devices)}"
+    print(f"coil-servo dashboard: {', '.join(c.title for c in cards)}"
           f"{' (SIMULATED)' if args.simulate else ''}")
     print(f"  on this PC (control):   http://localhost:{args.port}")
     if args.bind not in ("127.0.0.1", "localhost"):

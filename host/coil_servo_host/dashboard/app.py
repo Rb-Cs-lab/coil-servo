@@ -1,10 +1,12 @@
 """The web server: static pages plus a small JSON API (docs/dashboard.md).
 
     GET  /api/whoami                          your address, what you may do
+    GET  /api/cards                           the overview's cards (views of
+                                              a device with one profile)
     GET  /api/devices                         every device: facts + state
     GET  /api/devices/{name}                  one device's state
     GET  /api/devices/{name}/history?span=60  last N seconds, as columns
-    GET  /api/devices/{name}/info             configuration, CFG read-back
+    GET  /api/devices/{name}/info?profile=P   configuration, CFG read-back
     GET  /api/devices/{name}/capture          latest capture (404 if none)
     GET  /api/stream                          server-sent events: all states
     POST /api/devices/{name}/actions/{action} {"confirm": true, ...params}
@@ -58,9 +60,14 @@ def _host_ok(host_header: str | None) -> bool:
 
 
 def create_app(devices: dict, policy: AccessPolicy | None = None,
-               action_log=None, stream_interval: float = 0.1) -> Starlette:
-    """devices: name -> Device (started and closed with the app)."""
+               action_log=None, stream_interval: float = 0.1,
+               cards: list | None = None) -> Starlette:
+    """devices: name -> Device (started and closed with the app).
+    cards: the overview's cards (dashboard.Card); default one per device."""
     policy = policy or AccessPolicy()
+    card_list = [c.to_json() for c in cards] if cards is not None else [
+        {"id": n, "title": n, "profile": None, "device": n, "style": ""}
+        for n in devices]
 
     def client_of(request: Request) -> str | None:
         return request.client.host if request.client else None
@@ -77,6 +84,9 @@ def create_app(devices: dict, policy: AccessPolicy | None = None,
     async def whoami(request):
         return JSONResponse(policy.describe(client_of(request)))
 
+    async def list_cards(request):
+        return JSONResponse(card_list)
+
     async def list_devices(request):
         return JSONResponse([dict(d.describe(), state=d.snapshot())
                              for d in devices.values()])
@@ -92,7 +102,9 @@ def create_app(devices: dict, policy: AccessPolicy | None = None,
         return JSONResponse(get_device(request).history(span))
 
     async def device_info(request):
-        return JSONResponse(get_device(request).info())
+        dev = get_device(request)
+        prof = request.query_params.get("profile")
+        return JSONResponse(dev.info(prof) if prof else dev.info())
 
     async def device_capture(request):
         cap = get_device(request).latest_capture()
@@ -101,7 +113,10 @@ def create_app(devices: dict, policy: AccessPolicy | None = None,
         return JSONResponse(cap)
 
     async def stream(request):
-        max_events = int(request.query_params.get("max_events", 0))
+        try:
+            max_events = int(request.query_params.get("max_events", 0))
+        except ValueError:
+            raise ActionError("max_events: a whole number", 400) from None
 
         async def events():
             n = 0
@@ -175,6 +190,7 @@ def create_app(devices: dict, policy: AccessPolicy | None = None,
         Route("/", index),
         Route("/favicon.ico", favicon),
         Route("/api/whoami", whoami),
+        Route("/api/cards", list_cards),
         Route("/api/devices", list_devices),
         Route("/api/devices/{name}", device_state),
         Route("/api/devices/{name}/history", device_history),
