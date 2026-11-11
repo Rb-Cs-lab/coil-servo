@@ -177,6 +177,7 @@ class Plot {
     this.ys.forEach((y, k) => {
       const s = o.series[k];
       g.strokeStyle = s.color; g.lineWidth = s.width || 1.5;
+      g.setLineDash(s.dash || []);
       g.beginPath();
       if (n > 2 * pw && !o.xlog) {
         // min/max per pixel column

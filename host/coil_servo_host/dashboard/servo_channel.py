@@ -128,6 +128,27 @@ def _f(x, nd=4):
     return round(float(x), nd)
 
 
+def out1_actual(s: dict, rb: dict | None) -> tuple[int, str]:
+    """What the OUT1 DAC carries, as (counts, mode) -- not the PI output
+    u14 (coil_servo_top.v, servo_output_mux.v):
+    - "off": bridge enable low, or TRIP/TRIPPED (out_kill): exactly 0. In
+      IDLE the integrator is held, so u14 stays at its last value;
+    - "open": open loop, the setpoint clamped to +-out_clamp drives OUT1;
+    - "closed": u14 (with dither on, OUT1 moves by a count around it).
+    Below the handoff deadband OUT1 is 0 (OUT2 is unused in the MVP).
+    open_loop/out_clamp/deadband come from the CFG read-back (refreshed
+    every cfg_refresh_s); without one, closed loop and no deadband."""
+    if not s["bridge_en"] or s["fsm_state_name"] in ("TRIP", "TRIPPED"):
+        return 0, "off"
+    if rb is not None and rb["open_loop"]:
+        c = rb["out_clamp"]
+        u, mode = max(-c, min(c, s["sp_active"])), "open"
+    else:
+        u, mode = s["u14"], "closed"
+    db = rb["deadband"] if rb is not None else 0
+    return (u if u > db else 0), mode
+
+
 class CoilServoChannel(Device):
     """One board. profiles: name -> load_channel() result, or None for a
     profile the loader refused (its message in profile_errors). models:
@@ -185,6 +206,7 @@ class CoilServoChannel(Device):
         self.last_job = None                  # the finished one, for viewers
         self._job_cancel = threading.Event()
         self._finish_stop = False             # see _stop_now / _maybe_finish_stop
+        self._out1 = (0, "off")               # (counts, mode), out1_actual
         self._capture_lock = threading.Lock()
         self.capture = None
         self.capture_seq = 0
@@ -331,7 +353,11 @@ class CoilServoChannel(Device):
         i_fs, model = self._i_fs(), self._model()
         i = i_meas_amps(s["i_meas"], i_fs)
         sp = counts_to_amps(s["sp_active"], i_fs)
-        v = out1_volts(s["u14"], model)
+        with self._lock:
+            rb_now = self.readback
+        out1, out1_mode = out1_actual(s, rb_now)
+        v = out1_volts(out1, model)
+        pv = out1_volts(s["u14"], model)
         rated = self._rated(self.scale_profile()) or 0.0
         low = (s["fsm_state_name"] == "RUN" and s["bridge_en"]
                and abs(sp) > LATCH_SP_FRAC * rated
@@ -344,11 +370,13 @@ class CoilServoChannel(Device):
             if self._hb is None or self._hb[0] != s["heartbeat"]:
                 self._hb = (s["heartbeat"], now)
             self._low_since = (self._low_since or now) if low else None
-            self.hist.append((t, i, sp, s["u14"], v))
+            self.hist.append((t, i, sp, s["u14"], v, pv))
+            self._out1 = (out1, out1_mode)
             held_now = list(self.held)
         self._n_polls += 1
         if self.status_log and self._n_polls % self.log_every == 0:
-            self.status_log.log(t, s, i, sp, v, "/".join(held_now))
+            self.status_log.log(t, s, i, sp, pv, out1, v,
+                                "/".join(held_now))
 
     # ---- state for viewers ---------------------------------------------------
     def _heartbeat_alive(self) -> bool | None:
@@ -501,7 +529,10 @@ class CoilServoChannel(Device):
                     "i_amps": _f(i_meas_amps(s["i_meas"], i_fs)),
                     "sp_amps": _f(counts_to_amps(s["sp_active"], i_fs)),
                     "u14": s["u14"],
-                    "out1_volts": _f(out1_volts(s["u14"], model), 5),
+                    "pi_volts": _f(out1_volts(s["u14"], model), 5),
+                    "out1_counts": self._out1[0],
+                    "out1_mode": self._out1[1],
+                    "out1_volts": _f(out1_volts(self._out1[0], model), 5),
                 })
             rb = self.readback
             if rb is not None and i_fs:
@@ -522,12 +553,13 @@ class CoilServoChannel(Device):
         t_min = time.time() - span_s
         with self._lock:
             rows = [r for r in self.hist if r[0] >= t_min]
-        cols = list(zip(*rows)) if rows else [[]] * 5
+        cols = list(zip(*rows)) if rows else [[]] * 6
         return {"t": [_f(x, 3) for x in cols[0]],
                 "i_amps": [_f(x) for x in cols[1]],
                 "sp_amps": [_f(x) for x in cols[2]],
                 "u14": [int(x) for x in cols[3]],
-                "out1_volts": [_f(x, 5) for x in cols[4]]}
+                "out1_volts": [_f(x, 5) for x in cols[4]],
+                "pi_volts": [_f(x, 5) for x in cols[5]]}
 
     def info(self, profile: str | None = None) -> dict:
         """One profile's derived values and the board's CFG compared with

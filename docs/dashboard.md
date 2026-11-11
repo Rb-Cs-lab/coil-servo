@@ -132,13 +132,20 @@ Click a card for its page.
 
 ### Card page
 
-- **Header:** the card's title and profile, state, current, setpoint, the
-  OUT1 command (the PI output sent to the pass-bank gate driver, in volts
-  at the op-amp input and in DAC counts), any alarms, and the big
+- **Header:** the card's title and profile, state, current, setpoint,
+  **OUT1** — what the output to the pass-bank gate driver actually
+  carries, in volts at the op-amp input and in DAC counts — and, smaller,
+  the **PI command (u14)**, the controller's output. They differ: with the
+  bridge disabled (IDLE) or after a trip the firmware holds OUT1 at
+  exactly 0 V ("0 V (outputs off)") while the PI value stays at its last
+  value (the integrator is held, not cleared); in open loop OUT1 carries
+  the setpoint, limited to the clamp, not the PI value. Then any alarms
+  and the big
   **STOP** button. On a greyed card it says which role the board is in
   ("in use as MOT", with a link) and how to switch.
 - **Live charts:** measured current and active setpoint (the setpoint
-  *after* the firmware's ramp limiter), and the OUT1 command, over a
+  *after* the firmware's ramp limiter), and OUT1 (solid) with the PI
+  command (dashed), over a
   selectable span from 10 s to 10 min. The points are the 10-per-second
   status polls, so this shows slow behaviour — use a capture for anything
   faster than ~0.2 s. Hover for values.
@@ -298,7 +305,7 @@ All under `--logdir` (default `logs\` in the repo, not tracked by git):
 
 | File | Contents |
 |---|---|
-| `status\<board>_<YYYYMMDD-HHMM>.csv` | every status poll: time, state, flags, current, setpoint (amps), OUT1 (counts and volts), map revision, profile held. One file per 10 minutes; **only the last hour is kept** |
+| `status\<board>_<YYYYMMDD-HHMM>.csv` | every status poll: time, state, flags, current, setpoint (amps), PI command (u14 counts, volts), actual OUT1 (counts and volts), map revision, profile held. One file per 10 minutes; **only the last hour is kept** |
 | `actions_<YYYY-MM-DD>.csv` | every control request with the client's IP and the result; connection changes. One file per day, **kept in full** (the audit trail) |
 | `captures\<board>_<date>-<time>_<kind>.csv` | captures, steps (`t_s, i_amps, setpoint_amps`) and sweeps (`f_hz, mag, phase_deg, stim_amps`); repeating captures (`_auto`) are kept one hour, the rest are kept |
 
@@ -384,8 +391,8 @@ endpoints, and its own entries in `dashboard.toml`.
 |---|---|
 | `GET /api/cards` | the overview's cards: `id`, `title`, `profile`, `device`, `style` |
 | `GET /api/devices` | list of devices (boards): name, kind, available actions, current state |
-| `GET /api/devices/<name>` | the current state (snapshot), e.g. `state`, `i_amps`, `sp_amps`, `u14`, `out1_volts`, `flags`, `alarms`, `warnings`, `connection`, `map_ok`, `held` (profiles the board holds), `profiles`, `age_s`, `stale`, `sequence_lock`, `stop_block`, `control_block` |
-| `GET /api/devices/<name>/history?span=60` | the last *span* seconds as columns `t` (Unix time), `i_amps`, `sp_amps`, `u14`, `out1_volts` |
+| `GET /api/devices/<name>` | the current state (snapshot), e.g. `state`, `i_amps`, `sp_amps`, `u14` and `pi_volts` (PI output), `out1_counts`/`out1_volts` (actual OUT1) and `out1_mode` (`off`, `open` or `closed`), `flags`, `alarms`, `warnings`, `connection`, `map_ok`, `held` (profiles the board holds), `profiles`, `age_s`, `stale`, `sequence_lock`, `stop_block`, `control_block` |
+| `GET /api/devices/<name>/history?span=60` | the last *span* seconds as columns `t` (Unix time), `i_amps`, `sp_amps`, `u14`, `out1_volts` (actual), `pi_volts` |
 | `GET /api/devices/<name>/info?profile=mot_bench` | one profile's derived values and the CFG read-back compared with it |
 | `GET /api/devices/<name>/capture` | the latest capture: `t`, `kind`, `dt_s`, `i_amps[]`, `sp_amps[]`, `file` |
 | `GET /api/stream` | server-sent events: one `data:` line per 0.1 s with every device's snapshot |

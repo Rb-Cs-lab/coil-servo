@@ -26,7 +26,8 @@ from pathlib import Path
 STATUS_COLUMNS = ["time", "unix_s", "state", "armed", "bridge_en",
                   "polarity", "tripped", "out_sat", "u_floor",
                   "sp_sign_mismatch", "timeout_hold", "fault", "map_rev",
-                  "i_amps", "sp_amps", "u14", "out1_volts", "profile"]
+                  "i_amps", "sp_amps", "u14", "pi_volts", "out1_counts",
+                  "out1_volts", "profile"]
 ACTION_COLUMNS = ["time", "unix_s", "channel", "client", "action",
                   "params", "result"]
 
@@ -167,13 +168,17 @@ class StatusLog(SegmentCsv):
                          **kw)
 
     def log(self, t: float, s: dict, i_amps: float, sp_amps: float,
-            out1_volts: float, profile: str = "") -> None:
+            pi_volts: float, out1_counts: int, out1_volts: float,
+            profile: str = "") -> None:
+        """u14/pi_volts: the PI output; out1_*: what the OUT1 DAC carries
+        (0 with the outputs off, the clamped setpoint in open loop)."""
         self.write(t, [_stamp(t), f"{t:.3f}", s["fsm_state_name"],
                        s["armed"], s["bridge_en"], s["polarity"],
                        s["tripped"], s["out_sat"], s["u_floor"],
                        s["sp_sign_mismatch"], s["timeout_hold"], s["fault"],
                        s["map_rev"], f"{i_amps:.4f}", f"{sp_amps:.4f}",
-                       s["u14"], f"{out1_volts:.5f}", profile])
+                       s["u14"], f"{pi_volts:.5f}", out1_counts,
+                       f"{out1_volts:.5f}", profile])
 
 
 class ActionLog(DailyCsv):

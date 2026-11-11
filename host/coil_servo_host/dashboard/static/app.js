@@ -272,7 +272,8 @@ function renderDetail(card) {
       <span class="state" id="d-state"></span>
       <span class="current"><span id="d-i">—</span> <span class="unit">A</span></span>
       <span class="muted">setpoint <b id="d-sp">—</b> A</span>
-      <span class="muted">OUT1 <b id="d-u">—</b></span>
+      <span class="muted" title="what the OUT1 DAC actually outputs">OUT1 <b id="d-u">—</b></span>
+      <span class="muted small" title="the PI controller's output (STS u14). In IDLE the integrator is held, so it keeps its last value while OUT1 itself is 0">PI command (u14) <span id="d-pi">—</span></span>
       <span class="supply" id="d-supply"></span>
       <span class="spacer" style="flex:1"></span>
       <button class="btn stop" id="b-stop" title="servo_enable = 0: graceful ramp to zero">STOP</button>
@@ -336,7 +337,9 @@ function renderDetail(card) {
       {label: "setpoint (after ramp)", color: cssVar("--c-sp"), unit: "A"}]});
   D.plots.u = new Plot($("#plot-u"), {xlabel: "time relative to now (s)",
     ylabel: "OUT1 (V)", height: 150, xfmt: xfmtS, yMinSpan: 0.01, series: [
-      {label: "OUT1 command", color: cssVar("--c-u"), unit: "V"}]});
+      {label: "OUT1 (actual)", color: cssVar("--c-u"), unit: "V"},
+      {label: "PI command (u14)", color: cssVar("--muted"), unit: "V",
+       dash: [4, 3], width: 1}]});
   D.plots.cap = new Plot($("#plot-cap"), {xlabel: "time (ms)",
     ylabel: "current (A)", xfmt: (v) => v.toFixed(3) + " ms", yMinSpan: 0.2,
     series: [{label: "measured", color: cssVar("--c-i"), unit: "A"},
@@ -600,8 +603,12 @@ function updateDetail() {
   $("#d-sp").textContent = on ? fmtA(st.sp_amps) : "—";
   $("#d-supply").innerHTML = prof.i_supply_max != null
     ? `bench supply limit ${prof.i_supply_max} A · rated ${prof.i_rated} A` : "";
-  $("#d-u").textContent = on && st.out1_volts != null
-    ? `${st.out1_volts.toFixed(4)} V (${st.u14} counts)` : "—";
+  $("#d-u").textContent = !(on && st.out1_volts != null) ? "—"
+    : st.out1_mode === "off" ? "0 V (outputs off)"
+    : `${st.out1_volts.toFixed(4)} V (${st.out1_counts} counts${
+        st.out1_mode === "open" ? ", open loop: the clamped setpoint" : ""})`;
+  $("#d-pi").textContent = on && st.pi_volts != null
+    ? `${st.pi_volts.toFixed(4)} V (${st.u14} counts)` : "—";
   $("#d-inuse").innerHTML = view.mode === "inuse"
     ? `<div class="info-item" style="font-size:15px">This board is in use as
        <b>${esc(view.as)}</b>${view.asId ? ` (<a href="#/card/${view.asId}">open that card</a>)` : ""}:
@@ -666,6 +673,7 @@ function updateDetail() {
     const h = D.hist;
     h.t.push(st.t); h.i_amps.push(st.i_amps); h.sp_amps.push(st.sp_amps);
     h.u14.push(st.u14); h.out1_volts.push(st.out1_volts);
+    h.pi_volts.push(st.pi_volts);
     D.lastT = st.t;
     while (h.t.length && h.t[0] < st.t - D.span)
       for (const k of Object.keys(h)) h[k].shift();
@@ -707,7 +715,7 @@ function drawDetail() {
   D.plots.i.opts.fixedX = fx;
   D.plots.u.opts.fixedX = fx;
   D.plots.i.setData(x, [h.i_amps, h.sp_amps]);
-  D.plots.u.setData(x, [h.out1_volts]);
+  D.plots.u.setData(x, [h.out1_volts, h.pi_volts]);
 }
 
 // ---------------------------------------------------------------- routing

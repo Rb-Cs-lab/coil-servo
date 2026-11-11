@@ -174,6 +174,7 @@ def test_status_polling_and_unit_conversion(mock_server, tmp_path):
         assert s["sp_amps"] == pytest.approx(-25.0)
         assert s["u14"] == 4096
         assert s["out1_volts"] == pytest.approx(0.5 * ch["model"].out1_factor)
+        assert s["pi_volts"] == s["out1_volts"] and s["out1_mode"] == "closed"
         assert s["flags"]["armed"] and s["flags"]["bridge_en"]
         # the mock board was never configured: amber, not red
         assert s["alarms"] == []
@@ -202,12 +203,37 @@ def test_simulated_run_through_the_api(sim):
     wait_for(lambda: abs(state(c)["i_amps"] - 40) < 0.2)
     s = state(c)
     assert s["sp_amps"] == pytest.approx(40, abs=0.05)
-    assert s["out1_volts"] == pytest.approx(
+    assert s["pi_volts"] == pytest.approx(
         s["u14"] / 8192 * devices["mot"].models["mot"].out1_factor, abs=1e-4)
+    assert s["out1_mode"] == "closed" and s["out1_counts"] == s["u14"]
     r = act(c, "setpoint", amps=100.5, confirm=True, **MOT)  # above rated
     assert r.status_code == 400 and "rated" in r.json()["error"]
     assert act(c, "stop").status_code == 200
     wait_for(lambda: state(c)["state"] == "IDLE")
+    s = state(c)                     # bridge open: OUT1 is 0 whatever u14 is
+    assert s["out1_mode"] == "off" and s["out1_volts"] == 0
+    assert set(c.get("/api/devices/mot/history?span=60").json()) >= {
+        "out1_volts", "pi_volts"}
+
+
+def test_out1_actual_is_not_the_pi_output():
+    """OUT1 per coil_servo_top.v / servo_output_mux.v, not STS u14."""
+    from coil_servo_host.dashboard.servo_channel import out1_actual
+    run = {"bridge_en": 1, "fsm_state_name": "RUN", "u14": 2263,
+           "sp_active": 5000}
+    cl = {"open_loop": 0, "out_clamp": 4000, "deadband": 10}
+    ol = dict(cl, open_loop=1)
+    # IDLE: integrator held at its last value, outputs gated off
+    assert out1_actual(dict(run, bridge_en=0, fsm_state_name="IDLE"),
+                       cl) == (0, "off")
+    for st in ("TRIP", "TRIPPED"):          # out_kill, bridge still closed
+        assert out1_actual(dict(run, fsm_state_name=st), cl) == (0, "off")
+    assert out1_actual(run, cl) == (2263, "closed")
+    assert out1_actual(run, ol) == (4000, "open")       # clamped setpoint
+    assert out1_actual(dict(run, sp_active=300), ol) == (300, "open")
+    assert out1_actual(dict(run, u14=8), cl) == (0, "closed")  # deadband
+    assert out1_actual(dict(run, u14=-50), cl) == (0, "closed")
+    assert out1_actual(run, None) == (2263, "closed")   # no read-back yet
 
 
 def test_enable_without_arm_edge_times_out_and_disables(tmp_path):
