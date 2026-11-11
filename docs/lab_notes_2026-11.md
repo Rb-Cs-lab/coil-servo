@@ -96,3 +96,15 @@ Web Installer" is needed, not the Windows one).
 Build 3 (from `aa2a92f1`) is `bitstreams/coil_servo.bit.bin`, SHA-256
 `3e9f15a3…f416`. **Next:** first deploy with arm low and the power stage
 off, then bring-up per [bringup.md](bringup.md).
+
+## First deploy of the MVP bitstream (11-11)
+
+Board only: power stage off, arm low, nothing on the SMA inputs.
+`deploy mot` loaded the image (69 ms) and its post-check passed: IDLE,
+OUT1 = 0, bridge disabled, not armed, register map rev 3. `check mot`:
+heartbeat ADVANCING, board settings UNKNOWN before (expected after a load),
+`mot` settings after, **configuration written and read back OK** (the
+32-word CFG block works on hardware), OUT2/boost 0, dither on, state IDLE,
+not armed, not tripped. Measured current at zero with nothing on IN1:
+**+0.189 A** (≈ 1 mV, the Red Pitaya's own input offset; positive = the
+safe direction for the trip). Re-measure with the LEM chain connected.
