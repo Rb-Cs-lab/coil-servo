@@ -29,7 +29,7 @@ import csv
 import time
 
 from .board import Board
-from .config import load_channel
+from .config import announce, load_channel
 
 FS_DEC = 125e6 / 128
 
@@ -75,6 +75,7 @@ def main():
     p.add_argument("-o", "--out", default="step.csv")
     args = p.parse_args()
     ch = load_channel(args.channel)
+    announce(ch)
     # captured columns are (i_dec>>6, e_dec>>6); i_dec = 128 * mean code, so
     # one captured LSB = 2^6/128 = 0.5 ADC code = i_fs/16384 amps
     scale = ch["i_fs"] / 16384

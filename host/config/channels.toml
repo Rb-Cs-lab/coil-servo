@@ -76,12 +76,15 @@ boost_mode = 0
 # the same board and power stage, powered from a current-limited BENCH
 # SUPPLY (5 V, 3 A limit) in place of the SE-600-5, driving ONE coil of the
 # pair (its L/R are PROVISIONAL model values in channels.py: ~9 uH, 3.2 mOhm).
-# The LEM stays on the 4/0 lead, one pass: same sensor scale as [mot]. Use
-# this name with every host tool (deploy/check/watch/step/sweep mot_bench)
-# ONLY while the bench supply is connected -- never on the SE-600-5.
-# Everything here is PROVISIONAL unless marked.
+# The LEM stays on the 4/0 lead, one pass. Switching bench <-> production in
+# software is ONLY the channel name: mot_bench vs mot, with every host tool
+# (deploy/check/watch/step/sweep/config). Never use mot_bench on the
+# SE-600-5. Everything here is PROVISIONAL unless marked.
 
 [mot_bench]
+bench = true                    # bench profile: tools print a warning banner,
+                                # board LED 7 lights while these settings are
+                                # loaded; requires I_supply_max
 board_host = "192.168.0.65"     # the MOT board (same board as [mot])
 
 # --- physics (overrides of model/coil_servo_model/channels.py) ---
@@ -98,12 +101,23 @@ g_fs = 50.0                     # A/V per FET -- PROVISIONAL, and least
 gain_opamp = 7.98               # OPA994 stage, 1 + 6.98k/1k
 out1_terminated = true          # OUT1 into 50 ohm -- PROVISIONAL (check 3.2)
 R_burden = 10.0                 # ohm, LEM burden
-G_inamp = 1.0                   # AD8421 gain -- PROVISIONAL
-lem_turns = 1                   # 4/0 lead through the LEM once -> I_FS 200 A,
-                                # 24.4 mA per ADC count (3 A ~ 123 counts)
+lem_turns = 1                   # 4/0 lead through the LEM once
+
+# In-amp gain: the ONE line to change for finer current resolution.
+#   G_inamp = 1.0  -> I_FS 200 A, 24.4 mA per ADC count (3 A ~ 123 counts).
+#                     No hardware change. This is what ships.
+#   G_inamp = 10.0 -> I_FS 20 A, 2.44 mA per ADC count (3 A ~ 1229 counts).
+#                     Needs R_G ~ 1.1 kOhm on the AD8421 (G = 1 + 9.9k/R_G);
+#                     fit it on a 2-pin jumper/header so it is visible and
+#                     removable. REMOVE IT before any 100 A run.
+# Everything else here is in amps (or OUT1 counts) and the register values
+# are derived, so nothing else needs editing. If the jumper is forgotten on
+# the 100 A setup, [mot] (G_inamp = 1) reads 10x high: the servo delivers
+# 1/10 of the setpoint and trips at 1/10 of the real current -- fails safe.
+G_inamp = 1.0
 
 # --- derived-value overrides ---
-# PENDING USER CONFIRMATION (deviates from "clamp = 100 % of rated").
+# Decided 2026-11-11 (user): deviates from "clamp = 100 % of rated".
 # Clamp set directly, NOT derived from I_rated: at 2.5 A the derived clamp
 # (~3637 counts) sits only ~44 counts above the nominal dead zone (~3593),
 # inside the dead-zone uncertainty, so it could block the first open-loop
@@ -118,25 +132,28 @@ out_clamp_counts = 4000
 floor_frac = 0.9                # floor at 90 % of the dead zone (decided)
 
 # --- loop ---
-# analysis.suggest_gains on this profile = the production values (same bank,
-# same sensor scale: plant gain G_pass/I_FS ~ 4.79) -- PROVISIONAL: set them
-# from the measured step response. If the real G_pass near threshold is
-# lower, these give a slower but still stable loop.
-kp = 0.1044
-ki = 3149.0                     # 1/s
+# Gains in OUT1 counts per amp of error, so they do not depend on G_inamp
+# (the loader converts them for the sensor scale in use). These are
+# analysis.suggest_gains for the model bank -- equal to [mot]'s kp 0.1044 /
+# ki 3149/s at G_inamp = 1. PROVISIONAL: from the measured slope s (amps
+# per OUT1 count, bench_supply_test.md 4.2) set kp = 0.5/s, ki = 15.08/s.
+# If the real gain near threshold is lower, these give a slower but still
+# stable loop.
+kp_counts_per_amp = 4.2774
+ki_counts_per_amp_ms = 129.00
 deadband_counts = 8             # PROVISIONAL
 dither_enable = 1               # OUT1 dither: one OUT1 count is ~0.12 A,
                                 # ~5 % of a 2.5 A hold
 
 # --- protection ---
-trip_amps = 2.8                 # firmware trip, 115 counts (2.81 A): above
-                                # every allowed setpoint (2.5 A), ~8 counts
-                                # (0.19 A) below the supply limit (123
-                                # counts). Fires before the supply limits ONLY
-                                # if the IN1 offset is not more negative than
+trip_amps = 2.8                 # firmware trip: above every allowed setpoint
+                                # (2.5 A), 0.2 A below the supply limit (G=1:
+                                # 115 vs ~123 counts; G=10: 1147 vs ~1229).
+                                # Fires before the supply limits ONLY if the
+                                # IN1 offset is not more negative than
                                 # ~-0.15 A -- check its sign first (the Nov
-                                # 2026 offset read +0.29 A: trip then acts at
-                                # ~2.5 A true)
+                                # 2026 offset read +0.29 A at G=1: the trip
+                                # then acts at ~2.5 A true)
 trip_ticks = 4                  # consecutive ~1 us samples above the level
 trip_timeout_us = 3000.0        # same as production; freewheel from 2.5 A
                                 # takes only ~30-40 us (one coil)
@@ -145,9 +162,12 @@ slew_down_amps_per_ms = 50.0    # are set by rail/L and V_f/L, not by the
                                 # current scale
 
 # --- flip / stop ---
-zero_win_amps = 0.5             # flip zero window -- PROVISIONAL: 20 counts,
-                                # as [mot]; the IN1 offset (~0.29 A) must be
-                                # calibrated first. 20 % of rated on the bench
+zero_win_amps = 0.5             # flip zero window -- PROVISIONAL, suits both
+                                # gains (G=1: 20 counts, as [mot]; G=10: 205).
+                                # The IN1 offset (~0.29 A at G=1) must be
+                                # calibrated first. At G=10, once the offset is
+                                # measured small, this may be tightened (e.g.
+                                # 0.1 A) -- optional second line to change
 zero_holdoff_ticks = 64         # decimated samples (~66 us of quiet)
 deadtime_us = 1.0               # PROVISIONAL
 settle_us = 100.0               # chamber eddy PLACEHOLDER -- unmeasured

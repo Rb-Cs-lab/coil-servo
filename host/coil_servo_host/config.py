@@ -21,11 +21,20 @@ from dataclasses import replace
 from pathlib import Path
 
 from coil_servo_model.channels import BENCH_CHANNELS, CHANNELS, Channel
-from coil_servo_model.fixed_point import encode_gain, slew_rate_code
+from coil_servo_model.fixed_point import decode_gain, encode_gain, slew_rate_code
 from coil_servo_model.loop import T_S
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "channels.toml"
 TICK_NS = 8.0
+
+# CFG `led` byte (ctrl b15:8) written with every configuration: LED 7 lit =
+# bench settings loaded, all LEDs off = production settings.
+BENCH_LED_INDEX = 7
+BENCH_LED = 1 << BENCH_LED_INDEX
+
+# CFG fields compared to tell which channels.toml profile a board holds
+PROFILE_MATCH_KEYS = ("trip_level", "out_clamp", "zero_win", "led",
+                      "kp_mant", "kp_shift", "ki_mant", "ki_shift")
 
 # fixed requirement (CLAUDE.md): MOT rail <= 6 V, shim rails <= 10 V.
 # mot_bench is the MOT coil on a bench supply: same limit.
@@ -70,7 +79,7 @@ def build_model(name: str, table: dict) -> Channel:
 
 
 def load_channel(name: str, path: Path = CONFIG_PATH) -> dict:
-    """Returns {"host", "i_fs", "i_rated", "model", "cfg"}.
+    """Returns {"name", "host", "i_fs", "i_rated", "bench", "model", "cfg"}.
 
     cfg is ready for Board.apply_config(); it does NOT include
     servo_enable -- enabling is always an explicit, separate call.
@@ -97,6 +106,13 @@ def load_channel(name: str, path: Path = CONFIG_PATH) -> dict:
     if not 0 < trip_amps < i_fs:
         refuse(f"trip_amps = {trip_amps} must be inside 0 .. I_FS = {i_fs:g} A")
     i_sup = model.I_supply_max
+    bench = table.get("bench", False)
+    if not isinstance(bench, bool):
+        refuse(f"bench = {bench!r} must be true or false")
+    if bench != (i_sup is not None):
+        refuse("bench = true and I_supply_max go together: a bench profile "
+               "names its supply's current limit, and only a bench profile "
+               "has one")
     if i_sup is not None:
         # current-limited (bench) supply: its CC limit is the hard limit, and
         # the firmware trip must sit below it -- otherwise the supply holds
@@ -139,8 +155,9 @@ def load_channel(name: str, path: Path = CONFIG_PATH) -> dict:
     if not 0 <= u_floor < out_clamp:
         refuse(f"floor {u_floor} counts must be below the clamp {out_clamp}")
 
-    kp_mant, kp_shift = encode_gain(float(table["kp"]), shift_bits=5)
-    ki_mant, ki_shift = encode_gain(float(table["ki"]) * T_S, shift_bits=6)
+    kp, ki = loop_gains(table, i_fs, refuse)
+    kp_mant, kp_shift = encode_gain(kp, shift_bits=5)
+    ki_mant, ki_shift = encode_gain(ki * T_S, shift_bits=6)
 
     def ticks(us: float) -> int:
         return round(us * 1000.0 / TICK_NS)
@@ -166,9 +183,96 @@ def load_channel(name: str, path: Path = CONFIG_PATH) -> dict:
         out2_enable=int(table["out2_enable"]),
         boost_mode=int(table["boost_mode"]),
         dither_enable=int(table["dither_enable"]),
+        # board LEDs: a fixed pattern marks bench settings (0 = production)
+        led=BENCH_LED if bench else 0,
     )
-    return {"host": table["board_host"], "i_fs": i_fs, "i_rated": i_rated,
-            "model": model, "cfg": cfg}
+    return {"name": name, "host": table["board_host"], "i_fs": i_fs,
+            "i_rated": i_rated, "bench": bench, "model": model, "cfg": cfg}
+
+
+def loop_gains(table: dict, i_fs: float, refuse) -> tuple[float, float]:
+    """(kp, ki [1/s]) in normalized units (1.0 = I_FS on the error side,
+    full DAC scale on the output side).
+
+    Two ways to write them in channels.toml:
+      * kp / ki: normalized -- tied to the sensor scale I_FS;
+      * kp_counts_per_amp / ki_counts_per_amp_ms: OUT1 counts per amp of
+        error (and per amp-millisecond for the integral). These depend only
+        on the pass bank's gain, not on I_FS, so a changed in-amp gain or
+        LEM turn count leaves the loop unchanged.
+    """
+    normalized = "kp" in table or "ki" in table
+    physical = "kp_counts_per_amp" in table or "ki_counts_per_amp_ms" in table
+    if normalized == physical:
+        refuse("give the PI gains either as kp / ki or as kp_counts_per_amp / "
+               "ki_counts_per_amp_ms (one pair, not both)")
+    if normalized:
+        return float(table["kp"]), float(table["ki"])
+    kp = float(table["kp_counts_per_amp"]) * i_fs / 8192
+    ki = float(table["ki_counts_per_amp_ms"]) * 1e3 * i_fs / 8192
+    return kp, ki
+
+
+def banner(ch: dict) -> str:
+    """A loud block for bench profiles ("" for production). Every host tool
+    prints it right after loading the channel."""
+    if not ch["bench"]:
+        return ""
+    m = ch["model"]
+    lines = [
+        f"BENCH PROFILE '{ch['name']}': settings for a CURRENT-LIMITED BENCH",
+        f"SUPPLY ({m.I_supply_max:g} A limit). NEVER use with the SE-600-5.",
+        f"Board LED {BENCH_LED_INDEX} lit = bench settings loaded.",
+        f"In-amp gain G_inamp = {m.G_inamp:g} (I_FS = {m.I_FS:g} A) -- must "
+        f"match the board as wired.",
+    ]
+    w = max(len(s) for s in lines)
+    bar = "#" * (w + 6)
+    return "\n".join([bar] + [f"## {s:<{w}} ##" for s in lines] + [bar])
+
+
+def announce(ch: dict) -> None:
+    """Print the bench banner, if any (call right after load_channel)."""
+    text = banner(ch)
+    if text:
+        print(text)
+        print()
+
+
+def identify_profile(board_cfg: dict, host: str,
+                     path: Path = CONFIG_PATH) -> list[str]:
+    """Names of the channels.toml profiles for this board (same board_host)
+    whose derived settings the board's CFG matches on PROFILE_MATCH_KEYS.
+    Empty = unknown, mixed, or not configured since the bitstream loaded."""
+    with open(path, "rb") as f:
+        names = [n for n, t in tomllib.load(f).items()
+                 if isinstance(t, dict) and t.get("board_host") == host]
+    matches = []
+    for n in names:
+        try:
+            cfg = load_channel(n, path)["cfg"]
+        except (ValueError, KeyError):
+            continue                       # a broken section matches nothing
+        if all(board_cfg.get(k) == cfg[k] for k in PROFILE_MATCH_KEYS):
+            matches.append(n)
+    return matches
+
+
+def profile_report(board_cfg: dict, ch: dict,
+                   path: Path = CONFIG_PATH) -> tuple[bool, str]:
+    """(ok, text): which profile the board holds, and a loud warning if it
+    is not the one this tool was invoked with."""
+    matches = identify_profile(board_cfg, ch["host"], path)
+    if ch["name"] in matches:
+        return True, f"board holds the '{ch['name']}' settings"
+    if matches:
+        held = " / ".join(matches)
+        return False, (f"*** WARNING: the board holds the '{held}' settings, "
+                       f"but this tool was run as '{ch['name']}'. Wrong "
+                       f"channel name for the hardware connected? ***")
+    return False, ("*** board settings: UNKNOWN / mixed (or not configured "
+                   "since the bitstream was loaded) -- they match no profile "
+                   f"for {ch['host']} in channels.toml ***")
 
 
 def summary(ch: dict) -> str:
@@ -178,6 +282,9 @@ def summary(ch: dict) -> str:
 
     def rate(code):                    # slew code -> A/ms
         return code / 2**14 * m.amps_per_lsb * 125e6 / 1e3
+
+    kp = decode_gain(c["kp_mant"], c["kp_shift"])
+    ki = decode_gain(c["ki_mant"], c["ki_shift"]) / T_S
 
     turns = f", LEM {m.lem_turns} primary turns" if m.lem_turns != 1 else ""
     lines = [
@@ -212,7 +319,13 @@ def summary(ch: dict) -> str:
         f"  setpoint ramps     = {rate(c['slew_up']):.0f} A/ms up, "
         f"{rate(c['slew_down']):.0f} A/ms down "
         f"(codes {c['slew_up']} / {c['slew_down']})",
+        f"  PI gains           = kp {kp:.4g}, ki {ki:.4g}/s normalized "
+        f"(= {kp * 8192 / m.I_FS:.4g} counts/A, "
+        f"{ki * 8.192 / m.I_FS:.4g} counts/(A ms))",
         f"  dither             = {'on' if c['dither_enable'] else 'off'}",
+        f"  board LEDs         = "
+        + (f"LED {BENCH_LED_INDEX} lit (bench settings)" if c["led"]
+           else "all off (production settings)"),
     ]
     return "\n".join(lines)
 
@@ -222,7 +335,9 @@ def main():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("channel")
     args = p.parse_args()
-    print(summary(load_channel(args.channel)))
+    ch = load_channel(args.channel)
+    announce(ch)
+    print(summary(ch))
 
 
 if __name__ == "__main__":
