@@ -16,7 +16,7 @@ OUT2 and the boost output are unused.
 """
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 # Pass-bank MOSFET thresholds, MEASURED 2026-11-02 (Construction notes):
 # IXTN200N10L2 at 3 mA, installed devices #1, 2, 4, 7, 9, 10.
@@ -34,6 +34,10 @@ class Channel:
 
     # --- Supply and series path ---
     V_rail: float = 5.0          # fixed rail [V] (Mean Well SE-600-5 on the MOT)
+    # Supply current limit [A]. None = the supply never limits (the SE-600-5
+    # at <= 100 A). A bench supply in constant-current mode: the coil current
+    # cannot rise above this; the supply voltage collapses instead.
+    I_supply_max: float | None = None
     R_cable: float = 2.5e-3      # 4/0 cabling + contacts, whole loop [ohm] -- PROVISIONAL
     R_coil_cable: float = 1.0e-3  # bridge-to-coil part of R_cable [ohm] -- PROVISIONAL
     R_bridge: float = 3.0e-3     # one conducting bridge switch, warm [ohm] -- PROVISIONAL (2.3 mOhm cold)
@@ -64,14 +68,23 @@ class Channel:
     lem_ratio: float = 2000.0
     R_burden: float = 10.0       # [ohm] (MPR24000Z1009BCU00)
     G_inamp: float = 1.0         # AD8421 gain -- PROVISIONAL (1 or 2)
+    # Primary turns through the LEM aperture: N turns multiply the sensor's
+    # sensitivity by N (low-current bench profile). 1 = the coil lead passes
+    # through once.
+    lem_turns: int = 1
 
     out2_enable: bool = False    # OUT2 (active clamp) not fitted in the MVP
+
+    # OUT1 command clamp set directly [DAC counts] instead of derived from
+    # I_rated (a measured calibration, or the bench profile, where the
+    # supply's current limit -- not the clamp -- limits the current).
+    out_clamp_counts: int | None = None
 
     # --- Sensing scale ---
     @property
     def I_FS(self) -> float:
         """Coil current at +1.000 V on IN1 [A]."""
-        return self.lem_ratio / (self.R_burden * self.G_inamp)
+        return self.lem_ratio / (self.R_burden * self.G_inamp * self.lem_turns)
 
     @property
     def amps_per_lsb(self) -> float:
@@ -145,13 +158,20 @@ class Channel:
         """OUT1 command clamp in DAC counts: the command that asks for 100% of
         rated current with the nominal parameters. PROVISIONAL -- the real
         value comes from the measured G_pass and dead zone (it limits the
-        gate command, not the current; mvp_architecture.md 3.5)."""
+        gate command, not the current; mvp_architecture.md 3.5). A directly
+        set out_clamp_counts wins."""
+        if self.out_clamp_counts is not None:
+            return self.out_clamp_counts
         return round(self.out1_for_current(self.I_rated) * 8192)
 
     @property
     def max_current(self) -> float:
-        """Steady current with the bank fully on (compliance limit) [A]."""
-        return self.V_rail / (self.R_series + (self.R_ds_on + self.R_ballast) / len(self.V_th))
+        """Steady current with the bank fully on [A]: the rail's compliance
+        limit, or the supply's current limit if that is lower."""
+        i = self.V_rail / (self.R_series + (self.R_ds_on + self.R_ballast) / len(self.V_th))
+        if self.I_supply_max is not None:
+            i = min(i, self.I_supply_max)
+        return i
 
     @property
     def freewheel_time(self) -> float:
@@ -169,4 +189,30 @@ CHANNELS = {
     "z_shim": Channel(name="z_shim", L=29e-6, R_coil=11.6e-3, I_rated=60.0),
     "x_shim": Channel(name="x_shim", L=57e-6, R_coil=14.2e-3, I_rated=60.0),
     "y_shim": Channel(name="y_shim", L=57e-6, R_coil=14.2e-3, I_rated=60.0),
+}
+
+# Low-current test profiles (docs/bench_supply_test.md): the MOT power stage
+# fed from a current-limited bench supply in place of the SE-600-5, driving
+# ONE coil of the anti-Helmholtz pair. Kept out of CHANNELS (whose entries
+# are the production channels and whose tests assume a 100 A-class supply).
+# All bench values PROVISIONAL.
+BENCH_CHANNELS = {
+    "mot_bench": replace(
+        CHANNELS["mot"], name="mot_bench",
+        # One coil, not the pair: not calculated. The pair is 16 uH series-
+        # opposed (2 L1 - 2 M), so one coil is L_pair/2 + M ~ 8-10 uH --
+        # PROVISIONAL estimate. At <= 3 A it only sets ramp and freewheel
+        # times of a few tens of us. R: half the pair, PROVISIONAL.
+        L=9e-6,
+        R_coil=3.2e-3,
+        I_rated=2.5,         # highest closed-loop setpoint on the bench
+        I_supply_max=3.0,    # bench supply CC limit -- the real hard limit
+        lem_turns=1,         # LEM on the 4/0 lead, one pass: I_FS = 200 A
+        # Clamp set directly (decided 2026-11-11), ~11 % (407 counts, ~0.4 V of gate) above the
+        # nominal dead zone: at 2.5 A the clamp derived from I_rated would
+        # sit only ~44 counts above it, inside the dead-zone uncertainty and
+        # V_th's thermal drift, and could block the first open-loop
+        # measurement. On the bench the supply's CC limit bounds the current.
+        out_clamp_counts=4000,
+    ),
 }

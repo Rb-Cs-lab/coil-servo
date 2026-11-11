@@ -11,7 +11,10 @@ can change:
 
   * up (bank asks for more than flows): the rail is the only push,
       L dI/dt = V_rail - I*R_series - V_bank,min(I)
-    and the current stops at what the bank asks for;
+    and the current stops at what the bank asks for -- or at the supply's
+    current limit I_supply_max, if set (a bench supply in constant-current
+    mode: its voltage collapses so the current cannot rise further; the
+    bank's FETs then sit further on than needed);
   * down (bank asks for less): turnoff_model "freewheel" (decided design):
     the coil current circulates through one bridge switch and the opposite
     low-side body diode, independent of the bank,
@@ -39,6 +42,8 @@ from .channels import Channel
 class Plant:
     def __init__(self, channel: Channel, i0: float = 0.0):
         self.ch = channel
+        if channel.I_supply_max is not None:
+            assert i0 <= channel.I_supply_max, "i0 above the supply current limit"
         self.I = float(i0)          # coil current [A], drive frame
         self.bridge_enabled = True
         if i0 > 0.0:
@@ -57,6 +62,7 @@ class Plant:
         h = dt / substeps
         v_cmd = ch.gate_command(v_out1)
         decay = math.exp(-h / ch.tau_inner)
+        I_lim = math.inf if ch.I_supply_max is None else ch.I_supply_max
 
         for _ in range(substeps):
             self.V_gate = v_cmd + (self.V_gate - v_cmd) * decay
@@ -72,7 +78,7 @@ class Plant:
                 dIdt = (ch.V_rail - I * ch.R_series - ch.v_bank_min(I)) / ch.L
                 I_new = I + h * dIdt
                 if dIdt > 0.0:
-                    I_new = min(I_new, I_cmd)
+                    I_new = min(I_new, I_cmd, I_lim)
             else:
                 if ch.turnoff_model == "freewheel":
                     dIdt = -(ch.V_f + I * ch.R_fw) / ch.L

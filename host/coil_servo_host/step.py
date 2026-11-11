@@ -16,6 +16,12 @@ the CSV has time, measured amps, and setpoint amps (in open loop the
 
 The servo is enabled first; then raise arm (DIO4) when prompted -- the FSM
 needs an arm EDGE after servo_enable.
+
+--counts N (open loop only) sets the OUT1 command directly in DAC counts,
+bypassing the model -- for scanning the dead zone and G_pass when the model
+is not trusted yet (the low-current bench profile, docs/bench_supply_test.md):
+
+    python -m coil_servo_host.step mot_bench --open-loop --counts 3600 -o ol_3600.csv
 """
 
 import argparse
@@ -23,38 +29,59 @@ import csv
 import time
 
 from .board import Board
-from .config import load_channel
+from .config import announce, load_channel
 
 FS_DEC = 125e6 / 128
+
+
+def setpoint_counts(ch: dict, amps: float | None, counts: int | None,
+                    open_loop: bool) -> tuple[int, str]:
+    """The setpoint register value for this step, and a line describing it.
+    Raises SystemExit for requests that are almost certainly mistakes."""
+    if counts is not None:
+        if not open_loop:
+            raise SystemExit("--counts is an OUT1 command: use it with "
+                             "--open-loop (closed loop takes --amps)")
+        clamp = ch["cfg"]["out_clamp"]
+        if not 0 <= counts <= clamp:
+            raise SystemExit(f"--counts {counts} outside 0 .. the OUT1 clamp "
+                             f"({clamp} counts)")
+        return counts, f"open loop: OUT1 command {counts} counts (set directly)"
+
+    if abs(amps) > ch["i_rated"]:
+        raise SystemExit(
+            f"--amps {amps} exceeds this channel's rated current "
+            f"({ch['i_rated']} A); the fabric clamp would cap the drive at "
+            f"rated anyway, so this is almost certainly a typo")
+    if open_loop:
+        if amps < 0:
+            raise SystemExit("--open-loop needs --amps >= 0: OUT2 is not "
+                             "fitted in the MVP, OUT1 only drives up")
+        sp = round(ch["model"].out1_for_current(amps) * 8192) if amps > 0 else 0
+        return sp, (f"open loop: OUT1 command {sp} counts (model estimate "
+                    f"for {amps} A)")
+    sp = round(amps / ch["i_fs"] * 8192)
+    return sp, f"closed loop: setpoint {sp} counts ({amps} A)"
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("channel")
-    p.add_argument("--amps", type=float, required=True, help="step target")
+    target = p.add_mutually_exclusive_group(required=True)
+    target.add_argument("--amps", type=float, help="step target")
+    target.add_argument("--counts", type=int,
+                        help="open loop only: OUT1 command in DAC counts")
     p.add_argument("--open-loop", action="store_true")
     p.add_argument("-o", "--out", default="step.csv")
     args = p.parse_args()
     ch = load_channel(args.channel)
+    announce(ch)
     # captured columns are (i_dec>>6, e_dec>>6); i_dec = 128 * mean code, so
     # one captured LSB = 2^6/128 = 0.5 ADC code = i_fs/16384 amps
     scale = ch["i_fs"] / 16384
 
-    if abs(args.amps) > ch["i_rated"]:
-        raise SystemExit(
-            f"--amps {args.amps} exceeds this channel's rated current "
-            f"({ch['i_rated']} A); the fabric clamp would cap the drive at "
-            f"rated anyway, so this is almost certainly a typo")
-
-    if args.open_loop:
-        if args.amps < 0:
-            raise SystemExit("--open-loop needs --amps >= 0: OUT2 is not "
-                             "fitted in the MVP, OUT1 only drives up")
-        sp_counts = round(ch["model"].out1_for_current(args.amps) * 8192)             if args.amps > 0 else 0
-        print(f"open loop: OUT1 command {sp_counts} counts (model estimate "
-              f"for {args.amps} A)")
-    else:
-        sp_counts = round(args.amps / ch["i_fs"] * 8192)
+    sp_counts, what = setpoint_counts(ch, args.amps, args.counts, args.open_loop)
+    print(what)
     with Board(ch["host"], max_clamp=ch["cfg"]["out_clamp"]) as b:
         b.apply_config(ch["cfg"])
         b.write_cfg(sp_source=1, setpoint=0,

@@ -31,7 +31,7 @@ import math
 import time
 
 from .board import Board
-from .config import load_channel
+from .config import announce, load_channel
 from .tf import estimate_tf
 
 FS_DEC = 125e6 / 128
@@ -47,6 +47,7 @@ def main():
                         "undriven input; default 0.05)")
     args = p.parse_args()
     ch = load_channel(args.channel)
+    announce(ch)
     scale = ch["i_fs"] / 16384       # amps per captured LSB
 
     # the CSV is written incrementally and flushed per row, so a crash or a
