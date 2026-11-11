@@ -27,7 +27,7 @@ from .. import step as step_tool
 from .. import sweep as sweep_tool
 from ..capture import FS_DEC, decimated_columns, decode_words, write_csv
 from ..config import (CONFIG_PATH, counts_to_amps, i_meas_amps, out1_volts,
-                      summary_rows)
+                      profile_report, summary_header, summary_rows)
 from .device import ActionError, ActionSpec, Device
 from .logs import StatusLog, capture_path
 
@@ -36,7 +36,7 @@ FLAG_NAMES = ("armed", "bridge_en", "polarity", "tripped", "out_sat",
               "fault")
 # CFG fields that change in normal operation (not part of the profile)
 LIVE_FIELDS = ("servo_enable", "sp_source", "open_loop", "setpoint",
-               "capture_sel", "led", "int_clear", "fifo_rst", "trip_ack",
+               "capture_sel", "int_clear", "fifo_rst", "trip_ack",
                "flip_fault_ack", "boost_manual")
 
 ACTIONS = {a.name: a for a in [
@@ -68,6 +68,8 @@ ACTIONS = {a.name: a for a in [
                "a 16.8 ms capture, ramp back to zero and disable. "
                "FIRST RUNS: DUMMY RESISTIVE LOAD ONLY.",
                {"amps": "step target in amps",
+                "counts": "instead of amps, open loop only: the OUT1 "
+                          "command in DAC counts (bypasses the model)",
                 "open_loop": "true: drive OUT1 directly with the command "
                              "the model predicts for that current"}),
     ActionSpec("sweep", "Swept-sine transfer function", "control", True,
@@ -137,6 +139,7 @@ class CoilServoChannel(Device):
         self.t_sts = None
         self.readback = None
         self.t_readback = 0.0
+        self.profile_match = None             # (ok, text) from profile_report
         self.hist = deque(maxlen=int(history_s / poll_interval) + 10)
         self.pending = None
         self.notice = None
@@ -228,8 +231,19 @@ class CoilServoChannel(Device):
         self._job_cancel.set()
         self._event("offline", why)
 
+    def _match_profile(self, rb: dict, s: dict) -> tuple | None:
+        """Which channels.toml profile the board holds (profile_report),
+        or None when that cannot be judged (no profile, old map)."""
+        if self.profile is None or s["map_rev"] != MAP_REV:
+            return None
+        try:
+            return profile_report(rb, self.profile, self.config_path)
+        except (OSError, ValueError, KeyError) as exc:
+            return False, f"cannot compare with channels.toml: {exc}"
+
     def _update(self, s: dict, rb: dict | None) -> None:
         t = time.time()
+        match = self._match_profile(rb, s) if rb is not None else None
         i = i_meas_amps(s["i_meas"], self.i_fs)
         sp = counts_to_amps(s["sp_active"], self.i_fs)
         v = out1_volts(s["u14"], self.model)
@@ -240,6 +254,7 @@ class CoilServoChannel(Device):
             if rb is not None:
                 self.readback = rb
                 self.t_readback = now
+                self.profile_match = match
             if self._hb is None or self._hb[0] != s["heartbeat"]:
                 self._hb = (s["heartbeat"], now)
             self.hist.append((t, i, sp, s["u14"], v))
@@ -279,6 +294,9 @@ class CoilServoChannel(Device):
         s = self.sts
         if s is None or self.connection != "online":
             return red, amber
+        pm = self.profile_match
+        if pm is not None and not pm[0]:
+            red.append("PROFILE MISMATCH: " + pm[1].strip("* "))
         if s["map_rev"] != MAP_REV:
             red.append(f"OLD BITSTREAM (map rev {s['map_rev']}, expected "
                        f"{MAP_REV}): monitoring only, flags may be misread")
@@ -313,6 +331,12 @@ class CoilServoChannel(Device):
                 "error": self.error,
                 "t": self.t_sts,
                 "i_rated": self.profile["i_rated"] if self.profile else None,
+                "i_supply_max": (self.model.I_supply_max
+                                 if self.model else None),
+                "profile_ok": (self.profile_match[0]
+                               if self.profile_match else None),
+                "profile_text": (self.profile_match[1]
+                                 if self.profile_match else None),
                 "i_fs": self.i_fs,
                 "map_rev_expected": MAP_REV,
                 "pending": None, "job": None, "last_job": self.last_job,
@@ -373,14 +397,17 @@ class CoilServoChannel(Device):
                "summary": [], "compare": [], "live": {}}
         if self.profile:
             m = self.model
-            out["header"] = (f"channel {m.name}: rail {m.V_rail:g} V, "
-                             f"rated {m.I_rated:g} A")
+            out["header"] = summary_header(self.profile)
             out["summary"] = summary_rows(self.profile)
         with self._lock:
             rb = self.readback
             out["readback_age_s"] = (
                 _f(time.monotonic() - self.t_readback, 1) if rb else None)
             out["map_ok"] = self._map_ok()
+            out["profile_ok"] = (self.profile_match[0]
+                                 if self.profile_match else None)
+            out["profile_text"] = (self.profile_match[1]
+                                   if self.profile_match else None)
         if rb is not None:
             cfg = self.profile["cfg"] if self.profile else {}
             for k in cfg:
@@ -452,9 +479,11 @@ class CoilServoChannel(Device):
             self.board.sync_shadow()
             self.board.apply_config(self.profile["cfg"])
             rb = self.board.read_cfg()
+        match = self._match_profile(rb, self.sts)
         with self._lock:
             self.readback = rb
             self.t_readback = time.monotonic()
+            self.profile_match = match
         bad = [k for k, v in self.profile["cfg"].items() if rb[k] != v]
         if bad:
             raise ActionError(f"profile written but read back different "
@@ -533,7 +562,7 @@ class CoilServoChannel(Device):
             raise ActionError("the board is in open loop (another tool?); "
                               "stop first")
         try:
-            counts = step_tool.command_counts(self.profile, amps, False)
+            counts, _ = step_tool.command_counts(self.profile, amps, False)
         except ValueError as exc:
             raise ActionError(str(exc), 400) from None
         self._write(setpoint=counts)
@@ -678,19 +707,24 @@ class CoilServoChannel(Device):
         return False
 
     def _act_step(self, params) -> str:
-        try:
-            amps = float(params["amps"])
-        except (KeyError, TypeError, ValueError):
-            raise ActionError("amps: a number is required", 400) from None
         open_loop = bool(params.get("open_loop", False))
+        amps = counts = None
+        try:
+            if params.get("counts") is not None:
+                counts = int(params["counts"])
+            else:
+                amps = float(params["amps"])
+        except (KeyError, TypeError, ValueError):
+            raise ActionError("amps (or, open loop, counts): a number is "
+                              "required", 400) from None
         self._need_idle("a step")
         try:
-            counts = step_tool.command_counts(self.profile, amps, open_loop)
+            counts, what = step_tool.command_counts(self.profile, amps,
+                                                    open_loop, counts)
         except ValueError as exc:
             raise ActionError(str(exc), 400) from None
         self._start_job("step", self._job_step, amps, open_loop, counts)
-        return (f"step to {amps:g} A ({'open' if open_loop else 'closed'} "
-                f"loop) started: raise arm (DIO4) when asked")
+        return f"step started ({what}): raise arm (DIO4) when asked"
 
     def _job_step(self, amps: float, open_loop: bool, counts: int) -> None:
         self._job_phase("preparing: apply profile, enable")

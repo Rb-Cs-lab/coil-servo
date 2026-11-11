@@ -4,15 +4,18 @@
 
 Prints what the configuration derives (sensor scale, pass-bank gain, dead
 zone, floor, clamp, trip, ramps), verifies the register link, that the
-fabric is alive (heartbeat counter advancing), walks the LEDs, applies the
-channel configuration, reads it back, and dumps the status flags.
+fabric is alive (heartbeat counter advancing), says which channels.toml
+profile the board held (bench or production), walks the LEDs, applies the
+channel configuration (LED 7 lit for a bench profile), reads it back, and
+dumps the status flags.
 """
 
 import argparse
 import time
 
 from .board import Board
-from .config import i_meas_amps, load_channel, summary
+from .config import (announce, i_meas_amps, load_channel, profile_report,
+                     summary)
 
 
 def main():
@@ -20,6 +23,7 @@ def main():
     p.add_argument("channel")
     args = p.parse_args()
     ch = load_channel(args.channel)
+    announce(ch)
     print(summary(ch))
     print()
 
@@ -36,14 +40,20 @@ def main():
         print(f"fabric heartbeat: {'ADVANCING' if alive else '*** STUCK ***'} "
               f"({s0['heartbeat']} -> {s1['heartbeat']})")
 
+        # which profile did the board hold before this check?
+        _, text = profile_report(b.read_cfg(), ch)
+        print(f"before this check: {text}")
+
         for k in range(8):
             b.write_cfg(led=1 << k)
             time.sleep(0.05)
-        b.write_cfg(led=0)
+        b.write_cfg(led=ch["cfg"]["led"])      # back to the profile's pattern
         print("LED walk done (watch the board)")
 
         b.apply_config(ch["cfg"])
         rb = b.read_cfg()
+        ok, text = profile_report(rb, ch)
+        print(f"after this check:  {text}")
         bad = {k: (v, rb[k]) for k, v in ch["cfg"].items() if rb[k] != v}
         if bad:
             print(f"*** CFG readback mismatch (wrote, read): {bad} -- stale "

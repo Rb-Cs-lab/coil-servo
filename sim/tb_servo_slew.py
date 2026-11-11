@@ -51,9 +51,12 @@ async def bit_exact_against_model(dut):
     Inputs change on the falling edge; the output is sampled there too,
     after the rising edge has updated the register."""
     await setup(dut)
+    golden = SlewLimiter()
+    # reset() ends with one live clock edge (aresetn high, inputs as
+    # set by setup): advance the model by that edge so the phases align
+    golden.step(0, UP, DOWN)
     await FallingEdge(dut.aclk)
     rng = random.Random(5)
-    golden = SlewLimiter()
     a = dict(target=0, up=UP, down=DOWN, hold=0, bypass=0, snap=0)
     for n in range(20000):
         r = rng.random()
@@ -118,8 +121,8 @@ async def zero_rate_freezes_and_hold_zero_resets(dut):
 async def bypass_passes_through(dut):
     await setup(dut)
     drive(dut, -5000, bypass=1)
-    await RisingEdge(dut.aclk)
-    await RisingEdge(dut.aclk)
+    for _ in range(3):                  # input register + acc register
+        await RisingEdge(dut.aclk)
     assert signed(dut.sp_out) == -5000
 
 
@@ -147,7 +150,7 @@ async def target_inside_the_zero_window_snaps(dut):
     await clocks_to_reach(dut, counts(70.0), 200_000)
     drive(dut, 0, snap=win)
     n = await clocks_to_reach(dut, 0, 10)
-    assert n <= 2, f"snap took {n} clocks"
+    assert n <= 3, f"snap took {n} clocks"
     drive(dut, counts(70.0), snap=win)
     await clocks_to_reach(dut, counts(70.0), 200_000)
     drive(dut, counts(10.0), snap=win)          # outside the window: ramps

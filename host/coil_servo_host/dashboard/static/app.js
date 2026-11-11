@@ -151,6 +151,7 @@ function renderOverview() {
       <div class="state"></div>
       <div class="current"><span class="val">—</span> <span class="unit">A</span>
         <span class="small muted sp"></span></div>
+      <div class="small supply"></div>
       <canvas class="spark"></canvas>
       <div class="alarms"></div>`;
     cards.append(c);
@@ -173,6 +174,8 @@ function updateOverview() {
     $(".val", c).textContent = st.connection === "online" ? fmtA(st.i_amps) : "—";
     $(".sp", c).textContent = st.connection === "online" && st.sp_amps != null
       ? `setpoint ${fmtA(st.sp_amps)} A` : "";
+    $(".supply", c).textContent = st.i_supply_max != null
+      ? `bench supply limit ${st.i_supply_max} A · rated ${st.i_rated} A` : "";
     $(".alarms", c).innerHTML = alarmsHtml(st);
     const ys = (S.spark[name] || []).map((p) => p.i);
     const step = Math.max(1, Math.floor(ys.length / 150));
@@ -202,6 +205,7 @@ function renderDetail(name) {
       <span class="current"><span id="d-i">—</span> <span class="unit">A</span></span>
       <span class="muted">setpoint <b id="d-sp">—</b> A</span>
       <span class="muted">OUT1 <b id="d-u">—</b></span>
+      <span class="muted" id="d-supply"></span>
       <span class="spacer" style="flex:1"></span>
       <button class="btn stop" id="b-stop" title="servo_enable = 0: graceful ramp to zero">STOP</button>
     </div>
@@ -309,7 +313,8 @@ function renderControls(name, sim) {
       <div class="small muted">Acknowledges firmware states only. The
       hardware latch on the logic board is reset by hand (disarm first).</div></fieldset>
     <fieldset><legend>Measurements — FIRST RUNS: DUMMY RESISTIVE LOAD ONLY</legend>
-      <div class="row"><label>step to <input type="number" id="step-a" step="0.5" value="5"> A</label>
+      <div class="row"><label>step to <input type="number" id="step-a" step="0.5" value="${Math.min(5, rated)}"> A</label>
+        <label class="small">or OUT1 <input type="number" id="step-c" step="1" placeholder="counts"> counts (open loop)</label>
         <label><input type="checkbox" id="step-ol"> open loop</label>
         <button class="btn" id="b-step">Step response</button></div>
       <div class="row" style="margin-top:8px">
@@ -333,7 +338,10 @@ function renderControls(name, sim) {
     if (await confirmDialog(`Apply profile [${name}]?`,
       `<p>Writes the configuration of <b>[${esc(name)}]</b> from
        <span class="mono">${esc(info.config_file)}</span> to the board at
-       <b>${esc(st.host)}</b>. Only possible in IDLE.</p>${summary()}`,
+       <b>${esc(st.host)}</b>. Only possible in IDLE.</p>
+       <p>Board now: ${esc(S.devices[name].state.profile_text || "unknown")}</p>
+       ${S.devices[name].state.bench ? "<p><b>BENCH profile: only with the current-limited bench supply connected, never with the SE-600-5.</b></p>" : ""}
+       ${summary()}`,
       "Apply profile")) post(name, "apply_profile", {confirm: true});
   };
   $("#b-enable").onclick = async () => {
@@ -371,15 +379,25 @@ function renderControls(name, sim) {
   };
   $("#b-step").onclick = async () => {
     const a = parseFloat($("#step-a").value), ol = $("#step-ol").checked;
-    if (!isFinite(a)) return toast("enter a step size in amps", true);
-    if (Math.abs(a) > rated) return toast(`refused: above the rated ${rated} A`, true);
-    if (await confirmDialog(`Step response to ${a} A (${ol ? "open" : "closed"} loop)?`,
+    const cRaw = $("#step-c").value.trim();
+    const counts = cRaw === "" ? null : parseInt(cRaw, 10);
+    if (counts !== null && !ol)
+      return toast("OUT1 counts are an open-loop command: tick open loop", true);
+    if (counts === null && !isFinite(a)) return toast("enter a step size in amps", true);
+    if (counts === null && Math.abs(a) > rated)
+      return toast(`refused: above the rated ${rated} A`, true);
+    const target = counts !== null ? `OUT1 ${counts} counts` : `${a} A`;
+    if (await confirmDialog(`Step response to ${target} (${ol ? "open" : "closed"} loop)?`,
       `<p><b>First runs: dummy resistive load only.</b></p>
-       <p>Applies the profile, enables the servo with the setpoint at 0 A,
-       waits for you to raise arm (DIO4), steps to ${a} A 2 ms into a
+       <p>Applies the profile, enables the servo with the setpoint at 0,
+       waits for you to raise arm (DIO4), steps to ${target} 2 ms into a
        16.8 ms capture, then ramps back to zero and disables.</p>
-       ${ol ? "<p>Open loop: OUT1 gets the command the model predicts for that current (PROVISIONAL).</p>" : ""}`,
-      "Run step")) post(name, "step", {amps: a, open_loop: ol, confirm: true});
+       ${ol && counts === null ? "<p>Open loop: OUT1 gets the command the model predicts for that current (PROVISIONAL).</p>" : ""}
+       ${counts !== null ? "<p>Open loop: OUT1 gets exactly this command, bypassing the model.</p>" : ""}`,
+      "Run step"))
+      post(name, "step", counts !== null
+        ? {counts, open_loop: true, confirm: true}
+        : {amps: a, open_loop: ol, confirm: true});
   };
   $("#b-sweep").onclick = async () => {
     if (await confirmDialog("Start a swept-sine measurement?",
@@ -419,6 +437,8 @@ async function loadInfo() {
   h += `<p class="small muted">Profile <b>[${esc(info.name)}]</b>${info.bench
     ? ' <span class="badge bench">BENCH</span>' : ""} from
     <span class="mono">${esc(info.config_file)}</span></p>`;
+  if (info.profile_text)
+    h += `<div class="${info.profile_ok ? "notice" : "alarm-item"}">${esc(info.profile_text)}</div>`;
   if (info.header) h += `<p><b>${esc(info.header)}</b></p>`;
   if (info.summary.length)
     h += "<table>" + info.summary.map(([k, v]) =>
@@ -453,7 +473,8 @@ async function loadCapture(name) {
     const when = new Date(cap.t * 1000).toLocaleTimeString();
     let meta = "";
     if (cap.kind === "step")
-      meta = ` — step to ${cap.meta.amps} A, ${cap.meta.open_loop
+      meta = ` — step to ${cap.meta.amps != null ? cap.meta.amps + " A"
+        : "OUT1 " + cap.meta.command_counts + " counts"}, ${cap.meta.open_loop
         ? "open loop (the setpoint trace is the OUT1 command in sensor-scale amps)"
         : "closed loop"}`;
     $("#cap-info").innerHTML = `${esc(cap.kind)} at ${esc(when)}${esc(meta)}
@@ -473,6 +494,8 @@ function updateDetail() {
   const on = st.connection === "online";
   $("#d-i").textContent = on ? fmtA(st.i_amps) : "—";
   $("#d-sp").textContent = on ? fmtA(st.sp_amps) : "—";
+  $("#d-supply").innerHTML = st.i_supply_max != null
+    ? `bench supply limit <b>${st.i_supply_max} A</b>` : "";
   $("#d-u").textContent = on ? `${st.out1_volts.toFixed(4)} V (${st.u14} counts)` : "—";
   $("#d-alarms").innerHTML = alarmsHtml(st);
 

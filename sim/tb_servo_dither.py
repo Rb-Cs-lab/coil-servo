@@ -5,7 +5,7 @@ output never leaves [lo, clamp], and enable = 0 is an exact pass-through."""
 import random
 
 import cocotb
-from cocotb.triggers import FallingEdge, Timer
+from cocotb.triggers import FallingEdge
 
 from coil_servo_model import SigmaDelta
 from tb_util import reset, signed, start_clock
@@ -30,12 +30,11 @@ async def setup(dut):
 
 
 async def sample(dut):
-    """Output for the inputs just driven (combinational on the current
-    state), read before the next rising edge; then advance one clock."""
-    await Timer(1, "ns")
-    v = signed(dut.u_out)
+    """Advance one clock and read the registered output, which was computed
+    at that rising edge from the inputs just driven and the previous
+    sigma-delta state -- what SigmaDelta.step() returns."""
     await FallingEdge(dut.aclk)
-    return v
+    return signed(dut.u_out)
 
 
 @cocotb.test()

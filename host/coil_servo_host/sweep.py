@@ -32,7 +32,7 @@ import time
 
 from .board import Board
 from .capture import FS_DEC, lsb_amps
-from .config import load_channel
+from .config import announce, load_channel
 from .tf import estimate_tf
 
 
@@ -76,6 +76,7 @@ def main():
                         "undriven input; default 0.05)")
     args = p.parse_args()
     ch = load_channel(args.channel)
+    announce(ch)
 
     # the CSV is written incrementally and flushed per row, so a crash or a
     # pulled cable can't lose an hour of sweeping

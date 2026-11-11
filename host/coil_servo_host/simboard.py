@@ -37,7 +37,7 @@ import time
 
 import numpy as np
 
-from coil_servo_model.fixed_point import FixedPI, SlewLimiter
+from coil_servo_model.fixed_point import FixedPI
 from coil_servo_model.loop import T_S
 from coil_servo_model.plant import Plant
 from coil_servo_model.registers import (CFG_BASE, CFG_WORDS, FSM_STATES,
@@ -219,6 +219,8 @@ class SimBoard(Board):
                 i_cmd = min(max(self.sp, 0.0), m.max_current)
             else:
                 i_cmd = 0.0
+            if m.I_supply_max is not None:           # bench supply CC limit
+                i_cmd = min(i_cmd, m.I_supply_max)
             self.mismatch = self.state == "RUN" and \
                 self.sp < -64 * m.amps_per_lsb
             if self.bridge_en and self.state != "TRIP":
@@ -301,10 +303,12 @@ class SimBoard(Board):
                 else c["u_floor"]
             pi.acc = int(round(u0)) << (7 + c["ki_shift"])
             plant = Plant(m, i0=f["I"])
-            sl = SlewLimiter()
-            sl.acc = round(f["sp"] / lsb) << SlewLimiter.FRAC
-            # per-tick slew (the fabric steps every 8 ns clock: x128)
-            r_up, r_down = 128 * c["slew_up"], 128 * c["slew_down"]
+            # setpoint ramp per tick, in counts (the fabric's slew
+            # limiter, servo_slew.v / SlewLimiter, averaged over the 128
+            # clocks of a tick: rate codes are 2^-14 counts per clock)
+            sl_acc = f["sp"] / lsb
+            r_up = 128 * c["slew_up"] / 2**14
+            r_down = 128 * c["slew_down"] / 2**14
         target = f["setpoint"]           # register value at window start
 
         I = f["I"]
@@ -321,7 +325,14 @@ class SimBoard(Board):
                 self._in2_counts(f["t0"] + k * T_S))
             if f["state"] == "RAMP_DOWN":
                 tgt = 0
-            sp = sl.step(tgt, r_up, r_down, snap_win=c["zero_win"])
+            if abs(tgt) < c["zero_win"]:
+                sl_acc = float(tgt)                  # snap to zero
+            else:
+                d = tgt - sl_acc
+                away = (sl_acc >= 0 and d > 0) or (sl_acc <= 0 and d < 0)
+                r = r_up if away else r_down
+                sl_acc += max(-r, min(r, d))
+            sp = int(round(sl_acc))
             meas = plant.I / lsb + noise[k]
             meas_code = int(round(meas))
             e15 = sp - meas_code

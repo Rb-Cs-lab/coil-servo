@@ -162,7 +162,8 @@ def test_status_polling_and_unit_conversion(mock_server, tmp_path):
         assert s["u14"] == 4096
         assert s["out1_volts"] == pytest.approx(0.5 * ch["model"].out1_factor)
         assert s["flags"]["armed"] and s["flags"]["bridge_en"]
-        assert not s["alarms"]
+        # the mock board was never configured: only the profile alarm
+        assert [a.split(":")[0] for a in s["alarms"]] == ["PROFILE MISMATCH"]
         h = dev.history(60)
         assert len(h["t"]) >= 1 and h["i_amps"][-1] == pytest.approx(50.0)
     finally:
@@ -392,25 +393,70 @@ def test_offline_channel_does_not_block(tmp_path):
         dev.close()
 
 
-def test_bench_flag_and_unknown_keys(tmp_path):
-    text = CONFIG_PATH.read_text()
-    mot = text[text.index("[mot]"):text.index("[z_shim]")]
-    bench = mot.replace("[mot]", "[mot_bench]\nbench = true\n"
-                                 "some_future_key = 1")
-    cfg = tmp_path / "channels.toml"
-    cfg.write_text(mot + "\n" + bench)
-    devices = build_channels(config_path=cfg, simulate=["*"], logdir=None)
-    assert list(devices) == ["mot", "mot_bench"]
-    assert devices["mot_bench"].snapshot()["bench"] is True
+def test_channel_list_includes_the_bench_profile():
+    devices = build_channels(simulate=["*"], logdir=None)
+    assert "mot" in devices and "mot_bench" in devices
+    bench = devices["mot_bench"].snapshot()
+    assert bench["bench"] is True and bench["i_supply_max"] == 3.0
     assert devices["mot"].snapshot()["bench"] is False
-    assert devices["mot_bench"].profile is not None
+    assert devices["mot"].snapshot()["i_supply_max"] is None
+    rows = dict(devices["mot_bench"].info()["summary"])
+    assert "supply limit" in rows
+
+
+def test_unknown_keys_are_tolerated(tmp_path):
+    text = CONFIG_PATH.read_text()
+    mot = text[text.index("[mot]"):text.index("[mot_bench]")]
+    cfg = tmp_path / "channels.toml"
+    cfg.write_text(mot.replace("[mot]", "[mot]\nsome_future_key = 1"))
+    devices = build_channels(config_path=cfg, simulate=["*"], logdir=None)
+    assert list(devices) == ["mot"] and devices["mot"].profile is not None
+
+
+def test_bench_profile_match_and_led(tmp_path):
+    """Apply profile writes the bench LED pattern; the board's profile is
+    identified, and a board holding other settings is flagged loudly."""
+    log = ActionLog(tmp_path)
+    devices = build_channels(["mot", "mot_bench"], simulate=["*"],
+                             logdir=tmp_path, action_log=log,
+                             poll_interval=0.02, cfg_refresh_s=0.05)
+    app = create_app(devices, AccessPolicy(), log)
+    with TestClient(app, client=LOCAL, base_url="http://localhost") as c:
+        def st(name):
+            return c.get(f"/api/devices/{name}").json()
+        wait_for(lambda: st("mot_bench").get("profile_ok") is not None)
+        s = st("mot_bench")
+        assert s["profile_ok"] is False and "UNKNOWN" in s["profile_text"]
+        assert any("PROFILE MISMATCH" in a for a in s["alarms"])
+        r = c.post("/api/devices/mot_bench/actions/apply_profile",
+                   json={"confirm": True}, headers=HDR)
+        assert r.status_code == 200, r.text
+        assert devices["mot_bench"].board.read_cfg()["led"] == 0x80
+        s = st("mot_bench")
+        assert s["profile_ok"] is True
+        assert not any("PROFILE" in a for a in s["alarms"])
+        # the simulated mot board holds the bench settings: wrong channel
+        devices["mot"].board.apply_config(devices["mot_bench"].profile["cfg"])
+        wait_for(lambda: "mot_bench" in (st("mot").get("profile_text") or ""))
+        assert st("mot")["profile_ok"] is False
+        r = c.post("/api/devices/mot/actions/enable",
+                   json={"confirm": True}, headers=HDR)
+        assert r.status_code == 409 and "differs" in r.json()["error"]
+
+
+def test_step_by_counts_in_simulation(sim):
+    c, devices, _ = sim
+    r = act(c, "step", counts=3600, open_loop=False, confirm=True)
+    assert r.status_code == 400 and "open-loop" in r.json()["error"]
+    r = act(c, "step", counts=99999, open_loop=True, confirm=True)
+    assert r.status_code == 400 and "clamp" in r.json()["error"]
 
 
 def test_refused_profile_is_shown_not_fatal(tmp_path):
     text = CONFIG_PATH.read_text()
-    mot = text[text.index("[mot]"):text.index("[z_shim]")]
+    mot = text[text.index("[mot]"):text.index("[mot_bench]")]
     cfg = tmp_path / "channels.toml"
-    cfg.write_text(mot.replace("V_rail = 5.0", "V_rail = 9.0"))
+    cfg.write_text(mot.replace("V_rail = 5.0", "V_rail = 9.0", 1))
     devices = build_channels(config_path=cfg, simulate=["*"], logdir=None)
     dev = devices["mot"]
     assert dev.profile is None and "V_rail" in dev.profile_error

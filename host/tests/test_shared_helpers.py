@@ -43,20 +43,32 @@ def test_raw_decode_is_s14():
 
 
 def test_step_command_validation():
+    """command_counts raises ValueError (the dashboard's refusal); the CLI's
+    setpoint_counts turns the same cases into SystemExit (test_step.py)."""
     ch = load_channel("mot")
-    assert command_counts(ch, 50.0, open_loop=False) == 2048
+    assert command_counts(ch, 50.0, open_loop=False)[0] == 2048
     with pytest.raises(ValueError, match="rated"):
         command_counts(ch, 100.5, open_loop=False)
     with pytest.raises(ValueError, match="OUT1 only drives up"):
         command_counts(ch, -5.0, open_loop=True)
-    assert command_counts(ch, 0.0, open_loop=True) == 0
+    with pytest.raises(ValueError, match="open-loop"):
+        command_counts(ch, None, open_loop=False, counts=3600)
+    assert command_counts(ch, 0.0, open_loop=True)[0] == 0
+    assert command_counts(ch, None, open_loop=True, counts=3600)[0] == 3600
     # open loop: above the dead zone, below the clamp for rated current
-    c = command_counts(ch, 50.0, open_loop=True)
+    c, _ = command_counts(ch, 50.0, open_loop=True)
     assert ch["model"].dead_zone * 8192 < c < ch["cfg"]["out_clamp"]
 
 
-def test_summary_rows_match_summary():
-    ch = load_channel("mot")
-    text = summary(ch)
-    for label, value in summary_rows(ch):
-        assert f"{label:<18s} = {value}" in text
+@pytest.mark.parametrize("name", ["mot", "mot_bench"])
+def test_summary_is_built_from_summary_rows(name):
+    """The CLI summary and the dashboard show the same rows."""
+    ch = load_channel(name)
+    lines = summary(ch).splitlines()
+    rows = summary_rows(ch)
+    assert len(lines) == 1 + len(rows)
+    for line, (label, value) in zip(lines[1:], rows):
+        assert line == f"  {label:<18s} = {value}"
+    labels = [label for label, _ in rows]
+    assert ("supply limit" in labels) == (name == "mot_bench")
+    assert "board LEDs" in labels and "PI gains" in labels

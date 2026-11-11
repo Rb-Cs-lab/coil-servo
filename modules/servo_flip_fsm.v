@@ -36,6 +36,13 @@
 // the trip states; in RAMP_DOWN/SETTLE/TIMEOUT_HOLD the loop is actively
 // servoing to zero and needs its integrator.
 //
+// TIMING: the |i_meas| window and over-current comparisons are registered
+// on the clock after each decimated sample (tick_d), and the holdoff /
+// trip-count tests compare against precomputed limit-1 values instead of
+// adding 1 -- so no decision path chains the 23-bit absolute value, a
+// comparator and a counter adder in one 8 ns clock (first MVP build failed
+// by 1.0 ns). Decisions land one clock (8 ns) after the sample.
+//
 // State encoding matches docs/register_map.md.
 
 module servo_flip_fsm
@@ -97,14 +104,32 @@ module servo_flip_fsm
   wire signed [22:0] i_ext = i_meas;
   wire signed [22:0] abs_i = (i_ext < 0) ? -i_ext : i_ext;
   wire in_window = abs_i < {2'b00, zero_win, 7'b0000000};
-  wire window_qualified = tick && in_window &&
-      ({16'd0, win_cnt} + 32'd1 >= {16'd0, zero_holdoff});
-
-  // over-current: |i| > trip_level for trip_ticks consecutive samples
+  // over-current: |i| > trip_level
   wire over = abs_i > {2'b00, trip_level, 7'b0000000};
+
+  // pipeline stage: the sample's comparisons, one clock after the tick
+  reg tick_d, in_window_r, over_r;
+  // limit - 1 for the consecutive-sample tests (CFG, effectively static):
+  // cnt + 1 >= limit  <=>  limit == 0  ||  cnt >= limit - 1
+  reg [15:0] holdoff_m1, trip_ticks_m1;
+  reg        holdoff_zero, trip_ticks_zero;
+  always @(posedge aclk) begin
+    tick_d          <= aresetn & tick;
+    in_window_r     <= in_window;
+    over_r          <= over;
+    holdoff_m1      <= zero_holdoff - 16'd1;
+    holdoff_zero    <= (zero_holdoff == 16'd0);
+    trip_ticks_m1   <= trip_ticks - 16'd1;
+    trip_ticks_zero <= (trip_ticks == 16'd0);
+  end
+
+  wire window_qualified = tick_d && in_window_r &&
+      (holdoff_zero || (win_cnt >= holdoff_m1));
+
+  // over-current for trip_ticks consecutive samples (0 and 1 = first)
   wire trip_watch = (state != S_IDLE) && !tripped;
-  wire trip_fire = trip_watch && tick && over &&
-      ({1'b0, trip_cnt} + 17'd1 >= {1'b0, trip_ticks});
+  wire trip_fire = trip_watch && tick_d && over_r &&
+      (trip_ticks_zero || (trip_cnt >= trip_ticks_m1));
 
   always @(posedge aclk) begin
     if (!aresetn) begin
@@ -125,8 +150,8 @@ module servo_flip_fsm
       armed_prev <= armed;
       if (!trip_watch)
         trip_cnt <= 16'd0;
-      else if (tick)
-        trip_cnt <= !over ? 16'd0 :
+      else if (tick_d)
+        trip_cnt <= !over_r ? 16'd0 :
                     (trip_cnt == 16'hffff) ? trip_cnt : trip_cnt + 16'd1;
 
       if (trip_fire) begin
@@ -182,8 +207,8 @@ module servo_flip_fsm
               int_hold <= 1'b1;
               timer <= 32'd0;
             end else begin
-              if (tick)
-                win_cnt <= in_window ? win_cnt + 16'd1 : 16'd0;
+              if (tick_d)
+                win_cnt <= in_window_r ? win_cnt + 16'd1 : 16'd0;
               if (!stop_req && flip_timeout != 32'd0 && timer >= flip_timeout)
                 state <= S_THOLD;
               else
@@ -242,8 +267,8 @@ module servo_flip_fsm
               state <= S_TRIPPED;
               bridge_en <= 1'b0;
             end else begin
-              if (tick)
-                win_cnt <= in_window ? win_cnt + 16'd1 : 16'd0;
+              if (tick_d)
+                win_cnt <= in_window_r ? win_cnt + 16'd1 : 16'd0;
               timer <= timer + 32'd1;
             end
           end

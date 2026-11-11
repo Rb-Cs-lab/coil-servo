@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 from .board import Board
-from .config import load_channel
+from .config import announce, load_channel
 
 SERVER_SRC = Path(__file__).resolve().parents[1] / "board" / "coil_servo_server.py"
 
@@ -106,7 +106,9 @@ def main():
                         "refuse_if_running)")
     args = p.parse_args()
 
-    host = load_channel(args.channel)["host"]
+    ch = load_channel(args.channel)
+    announce(ch)
+    host = ch["host"]
     target = f"root@{host}"
     bit = Path(args.bitstream)
     if not bit.exists():

@@ -25,6 +25,15 @@
 // to 0 at once and keeps it there, so after a re-arm or a flip the setpoint
 // ramps up from 0. bypass (open-loop transfer-function mode) passes the
 // target straight through.
+//
+// TIMING (first MVP build: -2.2 ns on the one-clock version, ADC IN2 ->
+// acc): the target and the snap test are registered first (one clock of
+// latency, nothing against the 1 us PI tick), and the limiting step is
+// split over two clocks -- phase 0 measures delta = target - acc, phase 1
+// moves acc by 2*rate (or onto the target). The average rate is unchanged;
+// every register-to-register path is one adder or comparator deep. A
+// hold/bypass/snap in phase 0 invalidates that measurement, so phase 1
+// never applies a stale step.
 
 module servo_slew
 (
@@ -41,28 +50,56 @@ module servo_slew
   output wire signed [13:0] sp_out      // limited setpoint, counts
 );
 
-  reg  signed [27:0] acc;               // setpoint, counts << 14
-  wire signed [27:0] t     = {target, 14'd0};
-  wire signed [28:0] delta = t - acc;
-  wire away = ((acc >= 0) && (delta > 0)) || ((acc <= 0) && (delta < 0));
-  wire signed [28:0] r = {13'd0, away ? rate_up : rate_down};
-  wire signed [14:0] t15 = target;
+  // input stage
+  wire signed [14:0] t15   = target;
   wire        [14:0] abs_t = (t15 < 0) ? -t15 : t15;
-  wire snap = abs_t < {1'b0, snap_win};
+  reg  signed [27:0] t_r;               // target, counts << 14
+  reg                snap_r;
+
+  // two-phase limiter
+  reg  signed [27:0] acc;               // setpoint, counts << 14
+  reg  signed [27:0] t_p;               // target as measured in phase 0
+  reg  signed [28:0] delta_r;           // t_p - acc, measured in phase 0
+  reg                phase, valid;
+
+  wire away = ((acc >= 0) && (delta_r > 0)) || ((acc <= 0) && (delta_r < 0));
+  wire signed [28:0] r2 = {12'd0, (away ? rate_up : rate_down), 1'b0};
+  wire signed [27:0] acc_up = acc + r2[27:0];
+  wire signed [27:0] acc_dn = acc - r2[27:0];
 
   assign sp_out = acc[27:14];           // floor; exact once on target
 
   always @(posedge aclk) begin
-    if (!aresetn || hold_zero)
+    if (!aresetn) begin
+      t_r <= 28'sd0;
+      snap_r <= 1'b0;
       acc <= 28'sd0;
-    else if (bypass || snap)
-      acc <= t;
-    else if (delta > r)
-      acc <= acc + r[27:0];
-    else if (delta < -r)
-      acc <= acc - r[27:0];
-    else
-      acc <= t;
+      t_p <= 28'sd0;
+      delta_r <= 29'sd0;
+      phase <= 1'b0;
+      valid <= 1'b0;
+    end else begin
+      t_r <= {target, 14'd0};
+      snap_r <= abs_t < {1'b0, snap_win};
+      phase <= ~phase;
+
+      if (hold_zero) begin
+        acc <= 28'sd0;
+        valid <= 1'b0;
+      end else if (bypass || snap_r) begin
+        acc <= t_r;
+        valid <= 1'b0;
+      end else if (!phase) begin
+        delta_r <= t_r - acc;           // measure
+        t_p <= t_r;
+        valid <= 1'b1;
+      end else begin
+        valid <= 1'b0;
+        if (valid)                      // move
+          acc <= (delta_r > r2)  ? acc_up :
+                 (delta_r < -r2) ? acc_dn : t_p;
+      end
+    end
   end
 
 endmodule

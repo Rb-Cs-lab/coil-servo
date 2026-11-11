@@ -16,6 +16,12 @@ the CSV has time, measured amps, and setpoint amps (in open loop the
 
 The servo is enabled first; then raise arm (DIO4) when prompted -- the FSM
 needs an arm EDGE after servo_enable.
+
+--counts N (open loop only) sets the OUT1 command directly in DAC counts,
+bypassing the model -- for scanning the dead zone and G_pass when the model
+is not trusted yet (the low-current bench profile, docs/bench_supply_test.md):
+
+    python -m coil_servo_host.step mot_bench --open-loop --counts 3600 -o ol_3600.csv
 """
 
 import argparse
@@ -23,25 +29,51 @@ import time
 
 from .board import FIFO_ADDR, FIFO_DEPTH, Board
 from .capture import FS_DEC, decimated_columns, decode_words, write_csv
-from .config import amps_to_counts, load_channel
+from .config import amps_to_counts, announce, load_channel
 
 
-def command_counts(ch: dict, amps: float, open_loop: bool) -> int:
-    """The setpoint register value for a step to `amps`. Raises ValueError
-    above the rated current, or for a negative open-loop step. In open
-    loop the value is the OUT1 command the model predicts for that current
-    (PROVISIONAL until G_pass and the dead zone are measured)."""
+def command_counts(ch: dict, amps: float | None, open_loop: bool,
+                   counts: int | None = None) -> tuple[int, str]:
+    """The setpoint register value for a step, and a line describing it.
+    Give either amps or (open loop only) counts, a direct OUT1 command.
+    Raises ValueError for requests that are almost certainly mistakes:
+    above the rated current, a negative open-loop step, counts outside
+    0 .. the OUT1 clamp, counts in closed loop. In open loop, amps go
+    through the model (PROVISIONAL until G_pass and the dead zone are
+    measured)."""
+    if counts is not None:
+        if not open_loop:
+            raise ValueError("--counts is an OUT1 command: use it with "
+                             "--open-loop (closed loop takes --amps)")
+        clamp = ch["cfg"]["out_clamp"]
+        if not 0 <= counts <= clamp:
+            raise ValueError(f"--counts {counts} outside 0 .. the OUT1 clamp "
+                             f"({clamp} counts)")
+        return counts, f"open loop: OUT1 command {counts} counts (set directly)"
+
     if abs(amps) > ch["i_rated"]:
         raise ValueError(
             f"{amps} A exceeds this channel's rated current "
             f"({ch['i_rated']} A); the fabric clamp would cap the drive at "
             f"rated anyway, so this is almost certainly a typo")
-    if not open_loop:
-        return amps_to_counts(amps, ch["i_fs"])
-    if amps < 0:
-        raise ValueError("an open-loop step needs amps >= 0: OUT2 is not "
-                         "fitted in the MVP, OUT1 only drives up")
-    return round(ch["model"].out1_for_current(amps) * 8192) if amps > 0 else 0
+    if open_loop:
+        if amps < 0:
+            raise ValueError("an open-loop step needs amps >= 0: OUT2 is not "
+                             "fitted in the MVP, OUT1 only drives up")
+        sp = round(ch["model"].out1_for_current(amps) * 8192) if amps > 0 else 0
+        return sp, (f"open loop: OUT1 command {sp} counts (model estimate "
+                    f"for {amps} A)")
+    sp = amps_to_counts(amps, ch["i_fs"])
+    return sp, f"closed loop: setpoint {sp} counts ({amps} A)"
+
+
+def setpoint_counts(ch: dict, amps: float | None, counts: int | None,
+                    open_loop: bool) -> tuple[int, str]:
+    """command_counts for the command line: mistakes raise SystemExit."""
+    try:
+        return command_counts(ch, amps, open_loop, counts)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
 
 
 def prepare(b: Board, ch: dict, open_loop: bool) -> None:
@@ -73,19 +105,18 @@ def finish(b: Board) -> None:
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("channel")
-    p.add_argument("--amps", type=float, required=True, help="step target")
+    target = p.add_mutually_exclusive_group(required=True)
+    target.add_argument("--amps", type=float, help="step target")
+    target.add_argument("--counts", type=int,
+                        help="open loop only: OUT1 command in DAC counts")
     p.add_argument("--open-loop", action="store_true")
     p.add_argument("-o", "--out", default="step.csv")
     args = p.parse_args()
     ch = load_channel(args.channel)
-    try:
-        sp_counts = command_counts(ch, args.amps, args.open_loop)
-    except ValueError as exc:
-        raise SystemExit(f"--amps: {exc}") from None
-    if args.open_loop:
-        print(f"open loop: OUT1 command {sp_counts} counts (model estimate "
-              f"for {args.amps} A)")
+    announce(ch)
 
+    sp_counts, what = setpoint_counts(ch, args.amps, args.counts, args.open_loop)
+    print(what)
     with Board(ch["host"], max_clamp=ch["cfg"]["out_clamp"]) as b:
         prepare(b, ch, args.open_loop)
         b.warn_flags()

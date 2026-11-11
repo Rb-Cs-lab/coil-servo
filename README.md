@@ -18,7 +18,11 @@ no control decisions are made in software.
 - Programming experimental sequences: [docs/operating_scenarios.md](docs/operating_scenarios.md)
 - Watching the boards live (and operating them by hand from the lab PC):
   the web dashboard, [docs/dashboard.md](docs/dashboard.md)
-- Bringing hardware up, step by step: [docs/bringup.md](docs/bringup.md)
+- Bringing hardware up, step by step: [docs/bringup.md](docs/bringup.md);
+  the first low-current campaign on a 3 A bench supply:
+  [docs/bench_supply_test.md](docs/bench_supply_test.md) (channel
+  `mot_bench`; switching back to 100 A:
+  [checklist](docs/bench_supply_test.md#switching-between-bench-and-100-a))
 - Options considered and shelved: [docs/future_upgrades.md](docs/future_upgrades.md)
 - Hardware facts, pinout, toolchain versions: [CLAUDE.md](CLAUDE.md)
 - The control-loop design (every number in the loop, and why):
@@ -81,7 +85,7 @@ Needed by anyone touching the loop design; no Vivado required.
    cocotb, and matplotlib. Without the `-e .` part, `pytest` fails with
    import errors.
 4. Check everything: `pytest` from the repo root should end in
-   "112 passed" (model tests + simulated-hardware tests + host-tool tests;
+   "181 passed" (model tests + simulated-hardware tests + host-tool tests;
    about 2 minutes, most of it the simulated FPGA).
 
 ### B. FPGA build machine (Ubuntu 24.04 or 22.04 only)
