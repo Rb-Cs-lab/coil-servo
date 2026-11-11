@@ -208,7 +208,7 @@ BENCH_CHANNELS = {
         I_rated=2.5,         # highest closed-loop setpoint on the bench
         I_supply_max=3.0,    # bench supply CC limit -- the real hard limit
         lem_turns=1,         # LEM on the 4/0 lead, one pass: I_FS = 200 A
-        # Clamp set directly (PENDING USER CONFIRMATION), ~11 % (407 counts, ~0.4 V of gate) above the
+        # Clamp set directly (decided 2026-11-11), ~11 % (407 counts, ~0.4 V of gate) above the
         # nominal dead zone: at 2.5 A the clamp derived from I_rated would
         # sit only ~44 counts above it, inside the dead-zone uncertainty and
         # V_th's thermal drift, and could block the first open-loop
