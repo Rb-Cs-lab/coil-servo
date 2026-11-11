@@ -589,7 +589,10 @@ async function main() {
   who.className = "pill " + (S.who.control ? "ok" : "");
   const list = await getJSON("/api/devices");
   for (const d of list) S.devices[d.name] = {info: d, state: d.state};
-  $("#sim-banner").hidden = !list.some((d) => d.state.simulated);
+  const nSim = list.filter((d) => d.state.simulated).length;
+  $("#sim-banner").hidden = !nSim;
+  if (nSim && nSim < list.length)
+    $("#sim-banner").textContent = "SIMULATION — channels marked SIM have no hardware";
   await Promise.all(list.map(async (d) => {
     try {
       const h = await getJSON(`/api/devices/${d.name}/history?span=60`);
