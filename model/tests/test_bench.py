@@ -20,6 +20,11 @@ Tolerance band. The 0.1 % spec is a production number (0.1 A at 100 A).
 cannot even see it. The bench tests therefore use +-1 ADC count (24.4 mA,
 ~1 % of 2.5 A) as their settling band -- the measurement's resolution, not
 the spec.
+
+Optional in-amp gain 10 (R_G jumper on the AD8421; channels.toml G_inamp,
+one line): I_FS 20 A, 2.44 mA per count, plant gain ~48, normalized gains
+1/10. The loop, trip and gain tests run at both G_inamp = 1 and 10 (the
+`ch` fixture); the band is then +-2.44 mA.
 """
 
 import math
@@ -66,8 +71,16 @@ def fixed_run(ch, setpoint_fn, t_end, i0, dither, floor=FLOOR):
                     plant=Plant(ch, i0=i0), dither=dither)
 
 
-def band_frac(target):
-    return BAND / target
+def band_frac(target, ch=BENCH):
+    """+-1 ADC count of ch's sensor scale, as a fraction of target."""
+    return ch.amps_per_lsb / target
+
+
+# The in-amp gain is a one-line switch in channels.toml (G_inamp = 1 ships;
+# 10 with the optional R_G jumper): the loop tests run at both.
+@pytest.fixture(params=[1.0, 10.0], ids=lambda g: f"G_inamp={g:g}")
+def ch(request):
+    return replace(BENCH, G_inamp=request.param)
 
 
 # --- profile ------------------------------------------------------------
@@ -198,27 +211,52 @@ def test_plant_refuses_to_start_above_the_supply_limit():
 
 # --- loop: gains and margins --------------------------------------------
 
-def test_bench_gains_are_the_production_ones():
-    # same bank, same sensor scale -> same plant gain (~4.8) and gains (the
-    # coil's L is not in the small-signal loop)
-    assert plant_gain(BENCH) == pytest.approx(plant_gain(MOT))
-    assert 4.0 < plant_gain(BENCH) < 5.5
-    assert suggest_gains(BENCH) == pytest.approx(suggest_gains(MOT))
+def test_bench_gains_follow_the_in_amp_gain(ch):
+    # same bank: at G_inamp = 1 the plant gain (~4.8) and gains are the
+    # production ones (the coil's L is not in the small-signal loop); at
+    # G_inamp = 10 the plant gain is 10x and the normalized gains 1/10 --
+    # the same OUT1 counts per amp of error, which is how channels.toml
+    # writes them so the switch is one line
+    g = ch.G_inamp
+    assert plant_gain(ch) == pytest.approx(g * plant_gain(MOT))
+    kp, ki_tick = suggest_gains(ch)
+    kp_mot, ki_mot = suggest_gains(MOT)
+    assert kp == pytest.approx(kp_mot / g)
+    assert ki_tick == pytest.approx(ki_mot / g)
+    assert kp * 8192 / ch.I_FS == pytest.approx(4.2774, rel=1e-4)   # counts/A
 
 
-def test_bench_gains_encode_precisely():
-    kp, ki_tick = suggest_gains(BENCH)
+def test_bench_gains_encode_precisely(ch):
+    kp, ki_tick = suggest_gains(ch)
     for g, bits in ((kp, 5), (ki_tick, 6)):
         mant, shift = encode_gain(g, bits)
         assert abs(mant) >= 1 << 16
         assert decode_gain(mant, shift) == pytest.approx(g, rel=2e-5)
 
 
-def test_bench_small_signal_margins():
-    kp, ki_tick = suggest_gains(BENCH)
-    f_c, pm = crossover_and_margin(BENCH, kp, ki_tick / T_S)
+def test_bench_small_signal_margins(ch):
+    kp, ki_tick = suggest_gains(ch)
+    f_c, pm = crossover_and_margin(ch, kp, ki_tick / T_S)
     assert 2e3 < f_c < 5e3, f"crossover {f_c:.0f} Hz"
     assert pm > 45, f"phase margin {pm:.0f} deg"
+
+
+def test_trip_fires_below_the_supply_limit(ch):
+    # trip 2.8 A in counts of this scale (115 / 1147) vs the supply limit
+    # (~123 / ~1229): 0.19-0.2 A of margin, > 7 counts, so ADC rounding
+    # cannot put the trip level at or above the limit. The 4-sample
+    # persistence adds ~4 us at the closed-loop rise rate near 2.8 A
+    # (~1 mA/us, test below) -- negligible. The margin that matters is the
+    # IN1 offset's (bench doc 4.1).
+    level = round(2.8 / ch.I_FS * 8192)
+    supply = ch.I_supply_max / ch.amps_per_lsb
+    assert ch.I_rated / ch.amps_per_lsb < level < supply - 7
+    res = float_run(ch, lambda t: 2.9, 3e-3, i0=2.0)
+    k = int(np.argmax(res.I > level * ch.amps_per_lsb))
+    assert k > 0
+    rise_4_ticks = res.I[k + 4] - res.I[k]
+    assert rise_4_ticks < 0.01                   # A, within 4 samples
+    assert res.I[k + 4] < ch.I_supply_max - 0.15
 
 
 @pytest.mark.parametrize("g_fs", [5.0, 10.0, 20.0, 1e6])
@@ -239,12 +277,13 @@ def test_bench_gains_stay_stable_across_the_near_threshold_g_fs(g_fs):
 
 @pytest.mark.parametrize("i0,target", [(1.0, 1.1), (1.0, 0.9), (2.0, 2.2),
                                        (2.0, 1.8), (1.0, 2.0)])
-def test_float_steps_from_an_operating_point_meet_spec(i0, target):
-    res = float_run(BENCH, lambda t: target, 2e-3, i0=i0)
-    ts = settling_time(res.t, res.I, target, band_frac(target))
+def test_float_steps_from_an_operating_point_meet_spec(ch, i0, target):
+    res = float_run(ch, lambda t: target, 2e-3, i0=i0)
+    ts = settling_time(res.t, res.I, target, band_frac(target, ch))
     assert ts is not None and ts < 1e-3, f"{i0}->{target} A settled in {ts}"
-    assert np.max(res.I) < max(i0, target) + BAND      # no overshoot
-    assert np.min(res.I) > min(i0, target) - BAND      # no undershoot
+    band = ch.amps_per_lsb
+    assert np.max(res.I) < max(i0, target) + band      # no overshoot
+    assert np.min(res.I) > min(i0, target) - band      # no undershoot
     assert np.all(res.v2 == 0.0)
 
 
@@ -265,13 +304,19 @@ def test_fixed_point_hold_hunts_without_dither_and_not_with_it():
     assert ptp[True] < 0.1 * count_amps                            # ~mA
 
 
-def test_fixed_point_step_settles_within_one_adc_count():
+def test_fixed_point_step_settles_within_one_adc_count(ch):
     # 1 -> 2 A through the bit-exact mirror, dither on: settles within
-    # +-1 ADC count (24.4 mA) in < 1 ms. (Without the dither the hold hunts
-    # by ~2 counts p-p -- test above.)
-    res = fixed_run(BENCH, lambda t: 2.0, 3e-3, i0=1.0, dither=True)
-    ts = settling_time(res.t, res.I, 2.0, band_frac(2.0))
+    # +-1 ADC count (24.4 mA at G_inamp 1, 2.44 mA at 10) in < 1 ms.
+    res = fixed_run(ch, lambda t: 2.0, 3e-3, i0=1.0, dither=True)
+    ts = settling_time(res.t, res.I, 2.0, band_frac(2.0, ch))
     assert ts is not None and ts < 1e-3, f"settled in {ts}"
+
+
+def test_dithered_hold_sits_within_one_count(ch):
+    res = fixed_run(ch, lambda t: 2.0, 3e-3, i0=2.0, dither=True)
+    tail = res.I[res.t > 1e-3]
+    assert abs(tail.mean() - 2.0) < ch.amps_per_lsb
+    assert np.ptp(tail) < ch.amps_per_lsb
 
 
 def test_small_steps_from_zero_are_slow_with_the_90_percent_floor():
@@ -317,19 +362,19 @@ def test_slew_limited_moves_at_bench_currents():
         assert ts is not None and ts < 0.04e-3 + 1e-3
 
 
-def test_setpoint_above_the_supply_limit_winds_the_integrator_up():
+def test_setpoint_above_the_supply_limit_winds_the_integrator_up(ch):
     # DOCUMENTED (why trip_amps sits below the supply limit): asking for
     # more than the supply gives holds the coil at the CC limit while the
     # integrator climbs toward the clamp (anti-windup only acts AT the
     # clamp). Recovery then takes longer than a normal step; the firmware
     # trip below the limit prevents this on the bench.
-    res = float_run(BENCH, lambda t: 3.5 if t < 6e-3 else 2.0, 12e-3, i0=2.0)
+    res = float_run(ch, lambda t: 3.5 if t < 6e-3 else 2.0, 12e-3, i0=2.0)
     held = res.I[(res.t > 0.5e-3) & (res.t < 6e-3)]
-    assert np.all(held == BENCH.I_supply_max)
-    assert np.max(res.u) == pytest.approx(BENCH.clamp_counts / 8192)  # wound up
+    assert np.all(held == ch.I_supply_max)
+    assert np.max(res.u) == pytest.approx(ch.clamp_counts / 8192)  # wound up
     after = res.t >= 6e-3
-    ts = settling_time(res.t[after] - 6e-3, res.I[after], 2.0, band_frac(2.0))
+    ts = settling_time(res.t[after] - 6e-3, res.I[after], 2.0, band_frac(2.0, ch))
     assert ts is not None and 2e-3 < ts < 6e-3, f"recovered in {ts}"
     # the same move without the wind-up (from a settled 2.9 A) is quick
-    normal = float_run(BENCH, lambda t: 2.0, 3e-3, i0=2.9)
-    assert settling_time(normal.t, normal.I, 2.0, band_frac(2.0)) < 1e-3
+    normal = float_run(ch, lambda t: 2.0, 3e-3, i0=2.9)
+    assert settling_time(normal.t, normal.I, 2.0, band_frac(2.0, ch)) < 1e-3
