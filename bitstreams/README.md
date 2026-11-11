@@ -23,8 +23,12 @@ current host tools.
 
 | File | Built from | Register map | Build host | Timing | Hardware-verified |
 |---|---|---|---|---|---|
-| `coil_servo.bit.bin` | commit `aa2a92f1` (MVP rewrite: floor, trip, slew limiter with snap, dither, arm edge; timing pipelining) | rev 3 | lab laptop, WSL2 Ubuntu 24.04, Vivado 2025.1, 2026-11-11 | met — WNS +0.072 ns, WHS +0.053 ns, 0 failing endpoints | not yet — first deploy pending ([bringup.md](../docs/bringup.md)) |
-| `coil_servo_fullarch_20260827.bit.bin` | HDL as of the 2026-08-27 bring-up (full architecture: OUT2 clamp, boost; registered `u_drive` timing fix, `dio_invert` slice fix) | rev 0 (no revision field) | lab NUC, WSL2, Vivado 2025.1 | met | yes — MOT board, 2026-08-27 ([lab notes](../docs/lab_notes_2026-08-27.md)). Superseded; kept for reference |
+| `coil_servo.bit.bin` | commit `103a127` (rev 4: IN1/IN2 zero-offset registers, build-ID register, open-loop integrator clear) | rev 4 | lab laptop, WSL2 Ubuntu 24.04, Vivado 2025.1, 2026-11-11 | met — WNS +0.156 ns, WHS +0.074 ns, 0 failing endpoints | not yet — deploy pending |
+| `coil_servo_rev3_20261111.bit.bin` | commit `aa2a92f1` (first MVP build) | rev 3 | lab laptop, 2026-11-11 | met — WNS +0.072 ns | yes — MOT board 2026-11-11: deploy/check, logic-board acceptance, loopback ([lab notes](../docs/lab_notes_2026-11.md)). Superseded |
+| `coil_servo_fullarch_20260827.bit.bin` | HDL as of the 2026-08-27 bring-up (full architecture) | rev 0 | lab NUC, WSL2, Vivado 2025.1 | met | yes — MOT board, 2026-08-27. Superseded |
+
+Since rev 4 the bitstream reports the commit it was built from (STS word 6);
+`check` and `deploy` print it, e.g. "commit 103a127".
 
 SHA-256 of the current `coil_servo.bit.bin`:
-`3e9f15a38d27ac19b1ba4eed19bc7b5f8e800add9b8115be7f281f72094cf416`
+`dd90d03b5380e3547b846d4496214fe2259717efca6e4f17350c680ba5afb5fb`
