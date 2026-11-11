@@ -81,8 +81,8 @@ boost_mode = 0
 #     python -m coil_servo_host.zero <channel> --write
 # Amps of the sensor scale; the FPGA subtracts them from every IN1/IN2
 # sample. Re-measure after changing the LEM, burden, in-amp gain or cable.
-in1_offset_amps = 0.0           # NOT YET MEASURED (11-11: LEM read ~ -5.8 A)
-in2_offset_amps = 0.0           # control-computer setpoint input at 0 V
+in1_offset_amps = 0.2107        # measured 2026-11-11 (coil_servo_host.zero)
+in2_offset_amps = 0.1539        # measured 2026-11-11 (coil_servo_host.zero)
 
 # Low-current TEST PROFILE for the MOT channel (docs/bench_supply_test.md):
 # the same board and power stage, powered from a current-limited BENCH
@@ -203,8 +203,8 @@ boost_mode = 0
 #     python -m coil_servo_host.zero <channel> --write
 # Amps of the sensor scale; the FPGA subtracts them from every IN1/IN2
 # sample. Re-measure after changing the LEM, burden, in-amp gain or cable.
-in1_offset_amps = 0.0           # NOT YET MEASURED (11-11: LEM read ~ -5.8 A)
-in2_offset_amps = 0.0           # control-computer setpoint input at 0 V
+in1_offset_amps = 0.2105        # measured 2026-11-11 (coil_servo_host.zero)
+in2_offset_amps = 0.1551        # measured 2026-11-11 (coil_servo_host.zero)
 
 [z_shim]
 board_host = "rp-zshim.local"   # PLACEHOLDER

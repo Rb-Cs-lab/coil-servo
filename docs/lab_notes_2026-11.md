@@ -272,3 +272,43 @@ bar; high-current side open. Open loop, OUT1 swept 0–4474 counts
 - One OUT1 count is now ≈ 0.14 A of bank current (model): more than the
   ±0.1 % band at 50 A, so **dither_enable stays on** for every hold. The
   simulation tests now run the 50 A settling checks with dither on.
+
+## Test 2 — sensor chain repair and zero calibration (11-11)
+
+Setup: LEM LF 310-S on ±15 V (floating bench supply, GND referenced only
+through the BNC jacket to the Red Pitaya/scope), 10 Ω burden, AD8421 on a
+Perma-Proto board, output → IN1, teed to scope CH1; IN2 on a 50 Ω
+terminator; no current anywhere (high-current supplies disconnected).
+
+- **First reading: IN1 pinned at full scale** — the in-amp output sat at
+  +12.6–13.7 V (its positive limit; IN1 unplugged at once, the Red Pitaya
+  input was checked undamaged afterwards: +1.3 mV with nothing connected).
+- **Fault 1: REF (pin 6) floating.** It reached ground only *through* the
+  decoupling capacitors (a capacitor passes no DC), reading +4.6 V. Fixed:
+  plain wire pin 6 → GND. (Jeff's drawing shows the capacitors in line with
+  the REF wire, which invites this; correct: REF wired straight to GND,
+  capacitors from pin 8 and from pin 5 to GND.)
+- **Fault 2: R_G pins 2–3 bridged** by solder (on the replacement chip;
+  the first chip was probably the same, so it is likely good — kept as a
+  spare). A bridged R_G makes the gain effectively unlimited: the output
+  sat at one supply limit or oscillated rail to rail. Fixed: bridge removed.
+- **Output resistor was 47 kΩ** (yellow-violet-orange), not the 49.9 Ω of
+  the design — that would have read IN1 4.5 % low (9 % with the scope
+  teed) and filtered the signal at tens of kHz. Replaced with 49.9 Ω.
+- **In-amp inputs are swapped** relative to the drawing (−IN on the LEM/M
+  end, +IN on GND): this only flips the sign. Left as is; the sign is
+  checked with the first real current in Test 3 (turn the LEM round if
+  needed).
+- **The LEM is not magnetised:** with the chain repaired the in-amp output
+  is −0.2 mV (≈ −0.04 A) with the LEM powered (its supply current changes
+  when plugged in). The "−29 mV / −5.8 A offset" of 11-10/11-11 was the
+  wiring faults, not the sensor.
+- Noise at the in-amp output (scope, 20 MHz BW): ~1 mV rms ≈ 0.2 A rms
+  equivalent at the scope's resolution — to be re-checked with the board's
+  own capture (the ADC averages over the 128-sample tick).
+- **Zero calibration** (`zero mot --write --apply`, `zero mot_bench --write`):
+  IN1 +8.6 counts (+0.21 A — the Red Pitaya's own input offset plus the
+  in-amp's −0.2 mV), IN2 +6.3 counts (+0.15 A, on the 50 Ω terminator —
+  re-measure once the control computer's analog output is connected). Stored
+  in channels.toml [mot] and [mot_bench]; after loading, `check mot` reads
+  −0.06 A (≈ 2 counts). **Pass.**
