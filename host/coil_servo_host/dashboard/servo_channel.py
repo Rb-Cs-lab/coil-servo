@@ -184,6 +184,7 @@ class CoilServoChannel(Device):
         self.job = None
         self.last_job = None                  # the finished one, for viewers
         self._job_cancel = threading.Event()
+        self._finish_stop = False             # see _stop_now / _maybe_finish_stop
         self._capture_lock = threading.Lock()
         self.capture = None
         self.capture_seq = 0
@@ -270,6 +271,7 @@ class CoilServoChannel(Device):
                         rb = self.board.read_cfg()
                 self._update(s, rb)
                 self._check_pending(s)
+                self._maybe_finish_stop(s)
                 self._maybe_auto_capture()
                 self._stop.wait(max(0.0, t_next - time.monotonic()))
             except OSError as exc:            # incl. ConnectionError, timeout
@@ -580,7 +582,17 @@ class CoilServoChannel(Device):
         except ActionError as exc:
             self._log(client, action, shown, f"refused: {exc}")
             raise
-        except (OSError, RuntimeError, ValueError, TimeoutError) as exc:
+        except RuntimeError as exc:
+            if "leave open loop" not in str(exc):
+                self._log(client, action, shown, f"error: {exc}")
+                raise ActionError(f"{action} failed: {exc}") from exc
+            # Board.write_cfg: open_loop 1 -> 0 only from IDLE/TRIPPED
+            msg = ("the board is running in open loop: press STOP and wait "
+                   "for IDLE first (switching to closed loop while running "
+                   "would apply the wound-up integrator to OUT1)")
+            self._log(client, action, shown, f"refused: {msg}")
+            raise ActionError(msg) from exc
+        except (OSError, ValueError, TimeoutError) as exc:
             self._log(client, action, shown, f"error: {exc}")
             raise ActionError(f"{action} failed: {exc}") from exc
         self._log(client, action, shown, f"ok: {message}")
@@ -650,12 +662,43 @@ class CoilServoChannel(Device):
         self._job_cancel.set()
         with self._lock:
             self.pending = None
-        self._write(servo_enable=0, open_loop=0)
+        self._stop_now()
         try:
             self._readback_now()              # lifts the sequence lock now
         except OSError:
             pass
         return "servo_enable = 0: graceful ramp to zero, then IDLE"
+
+    def _stop_now(self) -> None:
+        """servo_enable = 0 at once, without waiting (Board.stop(wait=False)).
+        Leaving open loop and clearing the integrator -- the rest of
+        Board.stop() -- happen in the poll loop once the board is IDLE
+        (_maybe_finish_stop): the firmware PI winds up in open loop, so
+        open_loop may only go 1 -> 0 from IDLE (Board.write_cfg)."""
+        with self._io:
+            self.board.sync_shadow()
+            self.board.stop(wait=False)
+        with self._lock:
+            self._finish_stop = True
+
+    def _maybe_finish_stop(self, s: dict) -> None:
+        with self._lock:
+            if not self._finish_stop or s["fsm_state_name"] != "IDLE":
+                return
+            self._finish_stop = False
+        try:
+            with self._io:
+                self.board.sync_shadow()
+                # checked again under _io: an enable since the stop owns
+                # the board now (and has left open loop itself)
+                if (self.board.read_cfg()["servo_enable"]
+                        or self.board.sts()["fsm_state_name"] != "IDLE"):
+                    return
+                if self.board.read_cfg()["open_loop"]:
+                    self.board.write_cfg(open_loop=0)
+                self.board.pulse("int_clear")
+        except RuntimeError as exc:
+            self._set_notice("error", f"after stop: {exc}")
 
     def _act_apply_profile(self, params) -> str:
         if params.get("profile") is None:
@@ -862,7 +905,7 @@ class CoilServoChannel(Device):
         finally:
             try:
                 if self.board is not None:
-                    self._write(servo_enable=0, open_loop=0)
+                    self._stop_now()
             except (OSError, RuntimeError):
                 pass
             with self._lock:

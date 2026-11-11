@@ -627,6 +627,47 @@ def test_step_job_in_simulation(sim):
     wait_for(lambda: state(c)["state"] == "IDLE")
 
 
+def _run_open_loop(c, dev):
+    """Board RUNning in open loop (as a sweep, or another tool, leaves it)."""
+    assert act(c, "apply_profile", confirm=True, **MOT).status_code == 200
+    with dev._io:
+        dev.board.sync_shadow()
+        dev.board.write_cfg(sp_source=1, setpoint=0, open_loop=1,
+                            servo_enable=1)
+    assert act(c, "sim_arm", level=True).status_code == 200
+    wait_for(lambda: state(c)["state"] == "RUN")
+
+
+def test_stop_from_open_loop_leaves_it_once_idle(sim):
+    """Board.write_cfg defers open_loop 1 -> 0 until IDLE (PI wind-up);
+    STOP still works and the poll loop finishes the job afterwards."""
+    c, devices, _ = sim
+    dev = devices["mot"]
+    _run_open_loop(c, dev)
+    assert act(c, "stop").status_code == 200
+    wait_for(lambda: state(c)["state"] == "IDLE")
+    wait_for(lambda: dev.board.read_cfg()["open_loop"] == 0)
+    assert dev.board.read_cfg()["servo_enable"] == 0
+    assert dev.board.read_cfg()["int_clear"] == 0       # pulsed, not stuck
+
+
+def test_closed_loop_while_running_open_loop_says_stop_first(sim,
+                                                             monkeypatch):
+    c, devices, _ = sim
+    dev = devices["mot"]
+    _run_open_loop(c, dev)
+    # enable is normally refused outside IDLE already; take that check away
+    # to reach the board client's own guard
+    monkeypatch.setattr(dev, "_need_idle", lambda what: None)
+    r = act(c, "enable", confirm=True, **MOT)
+    assert r.status_code == 409
+    assert "press STOP and wait for IDLE" in r.json()["error"]
+    rb = dev.board.read_cfg()
+    assert rb["open_loop"] == 1 and state(c)["state"] == "RUN"
+    assert act(c, "stop").status_code == 200
+    wait_for(lambda: dev.board.read_cfg()["open_loop"] == 0)
+
+
 def test_step_by_counts_in_simulation(sim):
     c, devices, _ = sim
     assert act(c, "apply_profile", confirm=True, **MOT).status_code == 200

@@ -235,7 +235,13 @@ written to the action log with the client's IP address.
   the configured rate (50 A/ms on the MOT) and returns to IDLE. Always
   safe; also ends a running step or sweep. It does not open the bridge
   at current. STOP needs only a reachable board with the current
-  bitstream — never a valid profile.
+  bitstream — never a valid profile. If the board was in open loop (a
+  sweep, or another tool), it stays in open loop until IDLE is reached
+  and only then is switched back to closed loop with the integrator
+  cleared: the firmware's integrator keeps adding up in open loop, and
+  switching to closed loop while running would jump OUT1 (found on the
+  loopback, 2026-11-11). Anything that would switch to closed loop while
+  the board runs is refused with "press STOP and wait for IDLE first".
 - **Apply profile [mot]** (on the MOT card; **[mot_bench]** on Test
   setup) — writes that profile's configuration from `channels.toml`
   (gains, clamp, floor, trip, ramps, dither, and the board-LED pattern:
