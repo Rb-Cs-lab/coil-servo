@@ -17,7 +17,10 @@ def test_unit_conversions():
     assert i_meas_amps(-4096 * 128, 200.0) == pytest.approx(-100.0)
     assert counts_to_amps(4096, 200.0) == pytest.approx(100.0)
     model = load_channel("mot")["model"]
-    assert out1_volts(8192, model) == pytest.approx(model.out1_factor)
+    # measured OUT1 scale + resting offset (Test 1, 2026-11-11)
+    assert out1_volts(8192, model) == pytest.approx(model.out1_factor
+                                                    + model.out1_offset_volts)
+    assert out1_volts(0, model) == pytest.approx(model.out1_offset_volts)
 
 
 def test_decimated_decode_and_columns(tmp_path):

@@ -17,6 +17,7 @@ from cocotb.triggers import RisingEdge
 from coil_servo_model import (CHANNELS, FixedPI, Plant, adc_quantize,
                               encode_gain, output_mux_fixed)
 from coil_servo_model.analysis import overshoot_frac, settling_time, suggest_gains
+from coil_servo_model.fixed_point import SigmaDelta
 from coil_servo_model.loop import T_S
 from tb_util import reset, signed, start_clock
 
@@ -45,6 +46,16 @@ async def tick(dut, e, hold=False, clear=False):
     for _ in range(6):          # MUL, SHIFT, SUM, OUT + settle margin
         await RisingEdge(dut.aclk)
     return signed(dut.u14)
+
+
+def dithered_out1(sd, u14, resid, deadband):
+    """Mean OUT1 over one tick with the sigma-delta (servo_dither.v) on, as
+    the gate sees it -- mirrors run_loop(dither=True)."""
+    tot = 0
+    for _ in range(128):
+        ud = sd.step(u14, resid, FLOOR, CLAMP)
+        tot += output_mux_fixed(ud, deadband, out2_enable=False)[0]
+    return tot / 128
 
 
 def suggested():
@@ -210,7 +221,9 @@ async def closed_loop_step_meets_settling_spec(dut):
     """MOT channel, MVP plant, steps from zero with the RUN floor: the HDL-
     in-the-loop response must match the FixedPI reference exactly, never
     drive OUT2, and settle to 0.1 % in under 1 ms (BOOTSTRAP loop target).
-    50 A: plain step. 100 A: compliance-limited, rides the clamp."""
+    50 A: plain step. 100 A: compliance-limited, rides the clamp.
+    OUT1 goes through the sigma-delta (as on the board): with the measured
+    OUT1 scale one count is ~0.14 A, more than the 0.1 % band at 50 A."""
     cocotb.start_soon(start_clock(dut))
     dut.tick.value = 0
     gains = suggested()
@@ -225,6 +238,7 @@ async def closed_loop_step_meets_settling_spec(dut):
         golden = FixedPI(*gains, CLAMP, FLOOR)
         plant_hdl = Plant(MOT)
         plant_ref = Plant(MOT)
+        sd_hdl, sd_ref = SigmaDelta(), SigmaDelta()
         n_ticks = 1300           # 1.33 ms of loop time
         t_axis, i_trace = [], []
         sp_code = adc_quantize(target / MOT.I_FS)
@@ -234,11 +248,12 @@ async def closed_loop_step_meets_settling_spec(dut):
             u_hdl = await tick(dut, e_hdl)
             o1, o2 = output_mux_fixed(u_hdl, deadband, out2_enable=False)
             assert o2 == 0
+            o1 = dithered_out1(sd_hdl, u_hdl, signed(dut.resid), deadband)
             plant_hdl.step(o1 / 8192.0, 0.0, False, T_S)
 
             e_ref = (sp_code - adc_quantize(plant_ref.I / MOT.I_FS)) << 7
             u_ref = golden.step(e_ref)
-            r1, _ = output_mux_fixed(u_ref, deadband, out2_enable=False)
+            r1 = dithered_out1(sd_ref, u_ref, golden.resid, deadband)
             plant_ref.step(r1 / 8192.0, 0.0, False, T_S)
 
             assert u_hdl == u_ref, \

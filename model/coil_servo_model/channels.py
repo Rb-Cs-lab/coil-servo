@@ -48,9 +48,21 @@ class Channel:
     g_fs: float = 50.0           # per-FET transconductance in this regime [A/V] -- PROVISIONAL
     R_ballast: float = 0.030     # per-FET source ballast (Caddock MP930) [ohm]
     R_ds_on: float = 11e-3       # per-FET fully-on resistance [ohm] (datasheet, 10 V gate)
-    gain_opamp: float = 1.0 + 6.98 / 1.0   # OPA994 non-inverting stage, R_f 6.98k / R_g 1k
-    out1_terminated: bool = True  # OUT1 into 50 ohm? unterminated doubles the swing -- PROVISIONAL
-    V_opamp_max: float = 12.0    # op-amp output ceiling [V] -- PROVISIONAL (supply rail undocumented)
+    # OPA994 non-inverting stage, R_f 6.98k / R_g 1k (design 7.98).
+    # MEASURED 2026-11-11 (Test 1, gates #4/#10 vs op-amp input): 7.93.
+    gain_opamp: float = 7.93
+    # OUT1 into a 50 ohm feed-through at the op-amp input -- fitted 2026-11-11
+    # (unterminated doubles the swing).
+    out1_terminated: bool = True
+    # Volts at the op-amp input per full-scale normalized OUT1 unit and the
+    # resting offset at DAC code 0. None = the nominal 1 V (terminated) /
+    # 2 V (unterminated). MEASURED 2026-11-11, terminated: 142.6 uV/count
+    # = 1.168 V full scale (the Red Pitaya output runs ~17 % hot), -41.3 mV.
+    out1_fs_volts: float | None = 1.168
+    out1_offset_volts: float = -0.0413
+    # op-amp output ceiling [V]: rail-to-rail on its 5.184 V supply --
+    # MEASURED 2026-11-11 (gates clip at 5.17-5.18 V)
+    V_opamp_max: float = 5.18
     # Lumped lag between OUT1 and bank current: gate RC (24.9 ohm x 23 nF
     # = 0.57 us) + op-amp + LEM response. PROVISIONAL.
     tau_inner: float = 1.4e-6
@@ -107,13 +119,20 @@ class Channel:
     @property
     def out1_factor(self) -> float:
         """Volts at the op-amp input per normalized OUT1 unit (1.0 = full
-        DAC scale): 1 V into 50 ohm, about 2 V into a high impedance."""
+        DAC scale): the measured out1_fs_volts if set, else nominally 1 V
+        into 50 ohm, about 2 V into a high impedance."""
+        if self.out1_fs_volts is not None:
+            return self.out1_fs_volts
         return 1.0 if self.out1_terminated else 2.0
 
     def gate_command(self, u_out1: float) -> float:
         """Gate voltage commanded by a normalized OUT1 value [V]."""
-        v = u_out1 * self.out1_factor * self.gain_opamp
+        v = (u_out1 * self.out1_factor + self.out1_offset_volts) * self.gain_opamp
         return min(max(v, 0.0), self.V_opamp_max)
+
+    def out1_for_gate(self, V_gate: float) -> float:
+        """Normalized OUT1 that commands gate voltage V_gate."""
+        return (V_gate / self.gain_opamp - self.out1_offset_volts) / self.out1_factor
 
     def fet_currents(self, V_gate: float) -> list:
         """Per-FET current a gate voltage asks for, in the linear region:
@@ -138,7 +157,7 @@ class Channel:
     @property
     def dead_zone(self) -> float:
         """Normalized OUT1 below which no FET conducts."""
-        return min(self.V_th) / (self.gain_opamp * self.out1_factor)
+        return self.out1_for_gate(min(self.V_th))
 
     def out1_for_current(self, I: float) -> float:
         """Normalized OUT1 that asks the bank for current I (bisection)."""
@@ -151,7 +170,7 @@ class Channel:
                 lo = mid
             else:
                 hi = mid
-        return hi / (self.gain_opamp * self.out1_factor)
+        return self.out1_for_gate(hi)
 
     @property
     def clamp_counts(self) -> int:

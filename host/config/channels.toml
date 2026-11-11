@@ -29,23 +29,27 @@ I_rated = 100.0                 # amps
 V_rail = 5.0                    # SE-600-5 (refused above 6 V on the MOT)
 V_th = [3.52, 3.53, 3.52, 3.56, 3.50, 3.52]   # MEASURED 2026-11-02 (3 mA)
 g_fs = 50.0                     # A/V per FET in this regime -- PROVISIONAL
-gain_opamp = 7.98               # OPA994 stage, 1 + 6.98k/1k
-out1_terminated = true          # OUT1 into 50 ohm -- PROVISIONAL (check 3.2)
+gain_opamp = 7.93               # OPA994 stage: MEASURED 2026-11-11 (design 7.98)
+out1_terminated = true          # 50 ohm feed-through at the op-amp input (fitted 11-11)
+out1_fs_volts = 1.168           # V at the op-amp input per full-scale OUT1:
+                                # MEASURED 11-11, 142.6 uV/count terminated
+out1_offset_volts = -0.0413     # OUT1 at DAC code 0: MEASURED 11-11
+V_opamp_max = 5.18              # gate ceiling = op-amp rail (5.184 V supply), MEASURED
 R_burden = 10.0                 # ohm, LEM burden
 G_inamp = 1.0                   # AD8421 gain -- PROVISIONAL (1 -> I_FS 200 A)
 
 # --- derived-value overrides (uncomment once measured directly) ---
-# out_clamp_counts = 4474       # OUT1 command clamp (default: model, the
+# out_clamp_counts = 4144       # OUT1 command clamp (default: model, the
 #                               # command that asks for I_rated)
-# u_floor_counts = 3234         # RUN floor (default: floor_frac x dead zone)
+# u_floor_counts = 3047         # RUN floor (default: floor_frac x dead zone)
 floor_frac = 0.9                # floor at 90 % of the dead zone (decided)
 
 # --- loop ---
 # The commissioned loopback gains (kp 0.5, ki 15080/s) rescaled by the
-# model's plant gain G_pass/I_FS ~ 4.79 -- PROVISIONAL: set them from the
-# measured step response.
-kp = 0.1044
-ki = 3149.0                     # 1/s
+# model's plant gain G_pass/I_FS ~ 5.56 (with the OUT1 scale measured
+# 2026-11-11) -- PROVISIONAL: set them from the measured step response.
+kp = 0.0900
+ki = 2713.0                     # 1/s
 deadband_counts = 8             # PROVISIONAL
 dither_enable = 1               # OUT1 sigma-delta dither (decided)
 
@@ -106,8 +110,12 @@ V_th = [3.52, 3.53, 3.52, 3.56, 3.50, 3.52]   # MEASURED 2026-11-02 (3 mA)
 g_fs = 50.0                     # A/V per FET -- PROVISIONAL, and least
                                 # accurate here: <= 0.5 A per FET is near
                                 # threshold, where g_fs is lower
-gain_opamp = 7.98               # OPA994 stage, 1 + 6.98k/1k
-out1_terminated = true          # OUT1 into 50 ohm -- PROVISIONAL (check 3.2)
+gain_opamp = 7.93               # OPA994 stage: MEASURED 2026-11-11 (design 7.98)
+out1_terminated = true          # 50 ohm feed-through at the op-amp input (fitted 11-11)
+out1_fs_volts = 1.168           # V at the op-amp input per full-scale OUT1:
+                                # MEASURED 11-11, 142.6 uV/count terminated
+out1_offset_volts = -0.0413     # OUT1 at DAC code 0: MEASURED 11-11
+V_opamp_max = 5.18              # gate ceiling = op-amp rail (5.184 V supply), MEASURED
 R_burden = 10.0                 # ohm, LEM burden
 lem_turns = 1                   # 4/0 lead through the LEM once
 
@@ -142,16 +150,16 @@ floor_frac = 0.9                # floor at 90 % of the dead zone (decided)
 # --- loop ---
 # Gains in OUT1 counts per amp of error, so they do not depend on G_inamp
 # (the loader converts them for the sensor scale in use). These are
-# analysis.suggest_gains for the model bank -- equal to [mot]'s kp 0.1044 /
-# ki 3149/s at G_inamp = 1. PROVISIONAL: from the measured slope s (amps
+# analysis.suggest_gains for the model bank -- equal to [mot]'s kp 0.0900 /
+# ki 2713/s at G_inamp = 1. PROVISIONAL: from the measured slope s (amps
 # per OUT1 count, bench_supply_test.md 4.2) set kp = 0.5/s, ki = 15.08/s.
 # If the real gain near threshold is lower, these give a slower but still
 # stable loop.
-kp_counts_per_amp = 4.2774
-ki_counts_per_amp_ms = 129.00
+kp_counts_per_amp = 3.6852
+ki_counts_per_amp_ms = 111.14
 deadband_counts = 8             # PROVISIONAL
-dither_enable = 1               # OUT1 dither: one OUT1 count is ~0.12 A,
-                                # ~5 % of a 2.5 A hold
+dither_enable = 1               # OUT1 dither: one OUT1 count is ~0.14 A,
+                                # ~6 % of a 2.5 A hold
 
 # --- protection ---
 trip_amps = 2.8                 # firmware trip: above every allowed setpoint
@@ -204,13 +212,16 @@ I_rated = 60.0
 V_rail = 5.0                    # PLACEHOLDER
 V_th = [3.52, 3.53, 3.52, 3.56, 3.50, 3.52]   # PLACEHOLDER (MOT parts)
 g_fs = 50.0
-gain_opamp = 7.98
+gain_opamp = 7.93
 out1_terminated = true
+out1_fs_volts = 1.168
+out1_offset_volts = -0.0413
+V_opamp_max = 5.18
 R_burden = 10.0
 G_inamp = 1.0
 floor_frac = 0.9
-kp = 0.1044
-ki = 3149.0
+kp = 0.0900
+ki = 2713.0
 deadband_counts = 8
 dither_enable = 1
 trip_amps = 60.0
@@ -234,13 +245,16 @@ I_rated = 60.0
 V_rail = 5.0                    # PLACEHOLDER
 V_th = [3.52, 3.53, 3.52, 3.56, 3.50, 3.52]   # PLACEHOLDER (MOT parts)
 g_fs = 50.0
-gain_opamp = 7.98
+gain_opamp = 7.93
 out1_terminated = true
+out1_fs_volts = 1.168
+out1_offset_volts = -0.0413
+V_opamp_max = 5.18
 R_burden = 10.0
 G_inamp = 1.0
 floor_frac = 0.9
-kp = 0.1044
-ki = 3149.0
+kp = 0.0900
+ki = 2713.0
 deadband_counts = 8
 dither_enable = 1
 trip_amps = 60.0
@@ -264,13 +278,16 @@ I_rated = 60.0
 V_rail = 5.0                    # PLACEHOLDER
 V_th = [3.52, 3.53, 3.52, 3.56, 3.50, 3.52]   # PLACEHOLDER (MOT parts)
 g_fs = 50.0
-gain_opamp = 7.98
+gain_opamp = 7.93
 out1_terminated = true
+out1_fs_volts = 1.168
+out1_offset_volts = -0.0413
+V_opamp_max = 5.18
 R_burden = 10.0
 G_inamp = 1.0
 floor_frac = 0.9
-kp = 0.1044
-ki = 3149.0
+kp = 0.0900
+ki = 2713.0
 deadband_counts = 8
 dither_enable = 1
 trip_amps = 60.0

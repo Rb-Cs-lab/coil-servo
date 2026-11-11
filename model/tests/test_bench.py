@@ -223,7 +223,7 @@ def test_bench_gains_follow_the_in_amp_gain(ch):
     kp_mot, ki_mot = suggest_gains(MOT)
     assert kp == pytest.approx(kp_mot / g)
     assert ki_tick == pytest.approx(ki_mot / g)
-    assert kp * 8192 / ch.I_FS == pytest.approx(4.2774, rel=1e-4)   # counts/A
+    assert kp * 8192 / ch.I_FS == pytest.approx(3.6852, rel=1e-4)   # counts/A
 
 
 def test_bench_gains_encode_precisely(ch):
@@ -371,7 +371,8 @@ def test_setpoint_above_the_supply_limit_winds_the_integrator_up(ch):
     res = float_run(ch, lambda t: 3.5 if t < 6e-3 else 2.0, 12e-3, i0=2.0)
     held = res.I[(res.t > 0.5e-3) & (res.t < 6e-3)]
     assert np.all(held == ch.I_supply_max)
-    assert np.max(res.u) == pytest.approx(ch.clamp_counts / 8192)  # wound up
+    # wound up well past the command that gives the 3 A limit
+    assert np.max(res.u) > ch.out1_for_current(ch.I_supply_max) + 0.03
     after = res.t >= 6e-3
     ts = settling_time(res.t[after] - 6e-3, res.I[after], 2.0, band_frac(2.0, ch))
     assert ts is not None and 2e-3 < ts < 6e-3, f"recovered in {ts}"

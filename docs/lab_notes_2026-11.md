@@ -251,3 +251,24 @@ bar; high-current side open. Open loop, OUT1 swept 0–4474 counts
   volts/count and the offset, matches `out1_terminated = true`), re-run the
   sweep, then put the measured OUT1 scale/offset and the 5.18 V ceiling into
   channels.toml.
+
+### Test 1b — re-run with the 50 Ω terminator (11-11)
+
+50 Ω BNC feed-through fitted at the op-amp input, sweep repeated
+(logs/t1_gate_sweep_terminated.json):
+
+- **OUT1 at the op-amp input: 142.6 µV per count (1.168 V full scale),
+  −41.3 mV at code 0.** Terminated, but the Red Pitaya output still runs
+  ~17 % above the nominal 1 V.
+- **Op-amp gain 7.93**, gate ceiling 5.18 V (unchanged).
+- **Into channels.toml (all profiles):** `out1_fs_volts = 1.168`,
+  `out1_offset_volts = -0.0413`, `gain_opamp = 7.93`, `V_opamp_max = 5.18`.
+  The host now derives from these: **dead zone 3385 counts, RUN floor 3047,
+  clamp 4144 (100 A)**, normalised plant gain 5.56. The clamp now sits below
+  the op-amp rail (~4870 counts), so it acts again.
+- **PI gains rescaled** to the new plant gain: kp 0.0900, ki 2713 /s
+  (bench profile: 3.6852 counts/A, 111.14 counts/A/ms). Still loopback-
+  derived — set them from the measured step response in Test 3.
+- One OUT1 count is now ≈ 0.14 A of bank current (model): more than the
+  ±0.1 % band at 50 A, so **dither_enable stays on** for every hold. The
+  simulation tests now run the 50 A settling checks with dither on.

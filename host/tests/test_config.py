@@ -57,8 +57,10 @@ def test_loads_and_derives_from_the_model(name):
 
 def test_mot_values():
     cfg = load_channel("mot")["cfg"]
-    assert cfg["out_clamp"] == 4474
-    assert cfg["u_floor"] == 3234
+    # OUT1 measured 2026-11-11 (Test 1): 142.6 uV/count terminated,
+    # -41.3 mV at code 0, op-amp gain 7.93
+    assert cfg["out_clamp"] == 4144
+    assert cfg["u_floor"] == 3047
     assert cfg["trip_level"] == 4096               # 100 A
     assert cfg["trip_timeout"] == 375_000          # 3 ms
     assert cfg["zero_win"] == round(0.5 / 200.0 * 8192)   # 20 counts
@@ -179,7 +181,7 @@ def test_bench_profile_loads_and_matches_the_model(tmp_path, g_inamp):
 
     # OUT1-side values do not depend on the sensor: clamp 4000, floor 90 %
     assert cfg["out_clamp"] == 4000 == m.clamp_counts
-    assert cfg["u_floor"] == round(0.9 * m.dead_zone * 8192) == 3234
+    assert cfg["u_floor"] == round(0.9 * m.dead_zone * 8192) == 3047
 
     # amps-denominated values follow the scale automatically
     assert cfg["slew_up"] == slew_rate_code(200e3, i_fs)
@@ -272,8 +274,8 @@ def test_bench_flag_and_supply_limit_go_together(tmp_path):
 def test_gains_in_counts_per_amp(tmp_path):
     # the I_FS-independent form: same physical loop at any sensor scale
     base = BASE_TOML.replace("kp = 0.1044\nki = 3149.0\n",
-                             "kp_counts_per_amp = 4.2774\n"
-                             "ki_counts_per_amp_ms = 129.0\n")
+                             "kp_counts_per_amp = 3.6852\n"
+                             "ki_counts_per_amp_ms = 111.14\n")
     for g in (1.0, 2.0):
         p = tmp_path / f"g{g}.toml"
         p.write_text(base.format(name="mot", i_rated=90.0, v_rail=5.0,
@@ -286,8 +288,8 @@ def test_gains_in_counts_per_amp(tmp_path):
         assert decode_gain(c["kp_mant"], c["kp_shift"]) == pytest.approx(kp, rel=1e-3)
         assert decode_gain(c["ki_mant"], c["ki_shift"]) == pytest.approx(ki_tick, rel=1e-3)
     # both forms at once is refused
-    p = write_toml(tmp_path, extra="kp_counts_per_amp = 4.2774\n"
-                                   "ki_counts_per_amp_ms = 129.0\n")
+    p = write_toml(tmp_path, extra="kp_counts_per_amp = 3.6852\n"
+                                   "ki_counts_per_amp_ms = 111.14\n")
     with pytest.raises(ValueError):
         load_channel("mot", path=p)
 

@@ -48,7 +48,7 @@ class Plant:
         self.bridge_enabled = True
         if i0 > 0.0:
             # start in steady state: gate already asking for i0
-            self.V_gate = channel.out1_for_current(i0) * channel.gain_opamp * channel.out1_factor
+            self.V_gate = channel.gate_command(channel.out1_for_current(i0))
         else:
             self.V_gate = 0.0
 

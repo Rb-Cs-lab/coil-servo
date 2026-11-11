@@ -173,7 +173,8 @@ def test_status_polling_and_unit_conversion(mock_server, tmp_path):
         assert s["i_amps"] == pytest.approx(50.0)
         assert s["sp_amps"] == pytest.approx(-25.0)
         assert s["u14"] == 4096
-        assert s["out1_volts"] == pytest.approx(0.5 * ch["model"].out1_factor)
+        assert s["out1_volts"] == pytest.approx(
+            0.5 * ch["model"].out1_factor + ch["model"].out1_offset_volts, abs=1e-5)
         assert s["pi_volts"] == s["out1_volts"] and s["out1_mode"] == "closed"
         assert s["flags"]["armed"] and s["flags"]["bridge_en"]
         # the mock board was never configured: amber, not red
@@ -203,15 +204,19 @@ def test_simulated_run_through_the_api(sim):
     wait_for(lambda: abs(state(c)["i_amps"] - 40) < 0.2)
     s = state(c)
     assert s["sp_amps"] == pytest.approx(40, abs=0.05)
+    mot_model = devices["mot"].models["mot"]
     assert s["pi_volts"] == pytest.approx(
-        s["u14"] / 8192 * devices["mot"].models["mot"].out1_factor, abs=1e-4)
+        s["u14"] / 8192 * mot_model.out1_factor + mot_model.out1_offset_volts,
+        abs=1e-4)
     assert s["out1_mode"] == "closed" and s["out1_counts"] == s["u14"]
     r = act(c, "setpoint", amps=100.5, confirm=True, **MOT)  # above rated
     assert r.status_code == 400 and "rated" in r.json()["error"]
     assert act(c, "stop").status_code == 200
     wait_for(lambda: state(c)["state"] == "IDLE")
     s = state(c)                     # bridge open: OUT1 is 0 whatever u14 is
-    assert s["out1_mode"] == "off" and s["out1_volts"] == 0
+    # DAC code 0; the volts show the measured resting offset (-41 mV)
+    assert s["out1_mode"] == "off" and s["out1_counts"] == 0
+    assert s["out1_volts"] == pytest.approx(mot_model.out1_offset_volts, abs=1e-5)
     assert set(c.get("/api/devices/mot/history?span=60").json()) >= {
         "out1_volts", "pi_volts"}
 

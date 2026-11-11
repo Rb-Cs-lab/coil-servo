@@ -43,7 +43,8 @@ RAIL_LIMIT_DEFAULT = 10.0
 
 # channels.toml keys that override model Channel fields
 PHYSICS_KEYS = ("I_rated", "V_rail", "V_th", "g_fs", "gain_opamp",
-                "out1_terminated", "R_burden", "G_inamp", "lem_turns",
+                "out1_terminated", "out1_fs_volts", "out1_offset_volts",
+                "V_opamp_max", "R_burden", "G_inamp", "lem_turns",
                 "I_supply_max")
 
 
@@ -65,7 +66,7 @@ def i_meas_amps(i_meas: int, i_fs: float) -> float:
 def out1_volts(u14: int, model: Channel) -> float:
     """PI output u14 (OUT1 DAC counts) -> volts at the op-amp input (1 V
     full scale into 50 ohm, about 2 V unterminated)."""
-    return u14 / 8192 * model.out1_factor
+    return u14 / 8192 * model.out1_factor + model.out1_offset_volts
 
 
 def channel_names(path: Path = CONFIG_PATH) -> list:
@@ -90,7 +91,8 @@ def build_model(name: str, table: dict) -> Channel:
     if "V_th" in over:
         over["V_th"] = tuple(float(v) for v in over["V_th"])
     for k in ("I_rated", "V_rail", "g_fs", "gain_opamp", "R_burden", "G_inamp",
-              "I_supply_max"):
+              "I_supply_max", "out1_fs_volts", "out1_offset_volts",
+              "V_opamp_max"):
         if k in over:
             over[k] = float(over[k])
     if "out1_terminated" in over:
@@ -345,12 +347,12 @@ def summary_rows(ch: dict) -> list:
          f"(OUT1 {'terminated' if m.out1_terminated else 'UNterminated'}; "
          f"plant gain {m.G_pass / m.I_FS:.2f}; one OUT1 count "
          f"~ {m.G_pass / 8192 * 1e3:.0f} mA)"),
-        ("dead zone", f"{m.dead_zone * f:.3f} V at OUT1 "
+        ("dead zone", f"{m.dead_zone * f + m.out1_offset_volts:.3f} V at OUT1 "
          f"({min(m.V_th):.2f} V gate, {m.dead_zone * 8192:.0f} counts)"),
         ("RUN floor", f"{c['u_floor']} counts "
-         f"({c['u_floor'] / 8192 * f:.3f} V at OUT1)"),
+         f"({c['u_floor'] / 8192 * f + m.out1_offset_volts:.3f} V at OUT1)"),
         ("OUT1 command clamp", f"{c['out_clamp']} counts "
-         f"({c['out_clamp'] / 8192 * f:.3f} V at OUT1; limits the command, "
+         f"({c['out_clamp'] / 8192 * f + m.out1_offset_volts:.3f} V at OUT1; limits the command, "
          f"not the current)"),
         ("over-current trip", f"{c['trip_level'] * m.amps_per_lsb:.4g} A "
          f"({c['trip_level']} counts) for {c['trip_ticks']} samples"),

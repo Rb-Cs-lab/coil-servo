@@ -323,12 +323,15 @@ async def floor_holds_out1_below_the_dead_zone_in_run_only(dut):
 @cocotb.test()
 async def closed_loop_step_settles(dut):
     """Arm, command 50 A via the setpoint register: settles to 0.1 % in
-    < 1 ms through the full HDL chain, OUT1 only, no overshoot."""
-    await setup(dut, run_cfg(setpoint=0))
+    < 1 ms through the full HDL chain, OUT1 only, no overshoot. Dither on
+    (as on the board): with the measured OUT1 scale one count is ~0.14 A,
+    more than the 0.1 % band at 50 A."""
+    await setup(dut, run_cfg(setpoint=0, dither_enable=1))
     await arm(dut)
     assert sts(dut)["fsm_state_name"] == "RUN"
 
-    world = World(dut, sp_amps=50.0)
+    world = World(dut, sp_amps=50.0, average=True,
+                  cfg_extra=dict(dither_enable=1))
     trace_t, trace_i = [], []
     for _ in range(1300):                       # 1.33 ms
         o1 = await world.tick()
@@ -373,7 +376,7 @@ async def slew_limited_steps_neither_overshoot_nor_undershoot(dut):
         tr_i.append(world.plant.I)
     assert min(tr_i) > 0.99 * 20.0, f"undershoot to {min(tr_i):.2f} A"
     # band +-0.1 A (0.1 % of rated): +-0.1 % of 20 A is 20 mA, below one
-    # OUT1 count of the gain-8 stage (test_actuator_resolution_dither)
+    # OUT1 count (~0.14 A, test_actuator_resolution_dither)
     ts = settling_time(tr_t, tr_i, 20.0, tol_frac=0.1 / 20.0)
     assert ts is not None and ts < 1.0e-3 + 1e-3, f"settled in {ts}"
 

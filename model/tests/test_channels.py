@@ -31,8 +31,11 @@ def test_mvp_sensing_scale():
 
 def test_mvp_measured_thresholds_and_dead_zone():
     assert MOT.V_th == VTH_INSTALLED == (3.52, 3.53, 3.52, 3.56, 3.50, 3.52)
-    # gain-8 op-amp, terminated OUT1: no FET conducts below ~0.44 of full scale
-    assert MOT.dead_zone == pytest.approx(3.50 / 7.98, rel=1e-6)
+    # gain-7.93 op-amp, terminated OUT1 measured at 1.168 V full scale and
+    # -41.3 mV at code 0 (2026-11-11): no FET conducts below ~0.41 of
+    # full scale (3385 counts)
+    assert MOT.dead_zone == pytest.approx((3.50 / 7.93 + 0.0413) / 1.168, rel=1e-6)
+    assert round(MOT.dead_zone * 8192) == 3385
 
 
 def test_mvp_command_clamp_asks_for_rated_current():

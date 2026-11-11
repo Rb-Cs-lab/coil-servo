@@ -117,17 +117,19 @@ def test_output_mux_fixed_exclusive():
 def test_fixed_matches_float_closed_loop(target):
     """The bit-exact path must reproduce the float reference within
     quantization: same step from zero, same (quantized) gains and floor,
-    same MVP plant. (Below ~50 A one OUT1 count is more than the 0.1 % band
-    -- see test_actuator_resolution_dither.)"""
+    same MVP plant. With the measured OUT1 scale (2026-11-11) one OUT1
+    count is ~0.14 A, more than the 0.1 % band at 50 A, so both run with the
+    OUT1 sigma-delta on (as on the board) -- see
+    test_actuator_resolution_dither."""
     (kp_m, kp_s, ki_m, ki_s), (kp_q, ki_q) = quantized_gains(MOT)
     sp = lambda t: target
 
     f_res = run_loop(MOT, FloatPI(kp_q, ki_q, MOT.clamp_counts / 8192.0,
                                   floor=FLOOR / 8192.0),
-                     DEADBAND_COUNTS, 2e-3, sp)
+                     DEADBAND_COUNTS, 2e-3, sp, dither=True)
     x_res = run_loop(MOT, FixedPI(kp_m, kp_s, ki_m, ki_s, MOT.clamp_counts,
                                   FLOOR),
-                     DEADBAND_COUNTS, 2e-3, sp)
+                     DEADBAND_COUNTS, 2e-3, sp, dither=True)
 
     for res in (f_res, x_res):
         ts = settling_time(res.t, res.I, target)
@@ -147,7 +149,7 @@ def test_fixed_steady_state_within_one_lsb():
     pi = FixedPI(kp_m, kp_s, ki_m, ki_s, MOT.clamp_counts, FLOOR)
     pi.acc = round(MOT.out1_for_current(50.0) * 8192) << (7 + ki_s)
     res = run_loop(MOT, pi, DEADBAND_COUNTS, 2e-3, lambda t: 50.0,
-                   plant=Plant(MOT, i0=50.0))
+                   plant=Plant(MOT, i0=50.0), dither=True)
     tail = res.I[-500:]
     sp_quantized = adc_quantize(50.0 / MOT.I_FS) * MOT.amps_per_lsb
     assert np.all(np.abs(tail - sp_quantized) < 1.5 * MOT.amps_per_lsb)
