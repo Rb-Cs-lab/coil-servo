@@ -16,3 +16,5 @@ uImage
 __pycache__
 *.egg-info
 sim/sim_build
+# dashboard logs and captures (python -m coil_servo_host.dashboard)
+logs/
