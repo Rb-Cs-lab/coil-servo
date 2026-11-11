@@ -140,3 +140,8 @@ Redeployed; heartbeat back.
 - Corrected operating rule (also in all docs, commit 5493db89): stop the
   servo (`servo_enable` = 0, IDLE) before pressing reset — dropping arm
   alone does not stop a running servo.
+- **Acceptance test passed** after the fix (all 8 steps of bringup.md 3a
+  in the corrected order): arm-before-enable stays IDLE; arm edge → RUN;
+  heartbeat pulled → red latched; re-plugged → red stays, amber off; stop →
+  IDLE; reset → amber stays off; re-enable + arm edge → RUN; stop → IDLE.
+  The logic board passes with the MVP firmware.
