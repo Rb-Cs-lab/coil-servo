@@ -108,3 +108,35 @@ heartbeat ADVANCING, board settings UNKNOWN before (expected after a load),
 not armed, not tripped. Measured current at zero with nothing on IN1:
 **+0.189 A** (≈ 1 mV, the Red Pitaya's own input offset; positive = the
 safe direction for the trip). Re-measure with the LEM chain connected.
+
+## Logic-board acceptance test with the MVP firmware (11-11) — latch fault found and fixed
+
+Board only (power stage off). After a Red Pitaya power cycle the bitstream
+was gone: no heartbeat (E1 pin 15 read 0.3 V instead of ~1.6 V average),
+green off, latch held tripped — the safety chain working as designed.
+Redeployed; heartbeat back.
+
+- **Arm-edge rule confirmed on hardware:** arm jumper (pin 11) in *before*
+  `servo_enable` = 1 → stays IDLE, amber off; unplug/replug → RUN, amber on.
+- **Fault: the latch did not latch.** Pulling the heartbeat turned green
+  and amber off but red stayed off, and re-plugging it brought amber back
+  on by itself. Diagnosis by meter: the latch (74HC74 half 1) trips on a
+  rising edge at CLK (pin 3) with D (pin 2) held high — a probe touch on
+  pin 3 tripped it — and the monostable's 1Q̄ (CD74HC123 pin 4) rises when
+  the heartbeat is lost, but **74HC74 pin 3 had no wire at all** (floating,
+  ~0.4–0.6 V). Likely a wire that came loose after the 11-03 test.
+- **Fix:** wire CD74HC123 pin 4 → 74HC74 pin 3. Re-test: pull heartbeat →
+  green off, amber off, red on; re-plug → green on, red stays on, amber
+  stays off. ✓
+- **Design weakness to review (not fixed):** the trip is *edge*-triggered.
+  Pressing reset while the heartbeat is still absent clears the latch, and
+  when the heartbeat returns there is no new edge, so the bridge enables
+  without another reset. A level-sensitive trip (monostable output on the
+  latch's asynchronous preset/clear) would prevent that. Until reviewed:
+  **only press reset with the heartbeat present (green on), and only after
+  stopping the servo.**
+- Measured on the way: CD74HC123 half 1 is the watchdog (pin 13 1Q = 3.3 V
+  with heartbeat, 0 V without; pin 4 1Q̄ the inverse); half 2 idle.
+- Corrected operating rule (also in all docs, commit 5493db89): stop the
+  servo (`servo_enable` = 0, IDLE) before pressing reset — dropping arm
+  alone does not stop a running servo.
