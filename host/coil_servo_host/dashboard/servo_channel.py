@@ -26,13 +26,15 @@ import threading
 import time
 from collections import deque
 
-from coil_servo_model.registers import CFG_FIELDS, MAP_REV
+from coil_servo_model.registers import CFG_FIELDS, MAP_REV, build_id_text
 
 from .. import step as step_tool
 from .. import sweep as sweep_tool
+from .. import zero as zero_tool
 from ..capture import FS_DEC, decimated_columns, decode_words, write_csv
 from ..config import (CONFIG_PATH, PROFILE_MATCH_KEYS, counts_to_amps,
-                      i_meas_amps, out1_volts, summary_header, summary_rows)
+                      i_meas_amps, load_channel, out1_volts, summary_header,
+                      summary_rows)
 from .device import ActionError, ActionSpec, Device
 from .logs import StatusLog, capture_path, prune_auto_captures
 
@@ -54,6 +56,16 @@ LATCH_HOLD_S = 0.2
 
 # actions still accepted while the control computer owns the coil
 SEQUENCE_OK = ("stop", "capture", "auto_capture")
+
+# zero calibration (coil_servo_host.zero): an IN1 offset above this is
+# worth a loud warning (a magnetised LEM read ~ -5.8 A on 2026-11-11); one
+# above ZERO_REFUSE_FRAC of the sensor full scale is a broken or saturated
+# sensor, not an offset (config.load_channel refuses it too)
+ZERO_WARN_AMPS = 0.3
+ZERO_REFUSE_FRAC = 0.1
+ZERO_CONDITIONS = ("servo stopped (IDLE, bridge disabled: no coil current); "
+                   "LEM powered (+-15 V) and warmed up; the control "
+                   "computer's setpoint output (IN2) at 0 V")
 
 PROFILE_PARAM = {"profile": "channels.toml profile to act as (default: the "
                             "one the board holds)"}
@@ -102,6 +114,22 @@ ACTIONS = {a.name: a for a in [
                dict(PROFILE_PARAM,
                     min_stim="ignore stimulus below this many amps "
                              "(default 0.05)")),
+    ActionSpec("zero_cal", "Zero calibration", "control", True,
+               "As `python -m coil_servo_host.zero`: record the raw IN1/IN2 "
+               "readings with no current flowing (8 records over ~1 s) and "
+               "show the zero offsets. Only in IDLE with the bridge "
+               "disabled. Conditions: " + ZERO_CONDITIONS + ". Changes "
+               "nothing by itself.", dict(PROFILE_PARAM)),
+    ActionSpec("zero_store", "Store zero offsets in channels.toml", "control",
+               True, "Write the last zero calibration into the measured "
+               "profile's in1_offset_amps / in2_offset_amps in "
+               "channels.toml (comments kept). Takes effect on the board "
+               "with Apply profile (or Load into board)."),
+    ActionSpec("zero_load", "Load zero offsets into the board", "control",
+               True, "Write the last zero calibration to CFG in1_offset / "
+               "in2_offset now; the FPGA subtracts them from every IN1/IN2 "
+               "sample. Only in IDLE. Not stored: Apply profile puts "
+               "channels.toml's values back."),
     ActionSpec("capture", "Capture now", "capture", False,
                "Record 16.8 ms of measured current and setpoint "
                "(976.6 kS/s) and save it as CSV. Does not touch the loop."),
@@ -147,6 +175,24 @@ def out1_actual(s: dict, rb: dict | None) -> tuple[int, str]:
         u, mode = s["u14"], "closed"
     db = rb["deadband"] if rb is not None else 0
     return (u if u > db else 0), mode
+
+
+class _LockedBoard:
+    """The two Board calls zero.measure_offsets makes, each under the
+    device's board lock -- so the status poll keeps running between the
+    records instead of waiting ~1 s for the whole calibration."""
+
+    def __init__(self, dev):
+        self._dev = dev
+
+    def sts(self) -> dict:
+        with self._dev._io:
+            return self._dev.board.sts()
+
+    def capture(self, decimated: bool):
+        with self._dev._io:
+            self._dev.board.sync_shadow()
+            return self._dev.board.capture(decimated=decimated)
 
 
 class CoilServoChannel(Device):
@@ -207,6 +253,7 @@ class CoilServoChannel(Device):
         self._job_cancel = threading.Event()
         self._finish_stop = False             # see _stop_now / _maybe_finish_stop
         self._out1 = (0, "off")               # (counts, mode), out1_actual
+        self.zero_result = None               # the last zero calibration
         self._capture_lock = threading.Lock()
         self.capture = None
         self.capture_seq = 0
@@ -470,11 +517,48 @@ class CoilServoChannel(Device):
         note = self._scale_note()
         if note:
             amber.append(note)
+        amber.extend(self._offset_warnings())
         if s["out_sat"]:
             amber.append("OUT1 at the command clamp")
         if s["int_railed"]:
             amber.append("integrator railed")
         return red, amber
+
+    def _profile_offsets(self, name: str) -> dict | None:
+        """A profile's configured zero offsets (channels.toml), or None."""
+        ch = self.profiles.get(name)
+        if not ch or "in1_offset" not in ch["cfg"]:
+            return None
+        lsb = ch["i_fs"] / 8192
+        c = ch["cfg"]
+        return {"in1": c["in1_offset"], "in2": c["in2_offset"],
+                "in1_amps": _f(c["in1_offset"] * lsb),
+                "in2_amps": _f(c["in2_offset"] * lsb)}
+
+    def _offset_warnings(self) -> list:
+        """Amber: IN1 never calibrated; the board's offsets differ from
+        channels.toml for the profile it holds."""
+        s, rb = self.sts, self.readback
+        if s is None or rb is None or s["map_rev"] != MAP_REV:
+            return []
+        name = self.scale_profile()
+        off = self._profile_offsets(name) if name else None
+        if off is None:
+            return []
+        out = []
+        if off["in1"] == 0:
+            out.append(f"IN1 not calibrated ([{name}] in1_offset_amps = 0 in "
+                       f"channels.toml): every current reading includes the "
+                       f"sensor's zero offset. Run the zero calibration with "
+                       f"the servo stopped.")
+        if name in self.held and (rb["in1_offset"], rb["in2_offset"]) != (
+                off["in1"], off["in2"]):
+            out.append(f"zero offsets on the board (IN1 {rb['in1_offset']:+d},"
+                       f" IN2 {rb['in2_offset']:+d} counts) differ from "
+                       f"channels.toml [{name}] (IN1 {off['in1']:+d}, IN2 "
+                       f"{off['in2']:+d}): loaded by hand and not stored? "
+                       f"Apply profile restores the stored ones.")
+        return out
 
     def snapshot(self) -> dict:
         scale = self.scale_profile()
@@ -500,6 +584,7 @@ class CoilServoChannel(Device):
                     "i_rated": self._rated(k),
                     "i_supply_max": (self.models[k].I_supply_max
                                      if k in self.models else None),
+                    "offsets": self._profile_offsets(k),
                     "error": self.profile_errors.get(k)} for k in self.order],
                 "held": list(self.held),
                 "scale_profile": scale,
@@ -511,6 +596,8 @@ class CoilServoChannel(Device):
                 "notice": self.notice,
                 "capture_seq": self.capture_seq,
                 "auto_capture_s": self.auto_capture_s,
+                "zero": self.zero_result,
+                "zero_conditions": ZERO_CONDITIONS,
             }
             if self.pending:
                 left = self.pending["deadline"] - time.monotonic()
@@ -525,6 +612,10 @@ class CoilServoChannel(Device):
                     "flags": {k: bool(s[k]) for k in FLAG_NAMES},
                     "map_rev": s["map_rev"],
                     "map_ok": s["map_rev"] == MAP_REV,
+                    "build_id": s.get("build_id", 0),
+                    "build_text": (build_id_text(s.get("build_id", 0))
+                                   if s["map_rev"] == MAP_REV else
+                                   "unknown (other register map)"),
                     "heartbeat_alive": self._heartbeat_alive(),
                     "i_amps": _f(i_meas_amps(s["i_meas"], i_fs)),
                     "sp_amps": _f(counts_to_amps(s["sp_active"], i_fs)),
@@ -536,6 +627,11 @@ class CoilServoChannel(Device):
                 })
             rb = self.readback
             if rb is not None and i_fs:
+                if s is not None and s["map_rev"] == MAP_REV:
+                    out["offsets_board"] = {
+                        "in1": rb["in1_offset"], "in2": rb["in2_offset"],
+                        "in1_amps": _f(counts_to_amps(rb["in1_offset"], i_fs)),
+                        "in2_amps": _f(counts_to_amps(rb["in2_offset"], i_fs))}
                 out["mode"] = {
                     "servo_enable": rb["servo_enable"],
                     "sp_source": "register" if rb["sp_source"] else "in2",
@@ -828,6 +924,113 @@ class CoilServoChannel(Device):
             raise ActionError(str(exc), 400) from None
         self._write(setpoint=counts)
         return f"setpoint {amps:g} A ({counts} counts, as [{name}])"
+
+    # ---- zero calibration ---------------------------------------------------
+    def _act_zero_cal(self, params) -> str:
+        name, ch = self._profile(params, must_be_held=False)
+        self._need_idle("a zero calibration")
+        with self._lock:
+            s = self.sts
+        if s is None or s["bridge_en"]:
+            raise ActionError("a zero calibration needs the bridge disabled "
+                              "(no coil current): stop first")
+        if self._capture_lock.locked():
+            raise ActionError("a capture is running; try again in a moment")
+        self._start_job("zero", self._job_zero, name, ch)
+        return (f"zero calibration started as [{name}]: 8 raw records over "
+                f"~1 s, nothing is changed yet")
+
+    def _job_zero(self, name: str, ch: dict) -> None:
+        if not self._capture_lock.acquire(timeout=5):
+            raise RuntimeError("a capture is running")
+        try:
+            self._job_phase("measuring: raw IN1/IN2, 8 records over ~1 s")
+            r = zero_tool.measure_offsets(_LockedBoard(self), ch["i_fs"])
+            with self._io:
+                s = self.board.sts()
+        finally:
+            self._capture_lock.release()
+        if s["fsm_state_name"] not in ("IDLE", "TRIPPED") or s["bridge_en"]:
+            raise RuntimeError(f"the servo started during the calibration "
+                               f"(state {s['fsm_state_name']}): result "
+                               f"discarded")
+        r = self._judge_zero(r, name, ch["i_fs"])
+        with self._lock:
+            self.zero_result = r
+        self._job_phase(f"done: IN1 {r['in1_amps']:+.3f} A, IN2 "
+                        f"{r['in2_amps']:+.3f} A", result=r)
+        self._event("zero_done", json.dumps(
+            {k: r[k] for k in ("profile", "in1_amps", "in2_amps",
+                               "in1_spread_counts", "in2_spread_counts")}))
+
+    @staticmethod
+    def _judge_zero(r: dict, name: str, i_fs: float) -> dict:
+        r = {k: _f(v, 4) for k, v in r.items()}
+        r.update(profile=name, t=time.time(), i_fs=i_fs,
+                 lsb_amps=i_fs / 8192,
+                 in1_offset=round(r["in1_counts"]),
+                 in2_offset=round(r["in2_counts"]),
+                 warning=None, refused=None, stored=False, loaded=False)
+        big = [k for k in ("in1", "in2")
+               if abs(r[f"{k}_amps"]) > ZERO_REFUSE_FRAC * i_fs]
+        if big:
+            r["refused"] = (f"{' and '.join(k.upper() for k in big)} offset "
+                            f"above {ZERO_REFUSE_FRAC:.0%} of full scale "
+                            f"({ZERO_REFUSE_FRAC * i_fs:g} A): a broken, "
+                            f"unpowered or saturated sensor, not an offset to "
+                            f"calibrate away. Not stored or loaded.")
+        elif abs(r["in1_amps"]) > ZERO_WARN_AMPS:
+            r["warning"] = (f"IN1 offset {r['in1_amps']:+.2f} A is large: "
+                            f"sensor needs attention (magnetised LEM? not "
+                            f"warmed up? current flowing?). Calibrating it "
+                            f"away works, but find the cause.")
+        return r
+
+    def _zero_usable(self) -> dict:
+        with self._lock:
+            r = self.zero_result
+            running = bool(self.job and self.job["name"] == "zero")
+        if running:
+            raise ActionError("the zero calibration is still running")
+        if r is None:
+            raise ActionError("no zero calibration yet: run one first")
+        if r["refused"]:
+            raise ActionError(r["refused"])
+        return r
+
+    def _act_zero_store(self, params) -> str:
+        r = self._zero_usable()
+        name = r["profile"]
+        zero_tool.write_offsets(name, r["in1_amps"], r["in2_amps"],
+                                self.config_path)
+        try:
+            ch = load_channel(name, self.config_path)
+        except (KeyError, ValueError, TypeError) as exc:
+            raise ActionError(f"written to {self.config_path.name}, but the "
+                              f"config loader now refuses [{name}]: {exc}")
+        with self._lock:
+            self.profiles[name] = ch
+            self.models[name] = ch["model"]
+            r["stored"] = True
+        return (f"stored in {self.config_path.name} [{name}]: "
+                f"in1_offset_amps = {r['in1_amps']:.4f}, in2_offset_amps = "
+                f"{r['in2_amps']:.4f} (on the board with Apply profile or "
+                f"Load into board)")
+
+    def _act_zero_load(self, params) -> str:
+        r = self._zero_usable()
+        self._need_idle("loading zero offsets")
+        self._write(in1_offset=r["in1_offset"], in2_offset=r["in2_offset"])
+        rb = self._readback_now()
+        if (rb["in1_offset"], rb["in2_offset"]) != (r["in1_offset"],
+                                                    r["in2_offset"]):
+            raise ActionError("zero offsets written but read back different "
+                              "-- old bitstream?")
+        with self._lock:
+            r["loaded"] = True
+        return (f"loaded into the board: in1_offset = {r['in1_offset']:+d}, "
+                f"in2_offset = {r['in2_offset']:+d} counts"
+                + ("" if r["stored"] else " (not stored in channels.toml)"))
 
     def _act_trip_ack(self, params) -> str:
         if self._state() != "TRIPPED":

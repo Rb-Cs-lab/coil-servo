@@ -71,6 +71,7 @@ def load_cards(path: Path = CARDS_PATH, config_path: Path = CONFIG_PATH):
 def build_dashboard(only=None, *, config_path=CONFIG_PATH,
                     cards_path=CARDS_PATH, simulate=(), sim_old=(),
                     logdir=DEFAULT_LOGDIR, action_log=None,
+                    sim_sensor_offset=(0.0, 0.0),
                     **kwargs) -> tuple[dict, list]:
     """(devices, cards). One CoilServoChannel per board_host; its profiles
     are every channels.toml table with that board_host (file order).
@@ -78,8 +79,10 @@ def build_dashboard(only=None, *, config_path=CONFIG_PATH,
     only: card ids or profile names to show (default: all cards).
     simulate: card ids / profile names / board names to run on a SimBoard
     ("*" = all); sim_old: the same, for a simulated bitstream that reports
-    the old map (rev 0). A profile the loader refuses is still shown
-    (monitoring only, with the loader's message).
+    the old map (rev 0). sim_sensor_offset: (IN1, IN2) amps the simulated
+    sensors read with nothing flowing (for the zero calibration). A profile
+    the loader refuses is still shown (monitoring only, with the loader's
+    message).
     """
     config_path = Path(config_path)
     specs = load_cards(cards_path, config_path)
@@ -121,7 +124,8 @@ def build_dashboard(only=None, *, config_path=CONFIG_PATH,
         dev = CoilServoChannel(
             dev_name, host=host, profiles=profiles, profile_errors=errors,
             models=models,
-            connect=_connector(host, profiles, models, sim, old),
+            connect=_connector(host, profiles, models, sim, old,
+                               sim_sensor_offset),
             simulated=sim, logdir=logdir, action_log=action_log,
             config_path=config_path, **kwargs)
         devices[dev_name] = dev
@@ -132,7 +136,8 @@ def build_dashboard(only=None, *, config_path=CONFIG_PATH,
     return devices, cards
 
 
-def _connector(host, profiles: dict, models: dict, sim: bool, old: bool):
+def _connector(host, profiles: dict, models: dict, sim: bool, old: bool,
+               sim_sensor_offset=(0.0, 0.0)):
     good = [p for p in profiles.values() if p is not None]
     # the guard against typing a clamp above rated: the largest clamp of
     # this board's profiles (each profile's own clamp is in its cfg)
@@ -146,5 +151,6 @@ def _connector(host, profiles: dict, models: dict, sim: bool, old: bool):
                   "cfg": {}}
             variants = ()
         return lambda: SimBoard(ch, map_rev=0 if old else MAP_REV,
-                                max_clamp=clamp, variants=variants)
+                                max_clamp=clamp, variants=variants,
+                                sensor_offset_amps=sim_sensor_offset)
     return lambda: Board(host, timeout=2.0, max_clamp=clamp)

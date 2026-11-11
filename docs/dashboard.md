@@ -40,7 +40,9 @@ computer), *inject trip*, and *cut drive / restore drive* (the drive
 disappears behind the board's back, as when the logic-board latch trips or
 the supply is off: it shows the amber *possible latch trip* guess). In the
 swept-sine setup a simulated function
-generator on IN2 steps through frequencies. `--sim-old-bitstream mot`
+generator on IN2 steps through frequencies. The simulated current sensor
+reads −0.45 A with nothing flowing (IN2: +0.03 A), so the zero
+calibration has something to find. `--sim-old-bitstream mot`
 makes a simulated board report the old register map, to see that warning.
 A yellow **SIMULATION** banner is shown at the top of the page.
 
@@ -96,6 +98,11 @@ cannot be seen from here (see *What the page cannot see* below).
   stops answering. Frozen numbers are never shown as live.
 - **badges** — `BENCH` on the Test setup card; `SIM` marks a simulated
   board.
+- **firmware** — which firmware the board runs: the register-map
+  revision (the layout of its settings; red if it is not the one this
+  host knows) and the git commit the bitstream was built from, e.g.
+  "commit 0aa4ed2", with ", built with uncommitted changes" when the build
+  had local edits. "unknown" means the bitstream carries no build ID.
 
 **The Test setup card** (profile `mot_bench`, the 3 A bench-supply
 campaign of [bench_supply_test.md](bench_supply_test.md)) is drawn
@@ -156,6 +163,17 @@ Click a card for its page.
   (IN2 = the control computer's analog output, or the setpoint register
   = this page), open loop on/off, heartbeat, and the register-map
   revision.
+- **Zero offsets:** the sensor zero offsets — what the current sensor
+  (IN1) and the setpoint input (IN2) read with nothing flowing. The table
+  shows the values stored in `channels.toml` for this card's profile and
+  the values loaded in the board, in amps and ADC counts, with ✗ where they
+  differ. The FPGA subtracts the loaded values from every sample, so the
+  loop, the over-current trip and the flip zero window work on the true
+  current. Amber *IN1 not calibrated* means the profile still has
+  `in1_offset_amps = 0`; amber *zero offsets on the board differ* means
+  someone loaded values without storing them (Apply profile puts the
+  stored ones back). Also: the last zero calibration and its buttons (see
+  the controls below).
 - **Configuration:** what `python -m coil_servo_host.config <channel>`
   prints (supply limit for bench profiles, sensor scale, pass-bank gain,
   dead zone, floor, clamp, trip, zero window, ramps, PI gains, dither,
@@ -176,7 +194,7 @@ look at the logic board.
 
 ### Old bitstream
 
-The host code knows register-map revision 3. A board still running an
+The host code knows register-map revision 4. A board still running an
 older bitstream (the 2026-08-27 image reports revision 0) has a different
 register layout: writing would land values in the wrong registers. The
 dashboard then shows **OLD BITSTREAM** in red and is **monitoring only** for
@@ -289,6 +307,25 @@ written to the action log with the client's IP address.
   adds a point to the Bode plot (gain and phase) and to
   `..._sweep.csv`. STOP ends it.
 
+- **Zero calibration…** (in the *Zero offsets* panel) — as `python -m
+  coil_servo_host.zero`: records the raw IN1/IN2 readings (before the
+  FPGA's correction), 8 records over about 1 s, and shows the offsets in
+  amps and counts with their spread between records. Only with the servo
+  stopped (IDLE, bridge disabled). Before you press it: the LEM is powered
+  (±15 V) and warmed up, and the control computer's setpoint output is at
+  0 V. Measuring changes nothing. A loud warning above 0.3 A on IN1
+  ("sensor needs attention": a magnetised LEM read −5.8 A on 2026-11-11);
+  above 10 % of the sensor full scale (20 A at I_FS = 200 A) the result is
+  refused — that is a broken, unpowered or saturated sensor, not an
+  offset. Then:
+  - **Store in channels.toml** — writes `in1_offset_amps` /
+    `in2_offset_amps` into the measured profile's section, with the date
+    as a comment, keeping everything else. The board uses them after
+    *Apply profile*. `channels.toml` is in git: commit the change.
+  - **Load into board** — writes the offsets to the board now (only in
+    IDLE); readings jump to ~0 A. Not stored: Apply profile would restore
+    the stored ones.
+
 Nothing on this page clears a hardware fault: the heartbeat latch on the
 logic board is reset by hand. The operating rule: **press STOP first and
 wait for IDLE (bridge enabled = no), then press the latch reset** — if the
@@ -391,7 +428,7 @@ endpoints, and its own entries in `dashboard.toml`.
 |---|---|
 | `GET /api/cards` | the overview's cards: `id`, `title`, `profile`, `device`, `style` |
 | `GET /api/devices` | list of devices (boards): name, kind, available actions, current state |
-| `GET /api/devices/<name>` | the current state (snapshot), e.g. `state`, `i_amps`, `sp_amps`, `u14` and `pi_volts` (PI output), `out1_counts`/`out1_volts` (actual OUT1) and `out1_mode` (`off`, `open` or `closed`), `flags`, `alarms`, `warnings`, `connection`, `map_ok`, `held` (profiles the board holds), `profiles`, `age_s`, `stale`, `sequence_lock`, `stop_block`, `control_block` |
+| `GET /api/devices/<name>` | the current state (snapshot), e.g. `state`, `i_amps`, `sp_amps`, `u14` and `pi_volts` (PI output), `out1_counts`/`out1_volts` (actual OUT1) and `out1_mode` (`off`, `open` or `closed`), `flags`, `alarms`, `warnings`, `connection`, `map_ok`, `build_id` and `build_text` (firmware identity), `offsets_board` (zero offsets in the board) and per profile `profiles[].offsets` (in channels.toml), `zero` (the last zero calibration), `held` (profiles the board holds), `profiles`, `age_s`, `stale`, `sequence_lock`, `stop_block`, `control_block` |
 | `GET /api/devices/<name>/history?span=60` | the last *span* seconds as columns `t` (Unix time), `i_amps`, `sp_amps`, `u14`, `out1_volts` (actual), `pi_volts` |
 | `GET /api/devices/<name>/info?profile=mot_bench` | one profile's derived values and the CFG read-back compared with it |
 | `GET /api/devices/<name>/capture` | the latest capture: `t`, `kind`, `dt_s`, `i_amps[]`, `sp_amps[]`, `file` |

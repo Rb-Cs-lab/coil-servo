@@ -178,3 +178,6 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
   border: 2px solid var(--bad); border-radius: 6px; padding: 8px 10px;
   font-weight: 700; }
 .card.bench.alarm { border: 2px solid var(--bad); }
+
+/* firmware identity line: red when the register map is not the host's */
+.fw-bad { color: var(--bad); font-weight: 600; }

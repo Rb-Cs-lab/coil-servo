@@ -128,6 +128,20 @@ function badges(card, st) {
   return h;
 }
 
+// firmware identity: register-map revision + the commit it was built from
+function fwText(st) {
+  if (st.map_rev == null) return "";
+  const ok = st.map_rev === st.map_rev_expected;
+  return `firmware: register map rev ${st.map_rev}${ok ? ""
+    : ` (this host expects ${st.map_rev_expected})`} · ${st.build_text || "build unknown"}`;
+}
+
+function fmtOff(o, k) {
+  if (!o) return "—";
+  const a = o[k + "_amps"], c = o[k];
+  return `${a >= 0 ? "+" : ""}${a.toFixed(3)} A (${c >= 0 ? "+" : ""}${c} counts)`;
+}
+
 function staleText(st) {
   if (Date.now() / 1000 - S.lastEvent > STREAM_DEAD_S)
     return "NO FRESH DATA: the dashboard server is not answering";
@@ -208,6 +222,7 @@ function renderOverview() {
       <div class="current"><span class="val">—</span> <span class="unit">A</span>
         <span class="small muted sp"></span></div>
       <div class="small supply"></div>
+      <div class="small muted fw"></div>
       <div class="inuse-msg" hidden></div>
       <canvas class="spark"></canvas>
       <div class="alarms"></div>`;
@@ -245,6 +260,9 @@ function updateOverview() {
       ? `setpoint ${fmtA(st.sp_amps)} A` : "";
     $(".supply", c).textContent = prof.i_supply_max != null
       ? `bench supply limit ${prof.i_supply_max} A · rated ${prof.i_rated} A` : "";
+    const fw = $(".fw", c);
+    fw.textContent = on ? fwText(st) : "";
+    fw.classList.toggle("fw-bad", on && st.map_ok === false);
     $(".alarms", c).innerHTML = inuse ? "" : alarmsHtml(st);
     if (!inuse) {
       const ys = (S.spark[card.device] || []).map((p) => p.i);
@@ -278,6 +296,7 @@ function renderDetail(card) {
       <span class="spacer" style="flex:1"></span>
       <button class="btn stop" id="b-stop" title="servo_enable = 0: graceful ramp to zero">STOP</button>
     </div>
+    <div class="small muted" id="d-fw" style="margin-top:4px"></div>
     <div class="alarms" id="d-inuse" style="margin-top:8px"></div>
     <div class="alarms" id="d-alarms" style="margin-top:8px"></div>
     <div id="d-pending" style="margin-top:8px"></div>
@@ -322,6 +341,13 @@ function renderDetail(card) {
       <div class="panel"><h2>Control</h2><div id="ctl"></div></div>
       <div class="panel"><h2>Flags</h2><div class="flags" id="flags"></div>
         <div class="kv small" id="mode" style="margin-top:10px"></div></div>
+      <div class="panel"><h2>Zero offsets</h2>
+        <p class="small muted">The current sensor (IN1) and the setpoint
+        input (IN2) read slightly off zero with nothing flowing. The FPGA
+        subtracts the stored offsets from every sample, so the loop, the trip
+        and the zero window see the true current. Measure every new sensor;
+        re-measure after changing the LEM, burden, in-amp gain or cabling.</p>
+        <div id="zero"></div><div id="zero-ctl"></div></div>
       <div class="panel"><h2>Configuration</h2><div id="cfg"></div></div>
     </div>
   </div>`;
@@ -351,6 +377,7 @@ function renderDetail(card) {
     {interval_s: +$("#cap-n").value});
 
   renderControls(card, sim);
+  renderZeroControls(card);
   loadHistory();
   loadInfo();
   D.infoTimer = setInterval(loadInfo, 5000);
@@ -517,6 +544,107 @@ function renderControls(card, sim) {
   }
 }
 
+function renderZeroControls(card) {
+  const dev = card.device;
+  const zc = $("#zero-ctl");
+  if (!S.who.control) { zc.innerHTML = ""; return; }
+  zc.innerHTML = `<div class="row" style="margin-top:8px">
+      <button class="btn" id="b-zero">Zero calibration…</button>
+      <button class="btn" id="b-zero-store">Store in channels.toml</button>
+      <button class="btn" id="b-zero-load">Load into board</button></div>
+    <div class="small muted">Lab PC only. Measuring changes nothing; storing
+      edits channels.toml, loading writes the board's offset registers.</div>`;
+  $("#b-zero").onclick = async () => {
+    if (await confirmDialog(`Zero calibration — ${card.title}`,
+      `<p>Records the <b>raw</b> IN1 and IN2 readings (before the FPGA's
+       correction): 8 records over about 1 s, averaged so mains hum cancels.
+       Nothing is changed; you decide afterwards whether to store or load
+       the result.</p>
+       <p><b>Conditions</b> (the first is checked, the others are up to you):</p>
+       <ul><li>servo stopped: IDLE, bridge disabled — no coil current</li>
+       <li>LEM powered (±15 V) and warmed up (a few minutes)</li>
+       <li>control computer's setpoint output (IN2) at 0 V</li></ul>
+       <p>Scale: profile <b>[${esc(card.profile)}]</b>.</p>`,
+      "Measure zero offsets"))
+      post(dev, "zero_cal", {profile: card.profile, confirm: true});
+  };
+  $("#b-zero-store").onclick = async () => {
+    const r = S.devices[dev].state.zero;
+    if (!r) return;
+    if (await confirmDialog(`Store zero offsets in channels.toml [${r.profile}]?`,
+      `<p>Writes <span class="mono">in1_offset_amps = ${r.in1_amps.toFixed(4)}</span>
+       and <span class="mono">in2_offset_amps = ${r.in2_amps.toFixed(4)}</span>
+       into the <b>[${esc(r.profile)}]</b> section of channels.toml (with
+       today's date as a comment; everything else unchanged).</p>
+       <p>The board uses them after <b>Apply profile</b> (or Load into board).
+       channels.toml is in git: commit the change so the next person has it.</p>`,
+      "Store"))
+      post(dev, "zero_store", {confirm: true});
+  };
+  $("#b-zero-load").onclick = async () => {
+    const r = S.devices[dev].state.zero;
+    if (!r) return;
+    if (await confirmDialog("Load zero offsets into the board?",
+      `<p>Writes <span class="mono">in1_offset = ${r.in1_offset}</span>,
+       <span class="mono">in2_offset = ${r.in2_offset}</span> counts to the
+       board now (only in IDLE). From then on the board subtracts them from
+       every IN1/IN2 sample.</p>${r.stored ? "" : `<p>Not stored in
+       channels.toml yet: <b>Apply profile</b> would put the stored values
+       back.</p>`}`, "Load into board"))
+      post(dev, "zero_load", {confirm: true});
+  };
+}
+
+function updateZero(card, st, ctlOk) {
+  const prof = profileInfo(st, card.profile);
+  const cfg = prof.offsets, brd = st.offsets_board;
+  const held = (st.held || []).includes(card.profile);
+  let h = "";
+  if (st.map_ok === false)
+    h += `<p class="small muted">The board's firmware has no offset registers
+      (register map rev ${st.map_rev}): nothing is subtracted.</p>`;
+  const same = (k) => cfg && brd && cfg[k] === brd[k];
+  h += `<table><tr><th></th><th class="num">channels.toml [${esc(card.profile)}]</th>
+    <th class="num">board${held ? "" : " (holds another profile)"}</th><th></th></tr>`
+    + ["in1", "in2"].map((k) => `<tr class="${cfg && brd && held && !same(k) ? "mismatch" : ""}">
+      <td>${k.toUpperCase()}</td><td class="num">${fmtOff(cfg, k)}</td>
+      <td class="num">${fmtOff(brd, k)}</td>
+      <td>${cfg && brd ? (same(k) ? "✓" : "✗") : ""}</td></tr>`).join("")
+    + "</table>";
+  if (cfg && cfg.in1 === 0)
+    h += `<div class="warn-item" style="margin-top:6px">IN1 not calibrated:
+      [${esc(card.profile)}] has in1_offset_amps = 0, so every current
+      reading includes the sensor's zero offset.</div>`;
+  const z = st.zero;
+  const lj = st.last_job && st.last_job.name === "zero" ? st.last_job : null;
+  if (st.job && st.job.name === "zero")
+    h += `<div class="pending" style="margin-top:6px">${esc(st.job.phase)}</div>`;
+  else if (lj && lj.error)
+    h += `<div class="notice error" style="margin-top:6px">zero calibration
+      failed: ${esc(lj.error)}</div>`;
+  if (z) {
+    const when = new Date(z.t * 1000).toLocaleTimeString();
+    const one = (k) => `${k.toUpperCase()} <b>${z[k + "_amps"] >= 0 ? "+" : ""}${z[k + "_amps"].toFixed(3)} A</b>
+      (${z[k + "_counts"].toFixed(1)} counts, spread ${z[k + "_spread_counts"].toFixed(1)} counts between records)`;
+    h += `<div style="margin-top:8px"><b>Last calibration</b> [${esc(z.profile)}]
+      at ${esc(when)}:<br>${one("in1")}<br>${one("in2")}
+      <div class="small muted">1 count = ${(z.lsb_amps * 1e3).toFixed(1)} mA ·
+      stored in channels.toml: ${z.stored ? "yes" : "no"} · loaded into the
+      board: ${z.loaded ? "yes" : "no"}</div></div>`;
+    if (z.refused) h += `<div class="danger-box">${esc(z.refused)}</div>`;
+    else if (z.warning) h += `<div class="danger-box">${esc(z.warning)}</div>`;
+  }
+  $("#zero").innerHTML = h;
+  if (!$("#b-zero")) return;
+  const idle = st.state === "IDLE" && !(st.flags || {}).bridge_en;
+  const busy = !!st.job || !!st.pending;
+  const usable = z && !z.refused && !(st.job && st.job.name === "zero");
+  $("#b-zero").disabled = !(ctlOk && idle && !busy);
+  $("#b-zero").title = idle ? "" : "only with the servo stopped (IDLE, bridge disabled)";
+  $("#b-zero-store").disabled = !(ctlOk && usable && !z.stored);
+  $("#b-zero-load").disabled = !(ctlOk && usable && idle && !busy);
+}
+
 async function loadHistory() {
   const D = S.detail;
   try {
@@ -616,6 +744,9 @@ function updateDetail() {
        live state in that role. To use it as ${esc(card.title)}: Stop, then
        Apply profile [${esc(card.profile)}].</div>` : "";
   $("#d-alarms").innerHTML = alarmsHtml(st);
+  const fw = $("#d-fw");
+  fw.textContent = on ? fwText(st) : "";
+  fw.classList.toggle("fw-bad", on && st.map_ok === false);
 
   let p = "";
   if (st.pending) p += `<div class="pending">Servo enabled as [${esc(st.pending.profile)}]: ${esc(st.pending.message)}
@@ -665,6 +796,7 @@ function updateDetail() {
   $("#b-stop").disabled = !(S.who.stop && !st.stop_block);
   $("#b-stop").title = !S.who.stop ? "Stop is accepted only from the lab PC"
     : st.stop_block ? st.stop_block : "servo_enable = 0: graceful ramp to zero";
+  updateZero(card, st, ctlOk);
   const capOk = S.who.capture && !st.control_block && !st.job;
   $("#b-cap").disabled = $("#b-auto").disabled = $("#cap-n").disabled = !capOk;
 
