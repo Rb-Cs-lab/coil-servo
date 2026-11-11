@@ -198,12 +198,23 @@ class SlewLimiter:
     clock. "Up" = away from zero, "down" = toward zero. hold_zero forces 0,
     bypass passes the target through; a rate of 0 freezes the setpoint.
     A target with |target| < snap_win (the flip zero window) is taken at
-    once, so a step to zero is a true snap-off."""
+    once, so a step to zero is a true snap-off.
+
+    Pipelined like the HDL (timing): the target and the snap test are
+    registered first, and the limiting step alternates between a measure
+    phase (delta = target - acc) and a move phase (acc += 2*rate, or onto
+    the target), so the average rate is the configured one."""
 
     FRAC = 14
 
     def __init__(self):
         self.acc = 0
+        self.t_r = 0          # registered target, counts << 14
+        self.snap_r = False
+        self.t_p = 0          # target as measured in phase 0
+        self.delta_r = 0
+        self.phase = 0
+        self.valid = False
 
     @property
     def sp(self) -> int:
@@ -212,21 +223,31 @@ class SlewLimiter:
     def step(self, target: int, rate_up: int, rate_down: int,
              hold_zero: bool = False, bypass: bool = False,
              snap_win: int = 0) -> int:
-        t = target << self.FRAC
+        """Advance one clock; returns the output after the edge."""
+        acc, t_p, delta, valid = self.acc, self.t_p, self.delta_r, self.valid
         if hold_zero:
-            self.acc = 0
-        elif bypass or abs(target) < snap_win:
-            self.acc = t
-        else:
-            delta = t - self.acc
-            away = (self.acc >= 0 and delta > 0) or (self.acc <= 0 and delta < 0)
-            r = rate_up if away else rate_down
-            if delta > r:
-                self.acc += r
-            elif delta < -r:
-                self.acc -= r
-            else:
-                self.acc = t
+            acc, valid = 0, False
+        elif bypass or self.snap_r:
+            acc, valid = self.t_r, False
+        elif self.phase == 0:                       # measure
+            delta, t_p, valid = self.t_r - self.acc, self.t_r, True
+        else:                                       # move
+            valid = False
+            if self.valid:
+                d = self.delta_r
+                away = (self.acc >= 0 and d > 0) or (self.acc <= 0 and d < 0)
+                r2 = 2 * (rate_up if away else rate_down)
+                if d > r2:
+                    acc = self.acc + r2
+                elif d < -r2:
+                    acc = self.acc - r2
+                else:
+                    acc = self.t_p
+        # all registers update together (non-blocking)
+        self.acc, self.t_p, self.delta_r, self.valid = acc, t_p, delta, valid
+        self.phase ^= 1
+        self.t_r = target << self.FRAC
+        self.snap_r = abs(target) < snap_win
         return self.sp
 
 

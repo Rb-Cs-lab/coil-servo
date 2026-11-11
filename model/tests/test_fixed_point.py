@@ -207,7 +207,11 @@ def test_slew_limiter_snaps_inside_the_zero_window():
     for _ in range(200_000):
         sl.step(2867, up, down, snap_win=20)     # ramp to ~70 A
     assert sl.sp == 2867
+    # the target is registered first: the snap lands one clock later
+    sl.step(0, up, down, snap_win=20)
     assert sl.step(0, up, down, snap_win=20) == 0          # snap-off
+    sl.step(12, up, down, snap_win=20)
     assert sl.step(12, up, down, snap_win=20) == 12        # small target kept
-    sl.step(2867, up, down, snap_win=20)
+    for _ in range(4):
+        sl.step(2867, up, down, snap_win=20)
     assert sl.sp < 20                            # outside the window: ramps
