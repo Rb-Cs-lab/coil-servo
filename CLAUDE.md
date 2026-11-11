@@ -14,10 +14,15 @@ rest of the repo in line is [docs/mvp_rewrite_brief.md](docs/mvp_rewrite_brief.m
 §11 — work it in order, one step per session. This file is the
 quick-reference facts; if they conflict, flag it — don't silently pick one.
 
-**Rewrite status (2026-11-10): steps 1–5 of 6 done.** Model, fixed-point
+**Rewrite status (2026-11-11): steps 1–6 done.** Model, fixed-point
 mirror, HDL, cocotb benches, host tools and docs describe the MVP (all
-benches close the loop around the MVP plant). Remaining: step 6, rebuild
-the bitstream on the NUC. Step 5 rewrote the interface brief, operating
+benches close the loop around the MVP plant). Step 6: the MVP bitstream
+(register-map rev 3, from `aa2a92f1`) was built on the **lab laptop** (WSL2
+Ubuntu 24.04, Vivado 2025.1 — the NUC is no longer available) after three
+timing iterations (slew/PI/FSM/dither pipelined): WNS +0.072 ns, 0 failing
+endpoints. It is `bitstreams/coil_servo.bit.bin`; the August image is kept
+as `coil_servo_fullarch_20260827.bit.bin`. First deploy pending. Dashboard
+work lives in the separate "Coil-servo web dashboard" session. Step 5 rewrote the interface brief, operating
 scenarios, bring-up checklist, README/ONBOARDING, added
 `docs/lab_notes_2026-11.md`, moved the dropped full-architecture features
 to future_upgrades.md §8, and gave design.md an MVP-changes preamble.
