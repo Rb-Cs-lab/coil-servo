@@ -103,6 +103,10 @@ documentation is written for physicists and defines its jargon as it goes.
     the servo is active) and checks the board came up safe;
   - `...check mot` is a quick health check;
   - `...watch mot` is the live status display;
+  - `python -m coil_servo_host.dashboard` is the web dashboard: every
+    board live in a browser for anyone on the lab LAN, manual control
+    from the lab PC only (`--simulate` to try it without hardware;
+    [docs/dashboard.md](docs/dashboard.md));
   - `...config mot` prints the register values derived from
     channels.toml;
   - `...step` / `...sweep` measure the loop.

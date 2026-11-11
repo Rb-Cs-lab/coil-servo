@@ -52,6 +52,35 @@ def amps_to_counts(amps: float, i_fs: float) -> int:
     return round(amps / i_fs * 8192)
 
 
+def counts_to_amps(counts: float, i_fs: float) -> float:
+    """s14 counts of the sensor scale (sp_active, setpoint) -> amps."""
+    return counts * i_fs / 8192
+
+
+def i_meas_amps(i_meas: int, i_fs: float) -> float:
+    """STS i_meas (decimated s22: 128 x the mean IN1 code) -> amps."""
+    return i_meas / 128 * i_fs / 8192
+
+
+def out1_volts(u14: int, model: Channel) -> float:
+    """PI output u14 (OUT1 DAC counts) -> volts at the op-amp input (1 V
+    full scale into 50 ohm, about 2 V unterminated)."""
+    return u14 / 8192 * model.out1_factor
+
+
+def channel_names(path: Path = CONFIG_PATH) -> list:
+    """Channel names in channels.toml, in file order."""
+    with open(path, "rb") as f:
+        return [n for n, t in tomllib.load(f).items() if isinstance(t, dict)]
+
+
+def channel_table(name: str, path: Path = CONFIG_PATH) -> dict:
+    """The raw channels.toml table of one channel (keys the loader does not
+    know are kept)."""
+    with open(path, "rb") as f:
+        return tomllib.load(f)[name]
+
+
 def build_model(name: str, table: dict) -> Channel:
     """The model Channel for this channel, with channels.toml's physics."""
     base = (CHANNELS.get(name) or BENCH_CHANNELS.get(name)
@@ -275,8 +304,9 @@ def profile_report(board_cfg: dict, ch: dict,
                    f"for {ch['host']} in channels.toml ***")
 
 
-def summary(ch: dict) -> str:
-    """Human-readable account of the derived quantities."""
+def summary_rows(ch: dict) -> list:
+    """The derived quantities as (label, text) rows -- everything summary()
+    prints after its header line. Used by summary() and the dashboard."""
     m, c = ch["model"], ch["cfg"]
     f = m.out1_factor                  # OUT1 volts per normalized unit
 
@@ -287,46 +317,56 @@ def summary(ch: dict) -> str:
     ki = decode_gain(c["ki_mant"], c["ki_shift"]) / T_S
 
     turns = f", LEM {m.lem_turns} primary turns" if m.lem_turns != 1 else ""
-    lines = [
-        f"channel {m.name}: rail {m.V_rail:g} V, rated {m.I_rated:g} A",
-    ]
+    rows = []
     if m.I_supply_max is not None:
         margin = m.I_supply_max / m.amps_per_lsb - c["trip_level"]
-        lines.append(
-            f"  supply limit       = {m.I_supply_max:g} A (current-limited "
-            f"supply: the hard limit; the firmware trip sits "
-            f"{margin:.0f} counts = {margin * m.amps_per_lsb:.2f} A below it; "
-            f"an IN1 offset more negative than that keeps it from firing)")
-    lines += [
-        f"  sensor scale I_FS  = {m.I_FS:g} A at +1 V on IN1 "
-        f"({m.amps_per_lsb * 1e3:.2f} mA per ADC count{turns})",
-        f"  pass bank G_pass   = {m.G_pass / f:.0f} A per volt at OUT1 "
-        f"(OUT1 {'terminated' if m.out1_terminated else 'UNterminated'}; "
-        f"plant gain {m.G_pass / m.I_FS:.2f}; one OUT1 count "
-        f"~ {m.G_pass / 8192 * 1e3:.0f} mA)",
-        f"  dead zone          = {m.dead_zone * f:.3f} V at OUT1 "
-        f"({min(m.V_th):.2f} V gate, {m.dead_zone * 8192:.0f} counts)",
-        f"  RUN floor          = {c['u_floor']} counts "
-        f"({c['u_floor'] / 8192 * f:.3f} V at OUT1)",
-        f"  OUT1 command clamp = {c['out_clamp']} counts "
-        f"({c['out_clamp'] / 8192 * f:.3f} V at OUT1; limits the command, "
-        f"not the current)",
-        f"  over-current trip  = {c['trip_level'] * m.amps_per_lsb:.4g} A "
-        f"({c['trip_level']} counts) for {c['trip_ticks']} samples",
-        f"  flip zero window   = {c['zero_win'] * m.amps_per_lsb:.3g} A "
-        f"({c['zero_win']} counts); freewheel from rated "
-        f"~ {m.freewheel_time * 1e6:.0f} us",
-        f"  setpoint ramps     = {rate(c['slew_up']):.0f} A/ms up, "
-        f"{rate(c['slew_down']):.0f} A/ms down "
-        f"(codes {c['slew_up']} / {c['slew_down']})",
-        f"  PI gains           = kp {kp:.4g}, ki {ki:.4g}/s normalized "
-        f"(= {kp * 8192 / m.I_FS:.4g} counts/A, "
-        f"{ki * 8.192 / m.I_FS:.4g} counts/(A ms))",
-        f"  dither             = {'on' if c['dither_enable'] else 'off'}",
-        f"  board LEDs         = "
-        + (f"LED {BENCH_LED_INDEX} lit (bench settings)" if c["led"]
-           else "all off (production settings)"),
+        rows.append((
+            "supply limit",
+            f"{m.I_supply_max:g} A (current-limited supply: the hard limit; "
+            f"the firmware trip sits {margin:.0f} counts = "
+            f"{margin * m.amps_per_lsb:.2f} A below it; an IN1 offset more "
+            f"negative than that keeps it from firing)"))
+    rows += [
+        ("sensor scale I_FS", f"{m.I_FS:g} A at +1 V on IN1 "
+         f"({m.amps_per_lsb * 1e3:.2f} mA per ADC count{turns})"),
+        ("pass bank G_pass", f"{m.G_pass / f:.0f} A per volt at OUT1 "
+         f"(OUT1 {'terminated' if m.out1_terminated else 'UNterminated'}; "
+         f"plant gain {m.G_pass / m.I_FS:.2f}; one OUT1 count "
+         f"~ {m.G_pass / 8192 * 1e3:.0f} mA)"),
+        ("dead zone", f"{m.dead_zone * f:.3f} V at OUT1 "
+         f"({min(m.V_th):.2f} V gate, {m.dead_zone * 8192:.0f} counts)"),
+        ("RUN floor", f"{c['u_floor']} counts "
+         f"({c['u_floor'] / 8192 * f:.3f} V at OUT1)"),
+        ("OUT1 command clamp", f"{c['out_clamp']} counts "
+         f"({c['out_clamp'] / 8192 * f:.3f} V at OUT1; limits the command, "
+         f"not the current)"),
+        ("over-current trip", f"{c['trip_level'] * m.amps_per_lsb:.4g} A "
+         f"({c['trip_level']} counts) for {c['trip_ticks']} samples"),
+        ("flip zero window", f"{c['zero_win'] * m.amps_per_lsb:.3g} A "
+         f"({c['zero_win']} counts); freewheel from rated "
+         f"~ {m.freewheel_time * 1e6:.0f} us"),
+        ("setpoint ramps", f"{rate(c['slew_up']):.0f} A/ms up, "
+         f"{rate(c['slew_down']):.0f} A/ms down "
+         f"(codes {c['slew_up']} / {c['slew_down']})"),
+        ("PI gains", f"kp {kp:.4g}, ki {ki:.4g}/s normalized "
+         f"(= {kp * 8192 / m.I_FS:.4g} counts/A, "
+         f"{ki * 8.192 / m.I_FS:.4g} counts/(A ms))"),
+        ("dither", "on" if c["dither_enable"] else "off"),
+        ("board LEDs", f"LED {BENCH_LED_INDEX} lit (bench settings)"
+         if c["led"] else "all off (production settings)"),
     ]
+    return rows
+
+
+def summary_header(ch: dict) -> str:
+    m = ch["model"]
+    return f"channel {m.name}: rail {m.V_rail:g} V, rated {m.I_rated:g} A"
+
+
+def summary(ch: dict) -> str:
+    """Human-readable account of the derived quantities."""
+    lines = [summary_header(ch)]
+    lines += [f"  {label:<18s} = {text}" for label, text in summary_rows(ch)]
     return "\n".join(lines)
 
 

@@ -16,6 +16,8 @@ no control decisions are made in software.
   what the servo promises the power stage: [docs/servo_interface_brief.md](docs/servo_interface_brief.md);
   original requirements and lab context: [docs/history/BOOTSTRAP.md](docs/history/BOOTSTRAP.md)
 - Programming experimental sequences: [docs/operating_scenarios.md](docs/operating_scenarios.md)
+- Watching the boards live (and operating them by hand from the lab PC):
+  the web dashboard, [docs/dashboard.md](docs/dashboard.md)
 - Bringing hardware up, step by step: [docs/bringup.md](docs/bringup.md);
   the first low-current campaign on a 3 A bench supply:
   [docs/bench_supply_test.md](docs/bench_supply_test.md) (channel

@@ -12,7 +12,8 @@ import argparse
 import time
 
 from .board import Board
-from .config import announce, load_channel, profile_report
+from .config import (announce, i_meas_amps, load_channel,
+                     profile_report)
 
 PROFILE_EVERY_S = 3.0
 
@@ -36,7 +37,7 @@ def main():
                         last_text = text
                     next_check = time.monotonic() + PROFILE_EVERY_S
                 s = b.sts()
-                amps = s["i_meas"] / 128 * ch["i_fs"] / 8192
+                amps = i_meas_amps(s["i_meas"], ch["i_fs"])
                 flags = " ".join(name for name in
                                  ("tripped", "out_sat", "u_floor",
                                   "sp_sign_mismatch", "timeout_hold",

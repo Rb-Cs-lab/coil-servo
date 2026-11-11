@@ -25,43 +25,81 @@ is not trusted yet (the low-current bench profile, docs/bench_supply_test.md):
 """
 
 import argparse
-import csv
 import time
 
-from .board import Board
-from .config import announce, load_channel
+from .board import FIFO_ADDR, FIFO_DEPTH, Board
+from .capture import FS_DEC, decimated_columns, decode_words, write_csv
+from .config import amps_to_counts, announce, load_channel
 
-FS_DEC = 125e6 / 128
 
-
-def setpoint_counts(ch: dict, amps: float | None, counts: int | None,
-                    open_loop: bool) -> tuple[int, str]:
-    """The setpoint register value for this step, and a line describing it.
-    Raises SystemExit for requests that are almost certainly mistakes."""
+def command_counts(ch: dict, amps: float | None, open_loop: bool,
+                   counts: int | None = None) -> tuple[int, str]:
+    """The setpoint register value for a step, and a line describing it.
+    Give either amps or (open loop only) counts, a direct OUT1 command.
+    Raises ValueError for requests that are almost certainly mistakes:
+    above the rated current, a negative open-loop step, counts outside
+    0 .. the OUT1 clamp, counts in closed loop. In open loop, amps go
+    through the model (PROVISIONAL until G_pass and the dead zone are
+    measured)."""
     if counts is not None:
         if not open_loop:
-            raise SystemExit("--counts is an OUT1 command: use it with "
+            raise ValueError("--counts is an OUT1 command: use it with "
                              "--open-loop (closed loop takes --amps)")
         clamp = ch["cfg"]["out_clamp"]
         if not 0 <= counts <= clamp:
-            raise SystemExit(f"--counts {counts} outside 0 .. the OUT1 clamp "
+            raise ValueError(f"--counts {counts} outside 0 .. the OUT1 clamp "
                              f"({clamp} counts)")
         return counts, f"open loop: OUT1 command {counts} counts (set directly)"
 
     if abs(amps) > ch["i_rated"]:
-        raise SystemExit(
-            f"--amps {amps} exceeds this channel's rated current "
+        raise ValueError(
+            f"{amps} A exceeds this channel's rated current "
             f"({ch['i_rated']} A); the fabric clamp would cap the drive at "
             f"rated anyway, so this is almost certainly a typo")
     if open_loop:
         if amps < 0:
-            raise SystemExit("--open-loop needs --amps >= 0: OUT2 is not "
+            raise ValueError("an open-loop step needs amps >= 0: OUT2 is not "
                              "fitted in the MVP, OUT1 only drives up")
         sp = round(ch["model"].out1_for_current(amps) * 8192) if amps > 0 else 0
         return sp, (f"open loop: OUT1 command {sp} counts (model estimate "
                     f"for {amps} A)")
-    sp = round(amps / ch["i_fs"] * 8192)
+    sp = amps_to_counts(amps, ch["i_fs"])
     return sp, f"closed loop: setpoint {sp} counts ({amps} A)"
+
+
+def setpoint_counts(ch: dict, amps: float | None, counts: int | None,
+                    open_loop: bool) -> tuple[int, str]:
+    """command_counts for the command line: mistakes raise SystemExit."""
+    try:
+        return command_counts(ch, amps, open_loop, counts)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
+
+
+def prepare(b: Board, ch: dict, open_loop: bool) -> None:
+    """Apply the channel config, select the setpoint register at 0 and
+    enable the servo (it then waits for the arm edge)."""
+    b.apply_config(ch["cfg"])
+    b.write_cfg(sp_source=1, setpoint=0,
+                open_loop=1 if open_loop else 0, servo_enable=1)
+
+
+def capture_step(b: Board, sp_counts: int):
+    """In RUN: restart the decimated capture, step the setpoint ~2 ms into
+    the 16.8 ms window, drain the FIFO. Returns the raw FIFO words."""
+    b.write_cfg(capture_sel=1)
+    b.pulse("fifo_rst")
+    time.sleep(0.002)
+    b.write_cfg(setpoint=sp_counts)
+    time.sleep(0.020)          # capture window (16.8 ms) elapses
+    return b.pop_words(FIFO_ADDR, FIFO_DEPTH)
+
+
+def finish(b: Board) -> None:
+    """Ramp back down and disable (graceful stop in fabric)."""
+    b.write_cfg(setpoint=0)
+    time.sleep(0.05)
+    b.write_cfg(servo_enable=0, open_loop=0)
 
 
 def main():
@@ -76,47 +114,21 @@ def main():
     args = p.parse_args()
     ch = load_channel(args.channel)
     announce(ch)
-    # captured columns are (i_dec>>6, e_dec>>6); i_dec = 128 * mean code, so
-    # one captured LSB = 2^6/128 = 0.5 ADC code = i_fs/16384 amps
-    scale = ch["i_fs"] / 16384
 
     sp_counts, what = setpoint_counts(ch, args.amps, args.counts, args.open_loop)
     print(what)
     with Board(ch["host"], max_clamp=ch["cfg"]["out_clamp"]) as b:
-        b.apply_config(ch["cfg"])
-        b.write_cfg(sp_source=1, setpoint=0,
-                    open_loop=1 if args.open_loop else 0, servo_enable=1)
+        prepare(b, ch, args.open_loop)
         b.warn_flags()
         b.wait_for_run()
         time.sleep(0.05)
+        raw = capture_step(b, sp_counts)
+        finish(b)
 
-        # restart the capture, then step the setpoint ~2 ms into the window
-        b.write_cfg(capture_sel=1)
-        b.pulse("fifo_rst")
-        time.sleep(0.002)
-        b.write_cfg(setpoint=sp_counts)
-        time.sleep(0.020)          # capture window (16.8 ms) elapses
-        raw = b.pop_words(0x4200_0000, 16384)
-
-        # ramp back down and disable (graceful stop in fabric)
-        b.write_cfg(setpoint=0)
-        time.sleep(0.05)
-        b.write_cfg(servo_enable=0, open_loop=0)
-
-    import numpy as np
-    raw = raw.astype(np.int64)
-    i16 = (raw & 0xFFFF).astype(np.int32)
-    e16 = ((raw >> 16) & 0xFFFF).astype(np.int32)
-    i16[i16 >= 1 << 15] -= 1 << 16
-    e16[e16 >= 1 << 15] -= 1 << 16
-
-    with open(args.out, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["t_s", "i_amps", "setpoint_amps"])
-        for k in range(len(i16)):
-            w.writerow([k / FS_DEC, i16[k] * scale,
-                        (e16[k] + i16[k]) * scale])
-    print(f"wrote {args.out} ({len(i16)} samples, {len(i16)/FS_DEC*1e3:.1f} ms)")
+    cols = decimated_columns(decode_words(raw, decimated=True), ch["i_fs"])
+    write_csv(args.out, cols)
+    n = len(cols["t_s"])
+    print(f"wrote {args.out} ({n} samples, {n / FS_DEC * 1e3:.1f} ms)")
 
 
 if __name__ == "__main__":

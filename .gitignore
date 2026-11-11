@@ -17,6 +17,9 @@ __pycache__
 *.egg-info
 sim/sim_build
 
+# dashboard logs and captures (python -m coil_servo_host.dashboard)
+logs/
+
 # Claude Code local state (agent worktrees, local settings)
 .claude/worktrees/
 .claude/settings.local.json

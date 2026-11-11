@@ -12,6 +12,7 @@ import time
 
 import numpy as np
 
+from .capture import decode_words
 from coil_servo_model.registers import (CFG_BASE, CFG_FIELDS, CFG_WORDS,
                                         MAP_REV, STS_BASE, _encode,
                                         parse_cfg, parse_sts)
@@ -53,9 +54,18 @@ class Board:
         # clobber every field its first write_cfg didn't mention (this bit
         # us live: a new REPL's write_cfg(open_loop=1) cleared servo_enable
         # and gracefully stopped the servo mid-measurement).
-        self._cfg = 0
+        self.sync_shadow()
+
+    def sync_shadow(self) -> None:
+        """Reload the local CFG shadow from the hardware. Call it before
+        writing when another client (a second tool, the dashboard) may have
+        changed CFG since this connection last looked -- otherwise the next
+        write_cfg would put that client's word back the way this one
+        remembers it."""
+        cfg = 0
         for k, w in enumerate(self.read_words(CFG_BASE, CFG_WORDS)):
-            self._cfg |= w << (32 * k)
+            cfg |= w << (32 * k)
+        self._cfg = cfg
 
     def close(self):
         self.sock.close()
@@ -222,16 +232,4 @@ class Board:
             time.sleep(0.002)
         else:
             raise TimeoutError(f"FIFO filled only {count}/{FIFO_DEPTH}")
-        raw = self.pop_words(FIFO_ADDR, FIFO_DEPTH).astype(np.int64)
-
-        lo = (raw & 0xFFFF).astype(np.int32)
-        hi = ((raw >> 16) & 0xFFFF).astype(np.int32)
-        if decimated:
-            lo[lo >= 1 << 15] -= 1 << 16      # s16: i_dec>>6
-            hi[hi >= 1 << 15] -= 1 << 16      # s16: e_dec>>6
-        else:
-            lo &= 0x3FFF
-            hi &= 0x3FFF
-            lo[lo >= 1 << 13] -= 1 << 14      # s14 IN1
-            hi[hi >= 1 << 13] -= 1 << 14      # s14 IN2
-        return np.stack([lo, hi], axis=1)
+        return decode_words(self.pop_words(FIFO_ADDR, FIFO_DEPTH), decimated)

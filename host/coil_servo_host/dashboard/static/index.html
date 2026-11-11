@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coil servo dashboard</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a href="#/" class="brand">Coil servo</a>
+  <span id="sim-banner" class="badge sim" hidden>SIMULATION — no hardware</span>
+  <span class="spacer"></span>
+  <span id="stream-state" class="pill">connecting…</span>
+  <span id="who" class="pill"></span>
+</header>
+
+<main id="view"></main>
+
+<dialog id="confirm">
+  <form method="dialog">
+    <h2 id="confirm-title"></h2>
+    <div id="confirm-body"></div>
+    <div class="row end">
+      <button value="cancel" class="btn">Cancel</button>
+      <button value="ok" id="confirm-ok" class="btn danger"></button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" hidden></div>
+
+<script src="/static/plot.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
