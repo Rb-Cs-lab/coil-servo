@@ -31,7 +31,11 @@
 // latency, nothing against the 1 us PI tick), and the limiting step is
 // split over two clocks -- phase 0 measures delta = target - acc, phase 1
 // moves acc by 2*rate (or onto the target). The average rate is unchanged;
-// every register-to-register path is one adder or comparator deep. A
+// every register-to-register path is one adder or comparator deep. The
+// rate choice (toward/away from zero) is also made and registered in
+// phase 0 (second build: -15 ps on acc -> zero-detect -> rate mux -> adder
+// -> acc); acc cannot change between the phases, so this is the same
+// decision the move phase would make. A
 // hold/bypass/snap in phase 0 invalidates that measurement, so phase 1
 // never applies a stale step.
 
@@ -61,9 +65,10 @@ module servo_slew
   reg  signed [27:0] t_p;               // target as measured in phase 0
   reg  signed [28:0] delta_r;           // t_p - acc, measured in phase 0
   reg                phase, valid;
+  reg  signed [28:0] r2;                // 2 x the rate chosen in phase 0
 
-  wire away = ((acc >= 0) && (delta_r > 0)) || ((acc <= 0) && (delta_r < 0));
-  wire signed [28:0] r2 = {12'd0, (away ? rate_up : rate_down), 1'b0};
+  wire signed [28:0] delta = t_r - acc;
+  wire away = ((acc >= 0) && (delta > 0)) || ((acc <= 0) && (delta < 0));
   wire signed [27:0] acc_up = acc + r2[27:0];
   wire signed [27:0] acc_dn = acc - r2[27:0];
 
@@ -76,6 +81,7 @@ module servo_slew
       acc <= 28'sd0;
       t_p <= 28'sd0;
       delta_r <= 29'sd0;
+      r2 <= 29'sd0;
       phase <= 1'b0;
       valid <= 1'b0;
     end else begin
@@ -90,7 +96,8 @@ module servo_slew
         acc <= t_r;
         valid <= 1'b0;
       end else if (!phase) begin
-        delta_r <= t_r - acc;           // measure
+        delta_r <= delta;               // measure
+        r2 <= {12'd0, (away ? rate_up : rate_down), 1'b0};
         t_p <= t_r;
         valid <= 1'b1;
       end else begin

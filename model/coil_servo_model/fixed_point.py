@@ -213,6 +213,7 @@ class SlewLimiter:
         self.snap_r = False
         self.t_p = 0          # target as measured in phase 0
         self.delta_r = 0
+        self.r2 = 0           # 2 x the rate chosen in phase 0
         self.phase = 0
         self.valid = False
 
@@ -225,18 +226,19 @@ class SlewLimiter:
              snap_win: int = 0) -> int:
         """Advance one clock; returns the output after the edge."""
         acc, t_p, delta, valid = self.acc, self.t_p, self.delta_r, self.valid
+        r2 = self.r2
         if hold_zero:
             acc, valid = 0, False
         elif bypass or self.snap_r:
             acc, valid = self.t_r, False
-        elif self.phase == 0:                       # measure
+        elif self.phase == 0:                       # measure, choose rate
             delta, t_p, valid = self.t_r - self.acc, self.t_r, True
+            away = (self.acc >= 0 and delta > 0) or (self.acc <= 0 and delta < 0)
+            r2 = 2 * (rate_up if away else rate_down)
         else:                                       # move
             valid = False
             if self.valid:
-                d = self.delta_r
-                away = (self.acc >= 0 and d > 0) or (self.acc <= 0 and d < 0)
-                r2 = 2 * (rate_up if away else rate_down)
+                d, r2 = self.delta_r, self.r2
                 if d > r2:
                     acc = self.acc + r2
                 elif d < -r2:
@@ -245,6 +247,7 @@ class SlewLimiter:
                     acc = self.t_p
         # all registers update together (non-blocking)
         self.acc, self.t_p, self.delta_r, self.valid = acc, t_p, delta, valid
+        self.r2 = r2
         self.phase ^= 1
         self.t_r = target << self.FRAC
         self.snap_r = abs(target) < snap_win
