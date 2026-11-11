@@ -137,26 +137,35 @@ def test_bench_profile_loads_and_matches_the_model():
     ch = load_channel("mot_bench")
     cfg, m = ch["cfg"], ch["model"]
     assert m == BENCH_CHANNELS["mot_bench"]
-    assert ch["host"] == load_channel("mot")["host"]      # same board
-    assert ch["i_fs"] == pytest.approx(20.0)               # 10 LEM turns
-    assert m.lem_turns == 10 and m.I_supply_max == 3.0
+    mot = load_channel("mot")
+    assert ch["host"] == mot["host"]                       # same board
+    assert ch["i_fs"] == pytest.approx(200.0)              # LEM: one pass
+    assert m.lem_turns == 1 and m.I_supply_max == 3.0
 
     # current ordering: rated < trip < supply limit < I_FS
     trip_amps = cfg["trip_level"] * m.amps_per_lsb
     assert m.I_rated < trip_amps < m.I_supply_max < ch["i_fs"]
-    assert cfg["trip_level"] == round(2.8 / 20.0 * 8192) == 1147
+    assert cfg["trip_level"] == round(2.8 / 200.0 * 8192) == 115
+    # the trip fires when the 1 us-averaged reading exceeds 115 counts; the
+    # supply limit is ~123 counts: the 4-sample persistence cannot carry the
+    # current past it (closed-loop rise near 2.8 A ~1 mA/us), so the margin
+    # is the ~8 counts (0.19 A) the IN1 offset must not eat (doc 4.1)
+    margin_counts = m.I_supply_max / m.amps_per_lsb - cfg["trip_level"]
+    assert 7 < margin_counts < 9
 
     # clamp set directly (4000), floor still 90 % of the dead zone
     assert cfg["out_clamp"] == 4000 == m.clamp_counts
     assert cfg["u_floor"] == round(0.9 * m.dead_zone * 8192) == 3234
 
-    # same physical ramp rates, so 10x the codes at I_FS = 20 A
-    assert cfg["slew_up"] == slew_rate_code(200e3, 20.0) == 10737
-    assert cfg["slew_down"] == slew_rate_code(50e3, 20.0) == 2684
-    assert cfg["zero_win"] == round(0.1 / 20.0 * 8192) == 41
+    # same sensor scale and ramp rates as production -> same codes
+    assert cfg["slew_up"] == slew_rate_code(200e3, 200.0) == 1074
+    assert cfg["slew_down"] == slew_rate_code(50e3, 200.0) == 268
+    assert cfg["zero_win"] == mot["cfg"]["zero_win"] == 20
     assert cfg["trip_timeout"] == 375_000
 
-    # gains: suggest_gains on the bench plant (plant gain ~48)
+    # gains: suggest_gains on the bench plant = the production gains
+    assert (cfg["kp_mant"], cfg["kp_shift"], cfg["ki_mant"], cfg["ki_shift"]) == \
+        tuple(mot["cfg"][k] for k in ("kp_mant", "kp_shift", "ki_mant", "ki_shift"))
     kp, ki_tick = suggest_gains(m)
     assert decode_gain(cfg["kp_mant"], cfg["kp_shift"]) == pytest.approx(kp, rel=1e-3)
     assert decode_gain(cfg["ki_mant"], cfg["ki_shift"]) == pytest.approx(ki_tick, rel=1e-3)
@@ -165,13 +174,13 @@ def test_bench_profile_loads_and_matches_the_model():
     assert cfg["out2_enable"] == 0 and cfg["boost_mode"] == 0
     assert "servo_enable" not in cfg
     text = summary(ch)
-    assert "supply limit" in text and "LEM 10 primary turns" in text
+    assert "supply limit" in text and "primary turns" not in text
 
 
 BENCH_EXTRA = "I_supply_max = {sup}\nlem_turns = {turns}\n"
 
 
-def bench_toml(tmp_path, sup=3.0, turns=10, i_rated=2.5, trip=2.8, **kw):
+def bench_toml(tmp_path, sup=3.0, turns=1, i_rated=2.5, trip=2.8, **kw):
     extra = BENCH_EXTRA.format(sup=sup, turns=turns) + kw.pop("extra", "")
     return write_toml(tmp_path, name="mot_bench", i_rated=i_rated, trip=trip,
                       extra=extra, **kw)
@@ -179,7 +188,7 @@ def bench_toml(tmp_path, sup=3.0, turns=10, i_rated=2.5, trip=2.8, **kw):
 
 def test_loader_accepts_a_valid_bench_file(tmp_path):
     ch = load_channel("mot_bench", path=bench_toml(tmp_path))
-    assert ch["i_fs"] == pytest.approx(20.0)
+    assert ch["i_fs"] == pytest.approx(200.0)
     # no out_clamp_counts in this file -> the clamp is derived from I_rated
     assert ch["cfg"]["out_clamp"] == ch["model"].clamp_counts
     assert ch["model"].out_clamp_counts is None
@@ -200,6 +209,7 @@ def test_loader_rejects_unsafe_bench_configs(tmp_path, kw):
 
 
 def test_lem_turns_change_the_scale(tmp_path):
+    # kept as a parameter (not used on the bench as built)
     ch = load_channel("mot_bench", path=bench_toml(tmp_path, turns=5))
     assert ch["i_fs"] == pytest.approx(40.0)
     assert ch["cfg"]["trip_level"] == round(2.8 / 40.0 * 8192)

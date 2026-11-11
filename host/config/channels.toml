@@ -73,12 +73,13 @@ out2_invert = 0
 boost_mode = 0
 
 # Low-current TEST PROFILE for the MOT channel (docs/bench_supply_test.md):
-# the same board, coil and power stage, but powered from a current-limited
-# BENCH SUPPLY (5 V, 3 A limit) in place of the SE-600-5, with the coil lead
-# wound 10 times through the LEM. Use this name with every host tool
-# (deploy/check/watch/step/sweep mot_bench) ONLY while the bench supply is
-# connected and the LEM carries 10 turns -- with 1 turn every current
-# reading is 10x too small. Everything here is PROVISIONAL unless marked.
+# the same board and power stage, powered from a current-limited BENCH
+# SUPPLY (5 V, 3 A limit) in place of the SE-600-5, driving ONE coil of the
+# pair (its L/R are PROVISIONAL model values in channels.py: ~9 uH, 3.2 mOhm).
+# The LEM stays on the 4/0 lead, one pass: same sensor scale as [mot]. Use
+# this name with every host tool (deploy/check/watch/step/sweep mot_bench)
+# ONLY while the bench supply is connected -- never on the SE-600-5.
+# Everything here is PROVISIONAL unless marked.
 
 [mot_bench]
 board_host = "192.168.0.65"     # the MOT board (same board as [mot])
@@ -98,11 +99,11 @@ gain_opamp = 7.98               # OPA994 stage, 1 + 6.98k/1k
 out1_terminated = true          # OUT1 into 50 ohm -- PROVISIONAL (check 3.2)
 R_burden = 10.0                 # ohm, LEM burden
 G_inamp = 1.0                   # AD8421 gain -- PROVISIONAL
-lem_turns = 10                  # coil lead through the LEM 10x -> I_FS 20 A,
-                                # 2.44 mA per ADC count -- PROVISIONAL: count
-                                # the turns that really fit the aperture
+lem_turns = 1                   # 4/0 lead through the LEM once -> I_FS 200 A,
+                                # 24.4 mA per ADC count (3 A ~ 123 counts)
 
 # --- derived-value overrides ---
+# PENDING USER CONFIRMATION (deviates from "clamp = 100 % of rated").
 # Clamp set directly, NOT derived from I_rated: at 2.5 A the derived clamp
 # (~3637 counts) sits only ~44 counts above the nominal dead zone (~3593),
 # inside the dead-zone uncertainty, so it could block the first open-loop
@@ -117,32 +118,36 @@ out_clamp_counts = 4000
 floor_frac = 0.9                # floor at 90 % of the dead zone (decided)
 
 # --- loop ---
-# analysis.suggest_gains on this profile: the commissioned gains rescaled by
-# the model's plant gain G_pass/I_FS ~ 47.9 (10x the production value,
-# because I_FS is 10x smaller) -- PROVISIONAL: set them from the measured
-# step response. If the real G_pass near threshold is lower, these give a
-# slower but still stable loop.
-kp = 0.010443
-ki = 314.95                     # 1/s
+# analysis.suggest_gains on this profile = the production values (same bank,
+# same sensor scale: plant gain G_pass/I_FS ~ 4.79) -- PROVISIONAL: set them
+# from the measured step response. If the real G_pass near threshold is
+# lower, these give a slower but still stable loop.
+kp = 0.1044
+ki = 3149.0                     # 1/s
 deadband_counts = 8             # PROVISIONAL
 dither_enable = 1               # OUT1 dither: one OUT1 count is ~0.12 A,
-                                # ~5 % of a 2.5 A hold -- essential here
+                                # ~5 % of a 2.5 A hold
 
 # --- protection ---
-trip_amps = 2.8                 # firmware trip: above every allowed setpoint
-                                # (2.5 A) and below the supply limit (3.0 A),
-                                # so the trip fires before the supply limits
+trip_amps = 2.8                 # firmware trip, 115 counts (2.81 A): above
+                                # every allowed setpoint (2.5 A), ~8 counts
+                                # (0.19 A) below the supply limit (123
+                                # counts). Fires before the supply limits ONLY
+                                # if the IN1 offset is not more negative than
+                                # ~-0.15 A -- check its sign first (the Nov
+                                # 2026 offset read +0.29 A: trip then acts at
+                                # ~2.5 A true)
 trip_ticks = 4                  # consecutive ~1 us samples above the level
 trip_timeout_us = 3000.0        # same as production; freewheel from 2.5 A
-                                # takes only ~0.05-0.1 ms
+                                # takes only ~30-40 us (one coil)
 slew_up_amps_per_ms = 200.0     # same physical rates as production: they
 slew_down_amps_per_ms = 50.0    # are set by rail/L and V_f/L, not by the
                                 # current scale
 
 # --- flip / stop ---
-zero_win_amps = 0.1             # flip zero window -- PROVISIONAL: 41 counts,
-                                # ~3x the expected IN1 offset (~1.4 mV =
-                                # ~28 mA at I_FS 20 A); calibrate first
+zero_win_amps = 0.5             # flip zero window -- PROVISIONAL: 20 counts,
+                                # as [mot]; the IN1 offset (~0.29 A) must be
+                                # calibrated first. 20 % of rated on the bench
 zero_holdoff_ticks = 64         # decimated samples (~66 us of quiet)
 deadtime_us = 1.0               # PROVISIONAL
 settle_us = 100.0               # chamber eddy PLACEHOLDER -- unmeasured

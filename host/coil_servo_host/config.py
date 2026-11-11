@@ -184,9 +184,12 @@ def summary(ch: dict) -> str:
         f"channel {m.name}: rail {m.V_rail:g} V, rated {m.I_rated:g} A",
     ]
     if m.I_supply_max is not None:
+        margin = m.I_supply_max / m.amps_per_lsb - c["trip_level"]
         lines.append(
             f"  supply limit       = {m.I_supply_max:g} A (current-limited "
-            f"supply: the hard limit; the firmware trip sits below it)")
+            f"supply: the hard limit; the firmware trip sits "
+            f"{margin:.0f} counts = {margin * m.amps_per_lsb:.2f} A below it; "
+            f"an IN1 offset more negative than that keeps it from firing)")
     lines += [
         f"  sensor scale I_FS  = {m.I_FS:g} A at +1 V on IN1 "
         f"({m.amps_per_lsb * 1e3:.2f} mA per ADC count{turns})",
