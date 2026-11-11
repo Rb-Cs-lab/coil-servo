@@ -16,3 +16,7 @@ uImage
 __pycache__
 *.egg-info
 sim/sim_build
+
+# Claude Code local state (agent worktrees, local settings)
+.claude/worktrees/
+.claude/settings.local.json
