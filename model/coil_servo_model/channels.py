@@ -191,18 +191,24 @@ CHANNELS = {
     "y_shim": Channel(name="y_shim", L=57e-6, R_coil=14.2e-3, I_rated=60.0),
 }
 
-# Low-current test profiles (docs/bench_supply_test.md): the same coil and
-# power stage, but fed from a current-limited bench supply in place of the
-# SE-600-5. Kept out of CHANNELS (whose entries are the production channels
-# and whose tests assume a 100 A-class supply). All bench values PROVISIONAL.
+# Low-current test profiles (docs/bench_supply_test.md): the MOT power stage
+# fed from a current-limited bench supply in place of the SE-600-5, driving
+# ONE coil of the anti-Helmholtz pair. Kept out of CHANNELS (whose entries
+# are the production channels and whose tests assume a 100 A-class supply).
+# All bench values PROVISIONAL.
 BENCH_CHANNELS = {
     "mot_bench": replace(
         CHANNELS["mot"], name="mot_bench",
+        # One coil, not the pair: not calculated. The pair is 16 uH series-
+        # opposed (2 L1 - 2 M), so one coil is L_pair/2 + M ~ 8-10 uH --
+        # PROVISIONAL estimate. At <= 3 A it only sets ramp and freewheel
+        # times of a few tens of us. R: half the pair, PROVISIONAL.
+        L=9e-6,
+        R_coil=3.2e-3,
         I_rated=2.5,         # highest closed-loop setpoint on the bench
         I_supply_max=3.0,    # bench supply CC limit -- the real hard limit
-        lem_turns=10,        # coil lead wound 10x through the LEM -> I_FS = 20 A
-                             # (PROVISIONAL: confirm 10 turns fit the aperture)
-        # Clamp set directly, ~11 % (407 counts, ~0.4 V of gate) above the
+        lem_turns=1,         # LEM on the 4/0 lead, one pass: I_FS = 200 A
+        # Clamp set directly (PENDING USER CONFIRMATION), ~11 % (407 counts, ~0.4 V of gate) above the
         # nominal dead zone: at 2.5 A the clamp derived from I_rated would
         # sit only ~44 counts above it, inside the dead-zone uncertainty and
         # V_th's thermal drift, and could block the first open-loop

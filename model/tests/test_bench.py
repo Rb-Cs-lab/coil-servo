@@ -1,23 +1,25 @@
-"""The low-current bench profile (docs/bench_supply_test.md): the MOT coil
-and power stage on a current-limited bench supply (5 V, 3 A), coil lead
-wound 10x through the LEM.
+"""The low-current bench profile (docs/bench_supply_test.md): the MOT power
+stage on a current-limited bench supply (5 V, 3 A) driving ONE coil of the
+pair (L ~9 uH PROVISIONAL), LEM on the 4/0 lead with one pass.
 
 What changes against the production MOT channel:
   * the supply's constant-current (CC) limit caps the coil current;
-  * I_FS = 20 A (2.44 mA per ADC count), so the normalized plant gain is
-    10x larger (~48) and the suggested gains 10x smaller -- the loop's
-    crossover and phase margin are unchanged;
-  * one OUT1 count is still ~0.12 A (G_pass does not depend on the sensor),
-    ~5 % of a 2.5 A hold: without the dither the hold hunts by several %;
+  * the coil is one coil, not the pair -- at <= 3 A L only sets ramp and
+    freewheel times of tens of us;
+  * sensing is unchanged: I_FS = 200 A, 24.4 mA per ADC count, so 3 A is
+    only ~123 counts; plant gain and suggested gains are the production
+    ones;
+  * one OUT1 count is ~0.12 A, ~5 % of a 2.5 A hold: without the dither
+    the hold hunts by a few %;
   * the RUN floor gap below the dead zone (10 % of it, ~42 A worth of gate
     at G_pass) is crossed by the integrator at a rate proportional to the
     step size, so small steps from zero are slow.
 
 Tolerance band. The 0.1 % spec is a production number (0.1 A at 100 A).
-0.1 % of a 2 A target is 2 mA, below one ADC count (2.44 mA) and far below
-one OUT1 count (117 mA), so the bench tests use +-2.5 mA = 0.1 % of the
-bench's rated 2.5 A (about one ADC count) as their band; the fixed-point
-tests need the dither to get there.
+0.1 % of 2.5 A is 2.5 mA, a tenth of one ADC count (24.4 mA): the board
+cannot even see it. The bench tests therefore use +-1 ADC count (24.4 mA,
+~1 % of 2.5 A) as their settling band -- the measurement's resolution, not
+the spec.
 """
 
 import math
@@ -36,7 +38,7 @@ BENCH = BENCH_CHANNELS["mot_bench"]
 MOT = CHANNELS["mot"]
 DEADBAND_COUNTS = 8
 FLOOR = round(0.9 * BENCH.dead_zone * 8192)      # RUN floor, counts
-BAND = 2.5e-3                                     # amps, see module doc
+BAND = BENCH.amps_per_lsb                         # 1 ADC count, see module doc
 
 
 def hold(plant, v1, t):
@@ -71,12 +73,16 @@ def band_frac(target):
 # --- profile ------------------------------------------------------------
 
 def test_bench_profile_is_the_mot_stage_with_a_limited_supply():
-    # same coil, bank and rail as the MOT; only supply limit, sensing and
-    # the protection-related values differ
-    same = replace(BENCH, name="mot", I_rated=MOT.I_rated, I_supply_max=None,
-                   lem_turns=1, out_clamp_counts=None)
+    # same bank, bridge, rail and sensing as the MOT; only the coil (one of
+    # the pair), the supply limit and the protection-related values differ
+    same = replace(BENCH, name="mot", L=MOT.L, R_coil=MOT.R_coil,
+                   I_rated=MOT.I_rated, I_supply_max=None,
+                   out_clamp_counts=None)
     assert same == MOT
     assert "mot_bench" not in CHANNELS      # production table untouched
+    # one coil of a series-opposed pair: L_pair/2 + M, PROVISIONAL
+    assert MOT.L / 2 <= BENCH.L <= 10e-6
+    assert BENCH.R_coil == pytest.approx(MOT.R_coil / 2)
 
 
 def test_defaults_leave_production_unchanged():
@@ -88,15 +94,21 @@ def test_defaults_leave_production_unchanged():
         assert c.I_FS == pytest.approx(200.0)
 
 
-def test_lem_turns_multiply_the_sensitivity():
-    # N primary turns: N x the ampere-turns for the same coil current
-    assert BENCH.lem_turns == 10
-    assert BENCH.I_FS == pytest.approx(20.0)
-    assert BENCH.amps_per_lsb == pytest.approx(2.44e-3, rel=1e-3)
+def test_bench_sensing_is_the_production_scale():
+    # LEM on the 4/0 lead, one pass: 3 A is only ~123 ADC counts
+    assert BENCH.lem_turns == 1
+    assert BENCH.I_FS == pytest.approx(200.0)
+    assert BENCH.amps_per_lsb == pytest.approx(24.4e-3, rel=1e-3)
+    assert BENCH.I_supply_max / BENCH.amps_per_lsb == pytest.approx(123, abs=1)
+
+
+def test_lem_turns_and_in_amp_gain_multiply_the_sensitivity():
+    # N primary turns: N x the ampere-turns for the same coil current. The
+    # optional alternative, in-amp gain (G = 1 + 9.9k/R_G), scales the same.
     for n in (1, 2, 5, 10):
         assert replace(MOT, lem_turns=n).I_FS == pytest.approx(200.0 / n)
-    # the alternative, in-amp gain, scales the same way
-    assert replace(MOT, G_inamp=10.0).I_FS == pytest.approx(BENCH.I_FS)
+    assert replace(MOT, G_inamp=10.0).I_FS == pytest.approx(20.0)
+    assert 1 + 9.9e3 / 1.1e3 == pytest.approx(10.0)
 
 
 def test_current_ordering():
@@ -131,7 +143,7 @@ def test_heartbeat_trip_energy_is_tiny():
     # bridge opened at the supply limit: the coil energy goes back into the
     # bench supply's output capacitor
     energy = 0.5 * BENCH.L * BENCH.I_supply_max ** 2
-    assert energy == pytest.approx(72e-6, rel=0.01)
+    assert energy < 50e-6                     # ~40 uJ with L ~9 uH
     plant = Plant(BENCH, i0=BENCH.I_supply_max)
     plant.bridge_enabled = False
     assert hold(plant, 0.0, 20e-6) == 0.0     # gone within ~7 us
@@ -152,7 +164,7 @@ def test_supply_limit_does_not_change_the_rise_below_it():
     # below the limit the rise is the 5 V compliance ramp, as without one
     v = BENCH.clamp_counts / 8192
     limited, free = Plant(BENCH), Plant(replace(BENCH, I_supply_max=None))
-    for _ in range(5):                      # ~5 us, ~1.5 A at ~0.3 A/us
+    for _ in range(4):                      # ~4 us, ~2.2 A at ~0.55 A/us
         limited.step(v, 0.0, False, T_S)
         free.step(v, 0.0, False, T_S)
         assert limited.I == free.I < BENCH.I_supply_max
@@ -166,8 +178,8 @@ def test_freewheel_is_not_affected_by_the_supply_limit():
         a.step(0.0, 0.0, False, T_S)
         b.step(0.0, 0.0, False, T_S)
         assert a.I == b.I
-    # ~ L I / V_f: tens of us from 2.5 A
-    assert 30e-6 < BENCH.freewheel_time < 80e-6
+    # ~ L I / V_f: a few tens of us from 2.5 A (one coil, L ~9 uH)
+    assert 15e-6 < BENCH.freewheel_time < 60e-6
 
 
 def test_none_limit_reproduces_production_behaviour():
@@ -186,17 +198,15 @@ def test_plant_refuses_to_start_above_the_supply_limit():
 
 # --- loop: gains and margins --------------------------------------------
 
-def test_bench_plant_gain_and_gains_scale_with_the_turns():
-    K = plant_gain(BENCH)
-    assert K == pytest.approx(10 * plant_gain(MOT))
-    kp, ki_tick = suggest_gains(BENCH)
-    kp_mot, ki_mot = suggest_gains(MOT)
-    assert kp == pytest.approx(kp_mot / 10)
-    assert ki_tick == pytest.approx(ki_mot / 10)
+def test_bench_gains_are_the_production_ones():
+    # same bank, same sensor scale -> same plant gain (~4.8) and gains (the
+    # coil's L is not in the small-signal loop)
+    assert plant_gain(BENCH) == pytest.approx(plant_gain(MOT))
+    assert 4.0 < plant_gain(BENCH) < 5.5
+    assert suggest_gains(BENCH) == pytest.approx(suggest_gains(MOT))
 
 
 def test_bench_gains_encode_precisely():
-    # ~10x smaller gains still fit the s18 mantissa + shift with ~17 bits
     kp, ki_tick = suggest_gains(BENCH)
     for g, bits in ((kp, 5), (ki_tick, 6)):
         mant, shift = encode_gain(g, bits)
@@ -217,7 +227,8 @@ def test_bench_gains_stay_stable_across_the_near_threshold_g_fs(g_fs):
     # most likely LOWER than 50 A/V there. Lower g_fs -> lower plant gain
     # -> the nominal gains give a slower loop (crossover down to ~0.5 kHz
     # at 5 A/V) but more phase margin; ballast-limited -> ~7 kHz, still
-    # stable. The measured G_pass then sets the gains.
+    # stable. The measured G_pass then sets the gains -- and the same
+    # gains then serve the 100 A run only if G_pass there agrees.
     kp, ki_tick = suggest_gains(BENCH)
     f_c, pm = crossover_and_margin(replace(BENCH, g_fs=g_fs), kp, ki_tick / T_S)
     assert 300 < f_c < 10e3, f"crossover {f_c:.0f} Hz"
@@ -238,27 +249,29 @@ def test_float_steps_from_an_operating_point_meet_spec(i0, target):
 
 
 def test_fixed_point_hold_hunts_without_dither_and_not_with_it():
-    # DOCUMENTED: one OUT1 count is ~0.12 A, ~6 % of a 2 A hold.
+    # DOCUMENTED: one OUT1 count is ~0.12 A, ~8 % of a 1.5 A hold. Whether
+    # the undithered hold hunts depends on where the nearest OUT1 code's
+    # current falls against the 24 mA ADC steps (in this noise-free model:
+    # ~40-50 mA p-p at 1.0-1.5 A, none at some other points); with the
+    # dither it never does. Either way the hold sits within one ADC count.
     count_amps = BENCH.G_pass / 8192
     ptp = {}
     for dither in (False, True):
-        res = fixed_run(BENCH, lambda t: 2.0, 3e-3, i0=2.0, dither=dither)
+        res = fixed_run(BENCH, lambda t: 1.5, 3e-3, i0=1.5, dither=dither)
         tail = res.I[res.t > 1e-3]
         ptp[dither] = np.ptp(tail)
-        assert abs(tail.mean() - 2.0) < BENCH.amps_per_lsb
-    assert ptp[False] > 0.01 * 2.0, f"no hunting? {ptp[False]}"   # > 1 %
+        assert abs(tail.mean() - 1.5) < BENCH.amps_per_lsb
+    assert ptp[False] > 1.5 * BENCH.amps_per_lsb, f"no hunting? {ptp[False]}"
     assert ptp[True] < 0.1 * count_amps                            # ~mA
 
 
-def test_fixed_point_step_needs_the_dither_to_settle_in_band():
-    # 1 -> 2 A through the bit-exact mirror: with the dither it settles
-    # within +-2.5 mA (~1 ADC count) in < 1 ms; without, it never does.
-    with_d = fixed_run(BENCH, lambda t: 2.0, 3e-3, i0=1.0, dither=True)
-    ts = settling_time(with_d.t, with_d.I, 2.0, band_frac(2.0))
+def test_fixed_point_step_settles_within_one_adc_count():
+    # 1 -> 2 A through the bit-exact mirror, dither on: settles within
+    # +-1 ADC count (24.4 mA) in < 1 ms. (Without the dither the hold hunts
+    # by ~2 counts p-p -- test above.)
+    res = fixed_run(BENCH, lambda t: 2.0, 3e-3, i0=1.0, dither=True)
+    ts = settling_time(res.t, res.I, 2.0, band_frac(2.0))
     assert ts is not None and ts < 1e-3, f"settled in {ts}"
-    without = fixed_run(BENCH, lambda t: 2.0, 3e-3, i0=1.0, dither=False)
-    ts = settling_time(without.t, without.I, 2.0, band_frac(2.0))
-    assert ts is None or ts > 2e-3
 
 
 def test_small_steps_from_zero_are_slow_with_the_90_percent_floor():
@@ -291,10 +304,8 @@ def test_floor_near_the_measured_dead_zone_speeds_up_steps_from_zero(target, t_m
 
 def test_slew_limited_moves_at_bench_currents():
     # The production ramp rates carry over: up 200 A/ms (below the 5 V /
-    # 16 uH ~ 310 A/ms compliance rate), down 50 A/ms. At 2-3 A the body
-    # diode V_f is likely lower than the model's 0.8 V; even at 0.6 V
-    # (freewheel ~38 A/ms, slower than the 50 A/ms ramp) the short ramp
-    # does not undershoot.
+    # 9 uH ~ 550 A/ms compliance rate of one coil), down 50 A/ms (below
+    # V_f/L ~ 65-90 A/ms for V_f 0.6-0.8 V).
     up = float_run(BENCH, lambda t: min(2.5, 200e3 * t), 3e-3,
                    floor=FLOOR_NEAR / 8192)
     assert np.max(up.I) < 2.5 + BAND
