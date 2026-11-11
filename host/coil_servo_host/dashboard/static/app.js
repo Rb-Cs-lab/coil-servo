@@ -29,7 +29,8 @@ const FAULT_NOTE = `<b>The red FAULT LED on the safety logic board is not visibl
   here.</b> Its heartbeat latch is not wired back to the Red Pitaya (DIO5 is
   unconnected in the MVP), so a latch trip only shows up as the current
   dropping while the bridge is still enabled. If in doubt, look at the
-  logic board.`;
+  logic board. <b>Before pressing the latch reset, press STOP and wait for
+  IDLE</b> (dropping arm alone does not stop the servo).`;
 
 const S = {
   cards: [],            // [{id, title, profile, device, style}]
@@ -390,7 +391,9 @@ function renderControls(card, sim) {
       <button class="btn" id="b-trip">trip_ack</button>
       <button class="btn" id="b-flip">flip_fault_ack</button>
       <div class="small muted">Acknowledges firmware states only. The
-      hardware latch on the logic board is reset by hand (disarm first).</div></fieldset>
+      hardware latch on the logic board is reset by hand: press STOP first
+      and wait for IDLE, then reset the latch, then Enable and a fresh arm
+      edge.</div></fieldset>
     <fieldset class="needs-held"><legend>Measurements — FIRST RUNS: DUMMY RESISTIVE LOAD ONLY</legend>
       <div class="row"><label>step to <input type="number" id="step-a" step="0.5" value="${Math.min(5, rated)}"> A</label>
         <label class="small">or OUT1 <input type="number" id="step-c" step="1" placeholder="counts"> counts (open loop)</label>

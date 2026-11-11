@@ -430,7 +430,8 @@ class CoilServoChannel(Device):
                          "bridge is enabled: possibly the logic-board latch "
                          "tripped (red FAULT LED) -- or the supply is off or "
                          "tripped, or the circuit is open. Look at the logic "
-                         "board and the supply.")
+                         "board and the supply. Before a latch reset: press "
+                         "STOP and wait for IDLE.")
         if self.readback is not None and s["map_rev"] == MAP_REV \
                 and not self.held:
             amber.append("board settings match no profile (not configured "

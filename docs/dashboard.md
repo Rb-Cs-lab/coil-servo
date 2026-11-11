@@ -275,8 +275,14 @@ written to the action log with the client's IP address.
   `..._sweep.csv`. STOP ends it.
 
 Nothing on this page clears a hardware fault: the heartbeat latch on the
-logic board is reset by hand, and the operating rule stands — **disarm
-(DIO4 low) before pressing the latch reset**.
+logic board is reset by hand. The operating rule: **press STOP first and
+wait for IDLE (bridge enabled = no), then press the latch reset** — if the
+heartbeat dropped while the Pitaya kept running, the integrator may be
+wound up, and a reset with the servo still running would re-close the
+bridge with OUT1 at the clamp. Dropping arm (DIO4) alone is *not* enough:
+it never stops a running servo. STOP is always accepted (also during the
+look-only lock). To run again after the reset: Enable, then a fresh arm
+edge.
 
 ## Logs
 
