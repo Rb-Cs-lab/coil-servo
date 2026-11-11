@@ -85,7 +85,7 @@ Needed by anyone touching the loop design; no Vivado required.
    cocotb, and matplotlib. Without the `-e .` part, `pytest` fails with
    import errors.
 4. Check everything: `pytest` from the repo root should end in
-   "224 passed" (model tests + simulated-hardware tests + host-tool tests;
+   "230 passed" (model tests + simulated-hardware tests + host-tool tests;
    about 2 minutes, most of it the simulated FPGA).
 
 ### B. FPGA build machine (Ubuntu 24.04 or 22.04 only)

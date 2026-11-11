@@ -21,9 +21,17 @@ Two time scales:
     the coarse state, including setpoint writes made during the window (so
     step.capture_step shows a real model step response).
 
-Not simulated: flips (polarity stays 0, no TIMEOUT_HOLD), the raw 125 MS/s
-capture (decimated only), the heartbeat-latch board, the DIO5 fault input,
-sigma-delta dither in captures (approximated by its average).
+Not simulated: flips (polarity stays 0, no TIMEOUT_HOLD), the heartbeat-
+latch board, the DIO5 fault input, sigma-delta dither in captures
+(approximated by its average). The raw 125 MS/s capture (capture_sel = 0)
+is only a quiet record of the sensor zero: IN1/IN2 codes = the simulated
+sensor offsets + noise (what coil_servo_host.zero measures; meaningful with
+the servo stopped).
+
+Sensor zero offsets: `sensor_offset_amps` = (IN1, IN2) is what the
+simulated LEM / control-computer output reads with nothing flowing; like
+the fabric, the simulation subtracts CFG in1_offset from IN1 before the
+status and decimated captures see it.
 
 Inputs a real board gets from the outside world are sim-only methods:
 set_arm(level) is the DIO4 arm line; inject_trip() forces an over-current
@@ -75,7 +83,8 @@ class SimBoard(Board):
     def __init__(self, ch: dict, map_rev: int = MAP_REV,
                  max_clamp: int | None = None, check_map: bool = True,
                  seed: int | None = None, clock=time.monotonic,
-                 variants=()):
+                 variants=(), sensor_offset_amps=(0.0, 0.0),
+                 build_id: int = 0):
         """ch: load_channel() result. map_rev: what the simulated bitstream
         reports (0 simulates the old 2026-08-27 image). variants: other
         load_channel() results for the same board (see the module doc)."""
@@ -85,6 +94,8 @@ class SimBoard(Board):
         self.m = ch["model"]
         self.i_fs = ch["i_fs"]
         self.map_rev = map_rev
+        self.sensor_offset_amps = tuple(sensor_offset_amps)
+        self.build_id = build_id
         self.max_clamp = max_clamp
         self._map_checked = not check_map
         self._clock = clock
@@ -136,7 +147,8 @@ class SimBoard(Board):
     def pop_words(self, addr: int, count: int) -> np.ndarray:
         if addr != FIFO_ADDR or self.fifo is None:
             return np.zeros(count, dtype=np.uint32)
-        words = self._run_capture(count)
+        words = (self._run_raw(count) if self.fifo["raw"]
+                 else self._run_capture(count))
         self.fifo = None                 # drained
         return words
 
@@ -198,6 +210,7 @@ class SimBoard(Board):
         if old["fifo_rst"] and not new["fifo_rst"]:
             # FIFO restarts: remember where the window begins
             self.fifo = {"t0": now, "I": self.I, "sp": self.sp,
+                         "raw": not new["capture_sel"],
                          "state": self.state, "setpoint": new["setpoint"],
                          "events": []}
         elif self.fifo is not None and new["setpoint"] != old["setpoint"]:
@@ -285,7 +298,8 @@ class SimBoard(Board):
     def _sts_words(self) -> list:
         self._advance()
         c, m = self._c, self.m
-        meas = self.I + self._rng.normal(0.0, 0.3 * m.amps_per_lsb)
+        meas = (self.I + self._residual_offset_counts() * m.amps_per_lsb
+                + self._rng.normal(0.0, 0.3 * m.amps_per_lsb))
         in_run = self.state in ("RUN", "RAMP_DOWN")
         fifo_count = 0
         if self.fifo is not None:
@@ -307,7 +321,25 @@ class SimBoard(Board):
             u14=self.u14,
             heartbeat=int((self._clock() - self.t_start) * 1e6) & 0xFFFF_FFFF,
             fifo_count=fifo_count,
+            build_id=self.build_id,
         )
+
+    def _residual_offset_counts(self) -> float:
+        """IN1 sensor offset left after the fabric's in1_offset correction."""
+        return (self.sensor_offset_amps[0] / self.m.amps_per_lsb
+                - self._c["in1_offset"])
+
+    def _run_raw(self, count: int) -> np.ndarray:
+        """Raw IN1/IN2 codes (uncorrected, as capture_sel = 0 records)."""
+        lsb = self.m.amps_per_lsb
+        noise = self._rng.normal(0.0, 0.7, (count, 2))  # ADC + LEM [codes]
+        in1 = np.round((self.I + self.sensor_offset_amps[0]) / lsb
+                       + noise[:, 0]).astype(np.int64)
+        in2 = np.round(self.sensor_offset_amps[1] / lsb
+                       + noise[:, 1]).astype(np.int64)
+        in1 = np.clip(in1, -8192, 8191) & 0x3FFF
+        in2 = np.clip(in2, -8192, 8191) & 0x3FFF
+        return ((in2 << 16) | in1).astype(np.uint32)
 
     # ---- capture: the fixed-point loop, tick by tick -------------------------
     def _run_capture(self, count: int) -> np.ndarray:
@@ -316,7 +348,8 @@ class SimBoard(Board):
         n = count
         i16 = np.zeros(n, dtype=np.int64)
         e16 = np.zeros(n, dtype=np.int64)
-        noise = self._rng.normal(0.0, 0.3, n)        # IN1 noise [codes]
+        noise = (self._rng.normal(0.0, 0.3, n)       # IN1 noise [codes]
+                 + self._residual_offset_counts())
         events = [(int(t / T_S), sp) for t, sp in f["events"]]
         running = f["state"] in ("RUN", "RAMP_DOWN")
 

@@ -713,6 +713,95 @@ def test_stream_sends_all_devices(sim):
 
 # ---- start-up helpers ----------------------------------------------------------
 
+# ---- firmware identity and zero offsets (register map rev 4) ------------------
+
+def test_firmware_identity_shown(mock_server):
+    with Board("127.0.0.1", port=mock_server) as b:
+        b.write_words(STS_BASE, [MAP_REV << 24])
+        b.write_words(STS_BASE + 4 * 6, [0x10AA4ED2])   # dirty build
+    dev = mock_channel(mock_server)
+    dev.start()
+    try:
+        wait_for(lambda: dev.snapshot().get("build_text"))
+        s = dev.snapshot()
+        assert s["build_text"] == ("commit 0aa4ed2, built with uncommitted "
+                                   "changes")
+        assert s["map_ok"] and s["build_id"] == 0x10AA4ED2
+    finally:
+        dev.close()
+
+
+def _zero_app(tmp_path, offset):
+    cfg = tmp_path / "channels.toml"
+    cfg.write_text(CONFIG_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+    return make_app(tmp_path, config_path=cfg, sim_sensor_offset=offset), cfg
+
+
+def test_zero_calibration_measure_load_store(tmp_path):
+    (app, devices), cfg = _zero_app(tmp_path, (-0.45, 0.03))
+    dev = devices["mot"]
+    lsb = load_channel("mot")["i_fs"] / 8192
+    with TestClient(app, client=LOCAL, base_url="http://localhost") as c:
+        wait_for(lambda: state(c).get("state"))
+        assert act(c, "apply_profile", confirm=True, **MOT).status_code == 200
+        wait_for(lambda: any("IN1 not calibrated" in w
+                             for w in state(c)["warnings"]))
+        assert state(c)["i_amps"] == pytest.approx(-0.45, abs=0.05)
+        # refused while the servo runs (and without a result, store/load)
+        enable_and_arm(c)
+        r = act(c, "zero_cal", confirm=True, **MOT)
+        assert r.status_code == 409 and "IDLE" in r.json()["error"]
+        assert act(c, "zero_store", confirm=True).status_code == 409
+        assert act(c, "stop").status_code == 200
+        wait_for(lambda: state(c)["state"] == "IDLE")
+        assert act(c, "zero_cal", **MOT).status_code == 400   # confirm
+        # measure: raw codes, nothing changed yet
+        assert act(c, "zero_cal", confirm=True, **MOT).status_code == 200
+        wait_for(lambda: state(c)["zero"] is not None, timeout=10)
+        z = state(c)["zero"]
+        assert z["in1_amps"] == pytest.approx(-0.45, abs=0.03)
+        assert z["in2_amps"] == pytest.approx(0.03, abs=0.03)
+        assert z["in1_offset"] == round(z["in1_counts"])
+        assert "sensor needs attention" in z["warning"] and not z["refused"]
+        assert dev.board.read_cfg()["in1_offset"] == 0
+        # load: the board subtracts it, readings go to ~0
+        assert act(c, "zero_load", confirm=True).status_code == 200
+        assert dev.board.read_cfg()["in1_offset"] == z["in1_offset"]
+        wait_for(lambda: abs(state(c)["i_amps"]) < 0.05)
+        wait_for(lambda: any("differ from channels.toml" in w
+                             for w in state(c)["warnings"]))
+        # store: channels.toml round-trip, warnings gone
+        assert act(c, "zero_store", confirm=True).status_code == 200
+        ch = load_channel("mot", cfg)
+        assert ch["cfg"]["in1_offset"] == round(z["in1_amps"] / lsb)
+        assert ch["cfg"]["in1_offset"] == z["in1_offset"]
+        assert load_channel("mot_bench", cfg)["cfg"]["in1_offset"] == 0
+        assert "(coil_servo_host.zero)" in cfg.read_text(encoding="utf-8")
+        s = state(c)
+        assert s["zero"]["stored"] and s["zero"]["loaded"]
+        off = next(p for p in s["profiles"] if p["name"] == "mot")["offsets"]
+        assert off["in1"] == z["in1_offset"] == s["offsets_board"]["in1"]
+        wait_for(lambda: not any("IN1 not calibrated" in w or "differ" in w
+                                 for w in state(c)["warnings"]))
+        log = tmp_path.glob("actions_*.csv")
+        assert any("zero_store" in f.read_text() for f in log)
+
+
+def test_zero_calibration_refuses_a_broken_sensor(tmp_path):
+    (app, devices), cfg = _zero_app(tmp_path, (-25.0, 0.0))  # > 10 % of 200 A
+    before = cfg.read_text(encoding="utf-8")
+    with TestClient(app, client=LOCAL, base_url="http://localhost") as c:
+        wait_for(lambda: state(c).get("state"))
+        assert act(c, "zero_cal", confirm=True, **MOT).status_code == 200
+        wait_for(lambda: state(c)["zero"] is not None, timeout=10)
+        assert "10%" in state(c)["zero"]["refused"]
+        for a in ("zero_store", "zero_load"):
+            r = act(c, a, confirm=True)
+            assert r.status_code == 409 and "full scale" in r.json()["error"]
+        assert devices["mot"].board.read_cfg()["in1_offset"] == 0
+    assert cfg.read_text(encoding="utf-8") == before
+
+
 def test_lan_address_and_port_check():
     import socket
 

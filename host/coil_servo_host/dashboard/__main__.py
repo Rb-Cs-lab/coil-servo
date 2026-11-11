@@ -25,6 +25,7 @@ from .logs import ActionLog
 # 8080 is taken on the lab PCs (KoheronControl, the laser controller
 # software, listens there)
 DEFAULT_PORT = 8081
+SIM_SENSOR_OFFSET = (-0.45, 0.03)     # (IN1, IN2) amps, --simulate only
 
 
 def _split(text):
@@ -138,6 +139,9 @@ def main(argv=None):
         cards_path=args.cards,
         simulate=_split(args.simulate) if args.simulate != "*" else ["*"],
         sim_old=_split(args.sim_old_bitstream), logdir=args.logdir,
+        # simulated sensors read a small zero offset, so the zero
+        # calibration has something to find (a real LEM: up to amps)
+        sim_sensor_offset=SIM_SENSOR_OFFSET,
         action_log=action_log, poll_interval=args.poll,
         history_s=args.history, log_every=args.log_every,
         enable_timeout=args.enable_timeout)
