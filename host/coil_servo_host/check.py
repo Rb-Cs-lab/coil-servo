@@ -12,7 +12,7 @@ import argparse
 import time
 
 from .board import Board
-from .config import load_channel, summary
+from .config import i_meas_amps, load_channel, summary
 
 
 def main():
@@ -60,7 +60,7 @@ def main():
               f"bridge_en={s['bridge_en']} polarity={s['polarity']} "
               f"tripped={s['tripped']} u_floor={s['u_floor']} "
               f"fault(DIO5, unwired)={s['fault']}")
-        amps = s["i_meas"] / 128 * ch["i_fs"] / 8192
+        amps = i_meas_amps(s["i_meas"], ch["i_fs"])
         print(f"measured current: {amps:+.3f} A "
               f"(should be ~0 with the servo disabled; the offset is the "
               f"IN1 calibration)")

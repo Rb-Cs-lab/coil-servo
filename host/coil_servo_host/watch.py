@@ -8,7 +8,7 @@ import argparse
 import time
 
 from .board import Board
-from .config import load_channel
+from .config import i_meas_amps, load_channel
 
 
 def main():
@@ -22,7 +22,7 @@ def main():
         try:
             while True:
                 s = b.sts()
-                amps = s["i_meas"] / 128 * ch["i_fs"] / 8192
+                amps = i_meas_amps(s["i_meas"], ch["i_fs"])
                 flags = " ".join(name for name in
                                  ("tripped", "out_sat", "u_floor",
                                   "sp_sign_mismatch", "timeout_hold",

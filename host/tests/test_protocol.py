@@ -192,3 +192,14 @@ def test_deploy_post_check(server):
         b.write_words(STS_BASE, [0])                  # old bitstream
     with pytest.raises(SystemExit, match="revision 0"):
         verify_loaded_safe("127.0.0.1", server)
+
+
+def test_sync_shadow_picks_up_another_clients_write(server):
+    """A long-lived connection (the dashboard) re-syncs before writing, so
+    it cannot put back a word another tool changed meanwhile."""
+    with Board("127.0.0.1", port=server) as old, \
+            Board("127.0.0.1", port=server) as other:
+        other.write_cfg(servo_enable=1)          # old's shadow still has 0
+        old.sync_shadow()
+        old.write_cfg(led=3)                     # shares word 0
+        assert old.read_cfg()["servo_enable"] == 1

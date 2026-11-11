@@ -37,6 +37,35 @@ def amps_to_counts(amps: float, i_fs: float) -> int:
     return round(amps / i_fs * 8192)
 
 
+def counts_to_amps(counts: float, i_fs: float) -> float:
+    """s14 counts of the sensor scale (sp_active, setpoint) -> amps."""
+    return counts * i_fs / 8192
+
+
+def i_meas_amps(i_meas: int, i_fs: float) -> float:
+    """STS i_meas (decimated s22: 128 x the mean IN1 code) -> amps."""
+    return i_meas / 128 * i_fs / 8192
+
+
+def out1_volts(u14: int, model: Channel) -> float:
+    """PI output u14 (OUT1 DAC counts) -> volts at the op-amp input (1 V
+    full scale into 50 ohm, about 2 V unterminated)."""
+    return u14 / 8192 * model.out1_factor
+
+
+def channel_names(path: Path = CONFIG_PATH) -> list:
+    """Channel names in channels.toml, in file order."""
+    with open(path, "rb") as f:
+        return list(tomllib.load(f))
+
+
+def channel_table(name: str, path: Path = CONFIG_PATH) -> dict:
+    """The raw channels.toml table of one channel (keys the loader does not
+    know, e.g. a bench-profile flag, are kept)."""
+    with open(path, "rb") as f:
+        return tomllib.load(f)[name]
+
+
 def build_model(name: str, table: dict) -> Channel:
     """The model Channel for this channel, with channels.toml's physics."""
     base = CHANNELS.get(name) or Channel(name=name, L=16e-6, R_coil=6.4e-3,
@@ -142,35 +171,42 @@ def load_channel(name: str, path: Path = CONFIG_PATH) -> dict:
             "model": model, "cfg": cfg}
 
 
-def summary(ch: dict) -> str:
-    """Human-readable account of the derived quantities."""
+def summary_rows(ch: dict) -> list:
+    """The derived quantities as (label, text) rows: the header line of
+    summary() is left out. Used by summary() and the dashboard."""
     m, c = ch["model"], ch["cfg"]
     f = m.out1_factor                  # OUT1 volts per normalized unit
 
     def rate(code):                    # slew code -> A/ms
         return code / 2**14 * m.amps_per_lsb * 125e6 / 1e3
 
-    lines = [
-        f"channel {m.name}: rail {m.V_rail:g} V, rated {m.I_rated:g} A",
-        f"  sensor scale I_FS  = {m.I_FS:g} A at +1 V on IN1 "
-        f"({m.amps_per_lsb * 1e3:.1f} mA per ADC count)",
-        f"  pass bank G_pass   = {m.G_pass / f:.0f} A per volt at OUT1 "
-        f"(OUT1 {'terminated' if m.out1_terminated else 'UNterminated'}; "
-        f"plant gain {m.G_pass / m.I_FS:.2f})",
-        f"  dead zone          = {m.dead_zone * f:.3f} V at OUT1 "
-        f"({min(m.V_th):.2f} V gate, {m.dead_zone * 8192:.0f} counts)",
-        f"  RUN floor          = {c['u_floor']} counts "
-        f"({c['u_floor'] / 8192 * f:.3f} V at OUT1)",
-        f"  OUT1 command clamp = {c['out_clamp']} counts "
-        f"({c['out_clamp'] / 8192 * f:.3f} V at OUT1; limits the command, "
-        f"not the current)",
-        f"  over-current trip  = {c['trip_level'] * m.amps_per_lsb:.1f} A "
-        f"({c['trip_level']} counts) for {c['trip_ticks']} samples",
-        f"  setpoint ramps     = {rate(c['slew_up']):.0f} A/ms up, "
-        f"{rate(c['slew_down']):.0f} A/ms down "
-        f"(codes {c['slew_up']} / {c['slew_down']})",
-        f"  dither             = {'on' if c['dither_enable'] else 'off'}",
+    return [
+        ("sensor scale I_FS", f"{m.I_FS:g} A at +1 V on IN1 "
+         f"({m.amps_per_lsb * 1e3:.1f} mA per ADC count)"),
+        ("pass bank G_pass", f"{m.G_pass / f:.0f} A per volt at OUT1 "
+         f"(OUT1 {'terminated' if m.out1_terminated else 'UNterminated'}; "
+         f"plant gain {m.G_pass / m.I_FS:.2f})"),
+        ("dead zone", f"{m.dead_zone * f:.3f} V at OUT1 "
+         f"({min(m.V_th):.2f} V gate, {m.dead_zone * 8192:.0f} counts)"),
+        ("RUN floor", f"{c['u_floor']} counts "
+         f"({c['u_floor'] / 8192 * f:.3f} V at OUT1)"),
+        ("OUT1 command clamp", f"{c['out_clamp']} counts "
+         f"({c['out_clamp'] / 8192 * f:.3f} V at OUT1; limits the command, "
+         f"not the current)"),
+        ("over-current trip", f"{c['trip_level'] * m.amps_per_lsb:.1f} A "
+         f"({c['trip_level']} counts) for {c['trip_ticks']} samples"),
+        ("setpoint ramps", f"{rate(c['slew_up']):.0f} A/ms up, "
+         f"{rate(c['slew_down']):.0f} A/ms down "
+         f"(codes {c['slew_up']} / {c['slew_down']})"),
+        ("dither", "on" if c["dither_enable"] else "off"),
     ]
+
+
+def summary(ch: dict) -> str:
+    """Human-readable account of the derived quantities."""
+    m = ch["model"]
+    lines = [f"channel {m.name}: rail {m.V_rail:g} V, rated {m.I_rated:g} A"]
+    lines += [f"  {label:<18s} = {text}" for label, text in summary_rows(ch)]
     return "\n".join(lines)
 
 

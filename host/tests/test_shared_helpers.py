@@ -1,0 +1,62 @@
+"""Helpers shared by the command-line tools and the dashboard: unit
+conversion, capture decoding, step-command validation."""
+
+import numpy as np
+import pytest
+
+from coil_servo_host.capture import (FS_DEC, decimated_columns, decode_words,
+                                     write_csv)
+from coil_servo_host.config import (counts_to_amps, i_meas_amps, load_channel,
+                                    out1_volts, summary, summary_rows)
+from coil_servo_host.step import command_counts
+
+
+def test_unit_conversions():
+    # i_meas is 128 x the mean IN1 code; I_FS = 200 A at 8192 codes
+    assert i_meas_amps(8192 * 128, 200.0) == pytest.approx(200.0)
+    assert i_meas_amps(-4096 * 128, 200.0) == pytest.approx(-100.0)
+    assert counts_to_amps(4096, 200.0) == pytest.approx(100.0)
+    model = load_channel("mot")["model"]
+    assert out1_volts(8192, model) == pytest.approx(model.out1_factor)
+
+
+def test_decimated_decode_and_columns(tmp_path):
+    # two samples: i = +100 and -3 LSB, e = -20 and +5 LSB, packed {e, i}
+    i16 = np.array([100, -3])
+    e16 = np.array([-20, 5])
+    words = ((e16 & 0xFFFF) << 16) | (i16 & 0xFFFF)
+    data = decode_words(words.astype(np.uint32), decimated=True)
+    assert data.tolist() == [[100, -20], [-3, 5]]
+    cols = decimated_columns(data, 200.0)
+    lsb = 200.0 / 16384
+    assert cols["i_amps"].tolist() == pytest.approx([100 * lsb, -3 * lsb])
+    assert cols["setpoint_amps"].tolist() == pytest.approx([80 * lsb, 2 * lsb])
+    assert cols["t_s"][1] == pytest.approx(1 / FS_DEC)
+    write_csv(tmp_path / "c.csv", cols)
+    lines = (tmp_path / "c.csv").read_text().splitlines()
+    assert lines[0] == "t_s,i_amps,setpoint_amps" and len(lines) == 3
+
+
+def test_raw_decode_is_s14():
+    words = np.array([(0x2000 << 16) | 0x1FFF], dtype=np.uint32)
+    assert decode_words(words, decimated=False).tolist() == [[8191, -8192]]
+
+
+def test_step_command_validation():
+    ch = load_channel("mot")
+    assert command_counts(ch, 50.0, open_loop=False) == 2048
+    with pytest.raises(ValueError, match="rated"):
+        command_counts(ch, 100.5, open_loop=False)
+    with pytest.raises(ValueError, match="OUT1 only drives up"):
+        command_counts(ch, -5.0, open_loop=True)
+    assert command_counts(ch, 0.0, open_loop=True) == 0
+    # open loop: above the dead zone, below the clamp for rated current
+    c = command_counts(ch, 50.0, open_loop=True)
+    assert ch["model"].dead_zone * 8192 < c < ch["cfg"]["out_clamp"]
+
+
+def test_summary_rows_match_summary():
+    ch = load_channel("mot")
+    text = summary(ch)
+    for label, value in summary_rows(ch):
+        assert f"{label:<18s} = {value}" in text
