@@ -221,3 +221,33 @@ def test_leaving_open_loop_only_from_idle(server):
         b.write_words(STS_BASE, [MAP_REV << 24])            # state IDLE
         assert b.stop() == "IDLE"
         assert b.read_cfg()["open_loop"] == 0
+
+
+
+def test_zero_calibration_measures_raw_codes(server, tmp_path):
+    """coil_servo_host.zero: mean raw IN1/IN2 codes with the servo stopped
+    (mock FIFO returns one word every pop), written into channels.toml."""
+    import shutil
+    from coil_servo_host import zero
+    from coil_servo_host.config import CONFIG_PATH, load_channel
+    from coil_servo_model.registers import MAP_REV
+    raw_in1, raw_in2 = -238, 7                  # a -5.8 A LEM, IN2 ~ 0
+    word = ((raw_in2 & 0x3FFF) << 16) | (raw_in1 & 0x3FFF)
+    with Board("127.0.0.1", port=server) as b:
+        b.write_words(0x4200_0000, [word])               # FIFO data
+        b.write_words(STS_BASE + 4 * 5, [16384])          # FIFO full
+        r = zero.measure_offsets(b, 200.0, records=2, spacing_s=0.0)
+        assert r["in1_counts"] == raw_in1 and r["in2_counts"] == raw_in2
+        assert abs(r["in1_amps"] - raw_in1 * 200 / 8192) < 1e-9
+        # refused while the servo runs
+        b.write_words(STS_BASE, [(MAP_REV << 24) | 1 | (1 << 5)])
+        with pytest.raises(RuntimeError, match="stopped"):
+            zero.measure_offsets(b, 200.0, records=1)
+    cfg_path = tmp_path / "channels.toml"
+    shutil.copy(CONFIG_PATH, cfg_path)
+    zero.write_offsets("mot", r["in1_amps"], r["in2_amps"], cfg_path)
+    ch = load_channel("mot", cfg_path)
+    assert ch["cfg"]["in1_offset"] == raw_in1
+    assert ch["cfg"]["in2_offset"] == raw_in2
+    # other sections untouched
+    assert load_channel("mot_bench", cfg_path)["cfg"]["in1_offset"] == 0

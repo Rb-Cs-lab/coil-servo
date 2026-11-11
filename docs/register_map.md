@@ -38,7 +38,7 @@ their word; unused high bits read/write as 0.
 
 | Word | Name | Format | Reset | Meaning |
 |---|---|---|---|---|
-| 0 | `ctrl` | bits | 0 | b0 `servo_enable` (1→0 triggers a graceful ramp-to-zero stop, never an instant bridge drop); b1 `int_clear` (level; pulse from host); b2 `sp_source` (0 = IN2 analog, 1 = `setpoint` reg); b3 `fifo_rst`; b4 `out2_invert`; b5 `boost_mode` (0 = manual, 1 = auto); b6 `boost_manual`; b7 `flip_fault_ack`; b15:8 `led`; b16 `open_loop` (setpoint drives the output stage directly for hardware-in-the-loop ("HIL") transfer-function measurement — clamp/mux/bridge gating still apply); b17 `capture_sel` (FIFO source: 0 = raw ADC @ 125 MS/s, 131 µs window; 1 = decimated `{error[21:6], measured[21:6]}` per PI tick, 16.8 ms window); b18 `out2_enable` (0 = OUT2 held at exactly 0 V whatever the PI asks for — the MVP has no active clamp; 1 = full-architecture OUT1/OUT2 handoff. Also selects the PI's lower bound: 0 → the floor of word 16, 1 → −`out_clamp`); b19 `trip_ack` (level; pulse from host: leaves TRIPPED for IDLE — re-arming then needs a fresh DIO4 edge); b20 `dither_enable` (1 = OUT1 sigma-delta dither in closed loop: the DAC toggles ±1 count every clock so its average carries the 7 bits of PI output that rounding would drop — ~0.12 A → ~1 mA effective step on the MOT; never exceeds `out_clamp`; MOT: 1. Reset 0 = off) |
+| 0 | `ctrl` | bits | 0 | b0 `servo_enable` (1→0 triggers a graceful ramp-to-zero stop, never an instant bridge drop); b1 `int_clear` (level; pulse from host); b2 `sp_source` (0 = IN2 analog, 1 = `setpoint` reg); b3 `fifo_rst`; b4 `out2_invert`; b5 `boost_mode` (0 = manual, 1 = auto); b6 `boost_manual`; b7 `flip_fault_ack`; b15:8 `led`; b16 `open_loop` (setpoint drives the output stage directly for hardware-in-the-loop ("HIL") transfer-function measurement — clamp/mux/bridge gating still apply; since rev 4 the PI integrator is held cleared while it is set, so switching back to closed loop never applies a wound-up integrator); b17 `capture_sel` (FIFO source: 0 = raw ADC @ 125 MS/s, 131 µs window; 1 = decimated `{error[21:6], measured[21:6]}` per PI tick, 16.8 ms window); b18 `out2_enable` (0 = OUT2 held at exactly 0 V whatever the PI asks for — the MVP has no active clamp; 1 = full-architecture OUT1/OUT2 handoff. Also selects the PI's lower bound: 0 → the floor of word 16, 1 → −`out_clamp`); b19 `trip_ack` (level; pulse from host: leaves TRIPPED for IDLE — re-arming then needs a fresh DIO4 edge); b20 `dither_enable` (1 = OUT1 sigma-delta dither in closed loop: the DAC toggles ±1 count every clock so its average carries the 7 bits of PI output that rounding would drop — ~0.12 A → ~1 mA effective step on the MOT; never exceeds `out_clamp`; MOT: 1. Reset 0 = off) |
 | 1 | `setpoint` | s14 Q1.13 | 0 | register setpoint (counts of I_FS) |
 | 2 | `kp_mant` | s18 | 0 | P gain mantissa |
 | 3 | `kp_shift` | u5 | 0 | P gain right-shift |
@@ -59,7 +59,9 @@ their word; unused high bits read/write as 0.
 | 18 | `trip_ticks` | u16 | 0 | consecutive decimated samples (1.024 µs each) above `trip_level` before tripping; 0 and 1 both mean "first sample". |
 | 19 | `trip_timeout` | u32 | 0 | after a trip, the longest the bridge stays closed (OUT1 = 0, coil freewheeling) waiting for the current to fall inside `zero_win`, in 8 ns ticks. Then the bridge opens regardless (e.g. a shorted pass FET keeps current flowing). 0 = open the bridge at once (pushes the coil energy into the supply; mvp_architecture.md 3.3). MOT: ~3 ms, comfortably above the 1.3 ms freewheel from 100 A. |
 | 20 | `slew_down` | u16 | 0 | setpoint slew-rate limit **toward zero**, same units as word 15. MOT: 50 A/ms → **268**. A move across zero uses this rate down to 0, then `slew_up`. **Snap:** a target inside the zero window (\|target\| < `zero_win`, word 8) is taken at once, unlimited — so stepping the setpoint to zero is a full-speed snap-off (the coil freewheels, ~1.3 ms from 100 A); the down-limit exists to prevent undershoot, which cannot happen at a zero target (decided 2026-11-10). |
-| 21–31 | — | | 0 | reserved |
+| 21 | `in1_offset` | s14 Q1.13 | 0 | **IN1 zero offset**, counts: subtracted (saturating to s14) from every IN1 sample before the loop, the over-current trip, the zero window, STS `i_meas` and the decimated capture see it. Measure it with `python -m coil_servo_host.zero <channel>` (servo stopped, no current; it records the *raw* ADC codes) and store it as `in1_offset_amps` in channels.toml. **Characterise every new LEM / sensor chain** — a magnetised LEM read ≈ −5.8 A at zero on 11-11. Rev 4. |
+| 22 | `in2_offset` | s14 Q1.13 | 0 | **IN2 zero offset** (the analog setpoint input), counts, subtracted the same way; measured by the same tool with the control computer's output at 0 V. Rev 4. |
+| 23–31 | — | | 0 | reserved |
 
 ## STS (0x4100_0000 + 4·word)
 
@@ -68,13 +70,14 @@ from the stated width (`registers.parse_sts` does this).
 
 | Word | Name | Format | Meaning |
 |---|---|---|---|
-| 0 | `flags` | bits | b3:0 `fsm_state`; b4 `fault` (DIO5, read-only, no clear path); b5 `bridge_en`; b6 `polarity`; b7 `armed` (DIO4); b8 `out_sat` (hard clamp ±`out_clamp` engaged); b9 `int_railed`; b10 `sp_sign_mismatch`; b11 `timeout_hold`; b12 `u_floor` (PI output sits on its lower bound — in the MVP: OUT1 at the floor, current can only decay); b13 `tripped` (FSM in TRIP or TRIPPED); b31:24 `map_rev` = **3**, the register-map revision (constant in the bitstream; the host refuses CFG writes to any other revision — the 2026-08-27 full-architecture bitstream reads 0, and its 16-word CFG block would alias words 16–20 onto words 0–4) |
+| 0 | `flags` | bits | b3:0 `fsm_state`; b4 `fault` (DIO5, read-only, no clear path); b5 `bridge_en`; b6 `polarity`; b7 `armed` (DIO4); b8 `out_sat` (hard clamp ±`out_clamp` engaged); b9 `int_railed`; b10 `sp_sign_mismatch`; b11 `timeout_hold`; b12 `u_floor` (PI output sits on its lower bound — in the MVP: OUT1 at the floor, current can only decay); b13 `tripped` (FSM in TRIP or TRIPPED); b31:24 `map_rev` = **4**, the register-map revision (constant in the bitstream; the host refuses CFG writes to any other revision — the 2026-08-27 full-architecture bitstream reads 0, and its 16-word CFG block would alias words 16–20 onto words 0–4; rev 3 = the 11-11 MVP build without offsets / build ID) |
 | 1 | `i_meas` | s22 Q2.20 | decimated measured current (board frame) |
 | 2 | `sp_active` | s14 | setpoint after mux and slew limiter (what the loop sees) |
 | 3 | `u14` | s14 | PI output after the hard clamp |
 | 4 | `heartbeat` | u32 | free-running counter (liveness readback) |
 | 5 | `fifo_count` | u32 | ADC capture FIFO fill (added at the block-design level) |
-| 6–7 | — | | reserved |
+| 6 | `build_id` | u32 | **firmware build ID**: bits 27:0 = the first 7 hex digits of the git commit the bitstream was built from, bit 28 = built from a work tree with uncommitted changes; 0 = unknown. Stamped in by `projects/coil_servo/block_design.tcl` at build time; `check`, `deploy` and the dashboard print it (`registers.build_id_text`). Rev 4. |
+| 7 | — | | reserved |
 
 ## FSM state encoding (`flags[3:0]`)
 

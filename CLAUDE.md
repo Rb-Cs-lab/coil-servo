@@ -59,19 +59,17 @@ real benefit (DAC linearity, op-amp at tens of MHz) is a bench measurement.
 Does not help ground noise (future_upgrades.md §7 would).
 Turn-off decision made (bridge stays closed, freewheel model by default).
 
-**Queued for the next firmware rebuild** (needs a register-map revision,
-`docs/register_map.md` first, and a Vivado build):
-- **build-ID register:** an STS word with the git commit the bitstream was
-  built from, stamped in at build time (Makefile passes it to the top as a
-  parameter), so `check`/`deploy`/the dashboard print the exact firmware
-  version (today only map_rev 3 + the file's SHA-256 over ssh identify it);
-- **shot-synchronous capture:** start the capture FIFO on an arm edge / flip
-  request / setpoint step, with pre-trigger (proposal in docs/dashboard.md);
-- **hold the PI integrator cleared while `open_loop` = 1:** today it keeps
-  integrating against an error the open-loop drive doesn't correct, and
-  switching to closed loop while running applies the wound-up value to OUT1
-  (loopback 2026-11-11: tripped the board). Host-side guard in
-  `Board.write_cfg`/`Board.stop` until then.
+**Register-map rev 4 (branch `fw-rev4`, 2026-11-11, needs a Vivado build
+before it goes to main):** IN1/IN2 zero-offset registers (CFG W21/W22,
+subtracted from every sample; measure with `python -m coil_servo_host.zero`
+— characterise every new LEM; host keys `in1_offset_amps`/`in2_offset_amps`),
+build-ID register (STS W6, git commit stamped in by block_design.tcl), PI
+integrator held cleared while `open_loop` = 1. Main stays at rev 3 (matching
+the deployed bitstream) until the rev-4 bitstream is built and committed.
+Still queued: shot-synchronous capture (proposal in docs/dashboard.md).
+**GUI rule (user, 2026-11-11):** anything like this — a new setting, status
+or calibration — also goes into the dashboard (separate dashboard session);
+ask if unsure.
 
 ## Board
 

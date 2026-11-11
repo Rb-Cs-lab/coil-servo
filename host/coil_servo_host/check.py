@@ -37,6 +37,9 @@ def main():
         time.sleep(0.05)
         s1 = b.sts()
         alive = s1["heartbeat"] != s0["heartbeat"]
+        from coil_servo_model.registers import build_id_text
+        print(f"firmware: register map rev {s0['map_rev']}, "
+              f"{build_id_text(s0['build_id'])}")
         print(f"fabric heartbeat: {'ADVANCING' if alive else '*** STUCK ***'} "
               f"({s0['heartbeat']} -> {s1['heartbeat']})")
 

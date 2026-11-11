@@ -148,7 +148,7 @@ class World:
     """MVP plant + frame conversion + one servo tick = 128 fast samples."""
 
     def __init__(self, dut, sp_amps: float, cfg_extra=None, average=False,
-                 ch=MOT, cfg_fn=None):
+                 ch=MOT, cfg_fn=None, in1_offset_counts=0):
         """average=True: apply the mean OUT1 over the tick's 128 clocks
         to the plant (what the gate RC sees with the dither on) instead of
         one sample at the end of the tick. ch / cfg_fn: the plant channel
@@ -160,6 +160,9 @@ class World:
         self.plant = Plant(ch)
         self.sp_amps = sp_amps       # magnitude of the requested current
         self.cfg_extra = cfg_extra or {}
+        # a sensor zero offset added to every raw IN1 code (e.g. a
+        # magnetised LEM), for the in1_offset correction tests
+        self.in1_offset_counts = in1_offset_counts
         self.t = 0.0
 
     async def tick(self):
@@ -168,7 +171,7 @@ class World:
         pol = int(dut.bridge_polarity_o.value)
         sign = -1 if pol else 1
         # board frame: measured current and setpoint change sign with polarity
-        meas = adc_quantize(sign * self.plant.I / ch.I_FS)
+        meas = adc_quantize(sign * self.plant.I / ch.I_FS) + self.in1_offset_counts
         sp = adc_quantize(sign * self.sp_amps / ch.I_FS)
         dut.s_axis_tdata.value = pack_adc(meas, sp)
         dut.cfg_data.value = self.cfg_fn(setpoint=sp, **self.cfg_extra)
@@ -190,6 +193,79 @@ class World:
         self.plant.step(max(o1, 0) / 8192.0, 0.0, False, T_S)
         self.t += T_S
         return o1
+
+
+@cocotb.test()
+async def build_id_and_map_revision(dut):
+    """STS word 6 comes from the BUILD_ID parameter (test_hdl.py passes
+    0x1ABCDEF); the map revision is the one the host expects."""
+    await setup(dut, cfg=0)
+    assert int(dut.build_id_o.value) == 0x1ABCDEF
+    assert sts(dut)["map_rev"] == MAP_REV == 4
+
+
+@cocotb.test()
+async def in1_offset_is_corrected_before_loop_and_trip(dut):
+    """A -5.8 A sensor zero offset (the magnetised LEM, 11-11) with the
+    matching in1_offset: the loop delivers the true 30 A, STS reports the
+    corrected current, and the trip still acts on the true current (40 A
+    trip, 50 A request). Without the correction the loop would deliver
+    ~35.8 A for a 30 A request."""
+    off = -round(5.8 / MOT.I_FS * 8192)                     # -238 counts
+    extra = dict(in1_offset=off)
+    await setup(dut, run_cfg(setpoint=0, **extra))
+    await arm(dut)
+    world = World(dut, sp_amps=30.0, cfg_extra=extra, in1_offset_counts=off)
+    for _ in range(1300):
+        await world.tick()
+    assert abs(world.plant.I - 30.0) < 0.1, f"delivered {world.plant.I:.2f} A"
+    s = sts(dut)
+    assert abs(s["i_meas"] / 128 - adc_quantize(30.0 / MOT.I_FS)) <= 2
+
+    # the trip acts on the corrected (true) current
+    trip = dict(extra, trip_level=counts(40.0))
+    world.cfg_extra = trip
+    world.sp_amps = 50.0
+    peak = 0.0
+    for _ in range(1500):
+        await world.tick()
+        peak = max(peak, world.plant.I)
+        if sts(dut)["tripped"]:
+            break
+    assert sts(dut)["tripped"], "never tripped"
+    assert 40.0 < peak < 42.0, f"tripped at a true {peak:.1f} A"
+
+
+@cocotb.test()
+async def without_correction_an_offset_shifts_the_current(dut):
+    """Same -5.8 A sensor offset, in1_offset left at 0: the loop servoes
+    the *reading* to 30 A, i.e. delivers ~35.8 A -- why every LEM's zero
+    must be characterised (coil_servo_host.zero)."""
+    off = -round(5.8 / MOT.I_FS * 8192)
+    await setup(dut, run_cfg(setpoint=0))
+    await arm(dut)
+    world = World(dut, sp_amps=30.0, in1_offset_counts=off)
+    for _ in range(1300):
+        await world.tick()
+    assert 35.3 < world.plant.I < 36.3, f"delivered {world.plant.I:.2f} A"
+
+
+@cocotb.test()
+async def open_loop_holds_the_integrator_cleared(dut):
+    """In open loop the PI would wind up against an error the drive does
+    not correct (loopback, 11-11). With the integrator held cleared, the PI
+    output after a long open-loop stretch is only the proportional term."""
+    await setup(dut, run_cfg(open_loop=1, setpoint=0, u_floor=0))
+    await arm(dut)
+    # error = setpoint - measured with a constant measured offset
+    dut.s_axis_tdata.value = pack_adc(-570, 0)
+    dut.cfg_data.value = run_cfg(open_loop=1, setpoint=0, u_floor=0)
+    await ClockCycles(dut.aclk, 128 * 3000)          # ~3 ms
+    u = sts(dut)["u14"]
+    kp = gains()
+    p_only = ((570 * 128) * kp["kp_mant"]) >> kp["kp_shift"]
+    assert u <= (p_only >> 7) + 2, f"PI output {u}: integrator wound up"
+    assert u < 200
 
 
 @cocotb.test()

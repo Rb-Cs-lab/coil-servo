@@ -173,6 +173,16 @@ def load_channel(name: str, path: Path = CONFIG_PATH) -> dict:
             refuse(f"{k} must be 0: OUT2 / the boost output are not fitted "
                    f"in the MVP")
 
+    # sensor zero offsets (measured with python -m coil_servo_host.zero),
+    # in amps of the sensor scale; optional, default 0
+    in1_off = float(table.get("in1_offset_amps", 0.0))
+    in2_off = float(table.get("in2_offset_amps", 0.0))
+    for k, v in (("in1_offset_amps", in1_off), ("in2_offset_amps", in2_off)):
+        if abs(v) > 0.1 * i_fs:
+            refuse(f"{k} = {v} A is more than 10 % of the sensor full scale "
+                   f"({i_fs:g} A): that is a broken or saturated sensor, not "
+                   f"an offset to calibrate away")
+
     # --- derived register values ---
     out_clamp = model.clamp_counts     # out_clamp_counts if set, else derived
     if "u_floor_counts" in table:
@@ -212,6 +222,8 @@ def load_channel(name: str, path: Path = CONFIG_PATH) -> dict:
         out2_enable=int(table["out2_enable"]),
         boost_mode=int(table["boost_mode"]),
         dither_enable=int(table["dither_enable"]),
+        in1_offset=amps_to_counts(in1_off, i_fs),
+        in2_offset=amps_to_counts(in2_off, i_fs),
         # board LEDs: a fixed pattern marks bench settings (0 = production)
         led=BENCH_LED if bench else 0,
     )
@@ -352,6 +364,12 @@ def summary_rows(ch: dict) -> list:
          f"(= {kp * 8192 / m.I_FS:.4g} counts/A, "
          f"{ki * 8.192 / m.I_FS:.4g} counts/(A ms))"),
         ("dither", "on" if c["dither_enable"] else "off"),
+        ("IN1 / IN2 zero offset", f"{c['in1_offset'] * m.amps_per_lsb:+.3f} A "
+         f"({c['in1_offset']:+d} counts) / "
+         f"{c['in2_offset'] * m.amps_per_lsb:+.3f} A "
+         f"({c['in2_offset']:+d} counts), subtracted in the FPGA"
+         + ("" if c["in1_offset"] else
+            " -- IN1 not calibrated: run python -m coil_servo_host.zero")),
         ("board LEDs", f"LED {BENCH_LED_INDEX} lit (bench settings)"
          if c["led"] else "all off (production settings)"),
     ]

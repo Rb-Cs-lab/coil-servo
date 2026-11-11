@@ -215,3 +215,11 @@ def test_slew_limiter_snaps_inside_the_zero_window():
     for _ in range(4):
         sl.step(2867, up, down, snap_win=20)
     assert sl.sp < 20                            # outside the window: ramps
+
+
+def test_offset_correction_saturates_to_s14():
+    from coil_servo_model import offset_correct
+    assert offset_correct(100, -238) == 338
+    assert offset_correct(8100, -238) == 8191
+    assert offset_correct(-8100, 238) == -8192
+    assert offset_correct(5, 0) == 5

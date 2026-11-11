@@ -15,7 +15,11 @@
 
 module coil_servo_top #
 (
-  parameter integer HB_DIV_LOG2 = 16   // heartbeat at 125 MHz / 2^17 ~ 954 Hz
+  parameter integer HB_DIV_LOG2 = 16,  // heartbeat at 125 MHz / 2^17 ~ 954 Hz
+  // build ID (register_map.md STS W6): bits 27:0 = first 7 hex digits of
+  // the git commit, bit 28 = built from a tree with uncommitted changes.
+  // Set by projects/coil_servo/block_design.tcl at build time; 0 = unknown.
+  parameter integer BUILD_ID = 0
 )
 (
   input  wire         aclk,
@@ -48,6 +52,7 @@ module coil_servo_top #
   output wire         bridge_enable_o,    // DIO1_P (low = all FETs off)
   output reg          boost_o,            // DIO2_P (unused in the MVP)
   output wire         heartbeat_o,        // DIO6_P
+  output wire [31:0]  build_id_o,         // STS word 6 (block design concat)
 
   output wire [7:0]   led_o,
   output wire         fifo_resetn         // capture FIFO reset (active low)
@@ -93,6 +98,8 @@ module coil_servo_top #
   wire        [15:0] trip_ticks   = cfg_data[591:576];  // W18
   wire        [31:0] trip_timeout = cfg_data[639:608];  // W19
   wire        [15:0] slew_down    = cfg_data[655:640];  // W20
+  wire signed [13:0] in1_offset   = cfg_data[685:672];  // W21
+  wire signed [13:0] in2_offset   = cfg_data[717:704];  // W22
 
   assign fifo_resetn = aresetn & ~fifo_rst;
 
@@ -114,8 +121,22 @@ module coil_servo_top #
   // ------------------------------------------------------------------
   // ADC unpack + monitor passthrough
   // ------------------------------------------------------------------
-  wire signed [13:0] meas_code = s_axis_tdata[13:0];
-  wire signed [13:0] in2_code  = s_axis_tdata[29:16];
+  // Offset correction (W21/W22): every IN1/IN2 sample has its measured
+  // zero offset subtracted (saturating to s14) before the loop, the trip,
+  // the zero window, STS and the decimated capture see it. The raw capture
+  // (capture_sel = 0) keeps the uncorrected ADC codes -- that is what the
+  // zero calibration measures (host coil_servo_host.zero).
+  wire signed [13:0] meas_raw = s_axis_tdata[13:0];
+  wire signed [13:0] in2_raw  = s_axis_tdata[29:16];
+  wire signed [14:0] meas_d   = meas_raw - in1_offset;
+  wire signed [14:0] in2_d    = in2_raw - in2_offset;
+  reg  signed [13:0] meas_code, in2_code;
+  always @(posedge aclk) begin
+    meas_code <= (meas_d > 15'sd8191)  ? 14'sd8191 :
+                 (meas_d < -15'sd8192) ? -14'sd8192 : meas_d[13:0];
+    in2_code  <= (in2_d > 15'sd8191)   ? 14'sd8191 :
+                 (in2_d < -15'sd8192)  ? -14'sd8192 : in2_d[13:0];
+  end
 
   // capture source: raw ADC every fast sample, or decimated
   // {error[21:6], measured[21:6]} once per PI tick (16.8 ms per 16384-deep
@@ -153,12 +174,14 @@ module coil_servo_top #
     .sp_sign_mismatch(sp_sign_mismatch)
   );
 
-  // servo_error registers its outputs: delay valid and meas by one clock so
-  // both decimators see sample-aligned inputs
-  reg valid_r;
+  // The offset-correction register and servo_error each add one clock:
+  // delay valid by two and the corrected meas by one so both decimators see
+  // sample-aligned inputs
+  reg valid_q, valid_r;
   reg signed [14:0] meas_r;
   always @(posedge aclk) begin
-    valid_r <= aresetn & s_axis_tvalid;
+    valid_q <= aresetn & s_axis_tvalid;
+    valid_r <= aresetn & valid_q;
     meas_r <= meas_code;
   end
 
@@ -228,7 +251,11 @@ module coil_servo_top #
     .kp_mant(kp_mant), .kp_shift(kp_shift),
     .ki_mant(ki_mant), .ki_shift(ki_shift),
     .clamp(out_clamp), .floor(pi_floor),
-    .int_hold(int_hold), .int_clear(fsm_int_clear | int_clear_host),
+    // open loop holds the integrator cleared: it would otherwise wind up
+    // against an error the open-loop drive does not correct, and hit OUT1
+    // on the switch back to closed loop (loopback 2026-11-11)
+    .int_hold(int_hold),
+    .int_clear(fsm_int_clear | int_clear_host | open_loop),
     .u14(u14), .out_sat(out_sat), .at_floor(at_floor), .resid(pi_resid),
     .acc_mon(acc_mon),
     .int_railed(int_railed)
@@ -321,7 +348,7 @@ module coil_servo_top #
   assign sts_data[23:14]   = 10'd0;
   // register-map revision (docs/register_map.md; registers.MAP_REV): the
   // host refuses to write CFG to a bitstream whose layout it doesn't know
-  assign sts_data[31:24]   = 8'd3;
+  assign sts_data[31:24]   = 8'd4;
   assign sts_data[53:32]   = i_dec;          // W1, s22 (host sign-extends)
   assign sts_data[63:54]   = 10'd0;
   assign sts_data[77:64]   = sp_active;      // W2, s14 (host sign-extends)
@@ -329,5 +356,7 @@ module coil_servo_top #
   assign sts_data[109:96]  = u14;            // W3, s14 (host sign-extends)
   assign sts_data[127:110] = 18'd0;
   assign sts_data[159:128] = hb_cnt;         // W4
+
+  assign build_id_o = BUILD_ID;
 
 endmodule

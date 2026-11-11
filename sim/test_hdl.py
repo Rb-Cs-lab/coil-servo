@@ -66,4 +66,5 @@ def test_coil_servo_top():
     sources = [ROOT / "cores" / "coil_servo_top.v"]
     sources += sorted((ROOT / "modules").glob("servo_*.v"))
     run_bench("coil_servo_top", "tb_coil_servo_top",
-              parameters={"HB_DIV_LOG2": 6}, sources=sources)
+              parameters={"HB_DIV_LOG2": 6, "BUILD_ID": 0x1ABCDEF},
+              sources=sources)

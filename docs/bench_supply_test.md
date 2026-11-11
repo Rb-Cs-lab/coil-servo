@@ -182,24 +182,31 @@ G = 10. The host tools below use the setpoint register instead.
    python -m coil_servo_host.watch mot_bench
    ```
 
-### 4.1 IN1 offset — and its sign
+### 4.1 Zero calibration (IN1 offset) — first, every time the LEM changes
 
-1. With the supply on and the servo disabled, read the measured current
-   (`check mot_bench`, or `watch`). That reading at zero current is the
-   **IN1 offset**. Expected: about +0.29 A (the ~1.4 mV seen in Nov 2026,
-   ≈ 12 counts). **Write it down, with its sign.**
-   - It must be well below the 0.5 A zero window (flips and trips decide
-     "current is zero" with it). Calibrating it out (AOUT0 trim or a host
-     constant) is still an open item.
-   - **Sign matters for the trip test.** The trip compares the *measured*
-     current with 2.8 A. A positive offset (reads high) makes it act early
-     — at ~2.5 A real with +0.29 A — which is fine. A **negative** offset
-     larger than about 0.15 A would push the real trip point above the
-     3.0 A supply limit: the supply would hold the current and the trip
-     would never fire. In that case lower `trip_amps` by the offset before
-     section 4.4.
-2. With the first current in 4.2, compare the board's reading (minus the
-   offset) with the **supply's ammeter**. They should agree to within a
+1. With the supply on, the servo stopped (IDLE, bridge disabled — no
+   current), the LEM powered and warmed up, and the control computer's
+   setpoint output at 0 V (or disconnected):
+
+   ```bash
+   python -m coil_servo_host.zero mot_bench --write --apply
+   ```
+
+   It records the raw IN1/IN2 readings at zero current, stores them in
+   `[mot_bench]` (`in1_offset_amps`, `in2_offset_amps`) and loads them into
+   the board; the FPGA then subtracts them from every sample, so the loop,
+   the 2.8 A trip and the zero window all work on the true current
+   (register-map rev 4 firmware). Run it again for `mot` before the 100 A
+   build (same sensor, but keep the two profiles' values in step).
+   - `check mot_bench` must then read ~0 A (within a count or two).
+   - **More than a few hundred mA means the sensor needs attention.** On
+     11-11 the LEM read about −5.8 A at zero (magnetised core): demagnetise
+     it (slowly decaying AC through the primary) or replace it, then
+     re-calibrate. Without the correction a negative offset would push the
+     real trip point above the 3.0 A supply limit and stops/flips would
+     never see zero current.
+2. With the first current in 4.2, compare the board's reading with the
+   **supply's ammeter**. They should agree to within a
    couple of counts. A factor near 10 means `G_inamp` in the file does not
    match the board as wired (R_G jumper) — stop and fix that first.
 

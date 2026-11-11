@@ -40,13 +40,16 @@ CFG_FIELDS = {
     "trip_ticks":     (18, 0, 16, False),
     "trip_timeout":   (19, 0, 32, False),
     "slew_down":      (20, 0, 16, False),
+    "in1_offset":     (21, 0, 14, True),
+    "in2_offset":     (22, 0, 14, True),
 }
 
 CFG_WORDS = 32      # CFG_DATA_WIDTH = 1024 bits
 # Register-map revision reported in STS word 0 bits 31:24. Bump it (here,
 # in coil_servo_top.v and in the server's mock) on any layout change. The
-# 2026-08-27 full-architecture bitstream reads 0.
-MAP_REV = 3
+# 2026-08-27 full-architecture bitstream reads 0; rev 3 = 2026-11-11 MVP
+# build; rev 4 adds the IN1/IN2 offset registers and the build ID.
+MAP_REV = 4
 STS_WORDS = 8       # STS_DATA_WIDTH = 256 bits
 
 STS_FIELDS = {
@@ -67,6 +70,7 @@ STS_FIELDS = {
     "u14":              (3, 0, 14, True),
     "heartbeat":        (4, 0, 32, False),
     "fifo_count":       (5, 0, 32, False),
+    "build_id":         (6, 0, 32, False),
 }
 
 FSM_STATES = ["IDLE", "RUN", "RAMP_DOWN", "DISABLE", "FLIP", "ENABLE",
@@ -129,3 +133,14 @@ def parse_sts(sts: int) -> dict:
     st = out["fsm_state"]
     out["fsm_state_name"] = FSM_STATES[st] if st < len(FSM_STATES) else f"?{st}"
     return out
+
+
+def build_id_text(build_id: int) -> str:
+    """STS build_id -> 'commit abc1234' (+ ', uncommitted changes'), or
+    'unknown' for 0."""
+    if not build_id:
+        return "unknown (no build ID)"
+    text = f"commit {build_id & 0x0FFFFFFF:07x}"
+    if build_id & 0x10000000:
+        text += ", built with uncommitted changes"
+    return text

@@ -86,8 +86,10 @@ def verify_loaded_safe(host: str, port: int) -> None:
     if problems:
         raise SystemExit("deploy loaded the bitstream but the post-check "
                          "FAILED:\n  " + "\n  ".join(problems))
+    from coil_servo_model.registers import build_id_text
     print("post-check OK: IDLE, OUT1 = 0, bridge disabled, not armed, "
-          f"register map rev {s['map_rev']}")
+          f"register map rev {s['map_rev']}, firmware "
+          f"{build_id_text(s['build_id'])}")
 
 
 def run(cmd, check=True):

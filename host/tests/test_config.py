@@ -304,3 +304,18 @@ def test_in_amp_gain_changes_the_scale(tmp_path):
                                              i_rated=90.0))
     assert ch["i_fs"] == pytest.approx(100.0)
     assert ch["cfg"]["trip_level"] == round(90.0 / 100.0 * 8192)
+
+
+
+def test_sensor_offsets_convert_and_are_bounded(tmp_path):
+    from coil_servo_host.config import CONFIG_PATH
+    text = CONFIG_PATH.read_text(encoding="utf-8").replace(
+        "in1_offset_amps = 0.0", "in1_offset_amps = -5.8", 1)
+    p = tmp_path / "channels.toml"
+    p.write_text(text, encoding="utf-8")
+    ch = load_channel("mot", p)
+    assert ch["cfg"]["in1_offset"] == round(-5.8 / 200 * 8192)   # -238
+    bad = text.replace("in1_offset_amps = -5.8", "in1_offset_amps = 30.0", 1)
+    p.write_text(bad, encoding="utf-8")
+    with pytest.raises(ValueError, match="10 %"):
+        load_channel("mot", p)

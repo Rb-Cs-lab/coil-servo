@@ -72,6 +72,14 @@ out2_enable = 0
 out2_invert = 0
 boost_mode = 0
 
+# --- sensor zero offsets (characterise every LEM / sensor chain) ---
+# Measured with the servo stopped and no current flowing:
+#     python -m coil_servo_host.zero <channel> --write
+# Amps of the sensor scale; the FPGA subtracts them from every IN1/IN2
+# sample. Re-measure after changing the LEM, burden, in-amp gain or cable.
+in1_offset_amps = 0.0           # NOT YET MEASURED (11-11: LEM read ~ -5.8 A)
+in2_offset_amps = 0.0           # control-computer setpoint input at 0 V
+
 # Low-current TEST PROFILE for the MOT channel (docs/bench_supply_test.md):
 # the same board and power stage, powered from a current-limited BENCH
 # SUPPLY (5 V, 3 A limit) in place of the SE-600-5, driving ONE coil of the
@@ -181,6 +189,14 @@ boost_mode = 0
 
 # The shim rows are PLACEHOLDERS: their power stages are not built (shim
 # supply not chosen, rail <= 10 V). They reuse the MOT stage parts.
+
+# --- sensor zero offsets (characterise every LEM / sensor chain) ---
+# Measured with the servo stopped and no current flowing:
+#     python -m coil_servo_host.zero <channel> --write
+# Amps of the sensor scale; the FPGA subtracts them from every IN1/IN2
+# sample. Re-measure after changing the LEM, burden, in-amp gain or cable.
+in1_offset_amps = 0.0           # NOT YET MEASURED (11-11: LEM read ~ -5.8 A)
+in2_offset_amps = 0.0           # control-computer setpoint input at 0 V
 
 [z_shim]
 board_host = "rp-zshim.local"   # PLACEHOLDER

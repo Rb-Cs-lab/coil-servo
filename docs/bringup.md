@@ -211,9 +211,20 @@ plus the hardware items in its
 [switching checklist](bench_supply_test.md#switching-between-bench-and-100-a);
 board LED 7 lit = bench settings loaded.
 
-1. **IN1 offset.** At zero current, read `i_meas` (or `check`). Record
-   the offset; it must be well below the flip zero window (±0.5 A) before
-   flips are trusted.
+1. **Zero calibration (every new LEM / sensor chain).** With the servo
+   stopped, no current flowing, the LEM powered and warmed up, and the
+   control computer's setpoint output at 0 V:
+
+   ```bash
+   python -m coil_servo_host.zero mot --write --apply
+   ```
+
+   It records the raw IN1/IN2 readings, stores them as `in1_offset_amps` /
+   `in2_offset_amps` in channels.toml and loads them into the board; the
+   FPGA subtracts them from every sample (register map words 21/22). Then
+   `check` should read ~0 A. An IN1 offset of more than a few hundred mA
+   means the LEM itself needs attention (a magnetised core read −5.8 A on
+   11-11): demagnetise or replace it.
 2. **G_pass and the dead zone (open loop).** Step the OUT1 command in
    small increments with the open-loop step tool and record the steady
    current for each:

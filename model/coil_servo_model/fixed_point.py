@@ -260,6 +260,13 @@ def slew_rate_code(amps_per_s: float, i_fs: float, clk_hz: float = 125e6) -> int
     return round(amps_per_s / clk_hz / i_fs * 8192 * (1 << SlewLimiter.FRAC))
 
 
+def offset_correct(code: int, offset: int) -> int:
+    """ADC code minus its zero-offset register (CFG in1_offset/in2_offset),
+    saturated to s14 -- the first thing the firmware does to every IN1/IN2
+    sample (coil_servo_top.v)."""
+    return sat(code - offset, 14)
+
+
 def drive_frame_error(meas_code: int, in2_code: int, sp_reg: int,
                       sp_source: int, sp_force_zero: int, polarity: int):
     """design.md Node B: setpoint mux + bridge-frame rotation, in s14 codes.

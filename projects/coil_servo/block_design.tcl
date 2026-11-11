@@ -76,7 +76,23 @@ cell pavel-demin:user:axis_red_pitaya_adc adc_0 {
 
 # The servo itself (error path, decimators, PI, output mux, flip FSM,
 # heartbeat, DIO conditioning -- see cores/coil_servo_top.v)
-cell pavel-demin:user:coil_servo_top servo_0 {} {
+# Build ID for STS word 6 (register_map.md): the first 7 hex digits of the
+# git commit this bitstream is built from, bit 28 set if the work tree had
+# uncommitted changes. 0 if git is unavailable.
+if {[catch {exec git rev-parse --short=7 HEAD} commit]} {
+  set build_id 0
+} else {
+  set build_id [expr {0x$commit}]
+  if {![catch {exec git status --porcelain --untracked-files=no} dirty] &&
+      $dirty ne ""} {
+    set build_id [expr {$build_id | 0x10000000}]
+  }
+}
+puts "coil_servo build ID: [format 0x%08X $build_id]"
+
+cell pavel-demin:user:coil_servo_top servo_0 {
+  BUILD_ID $build_id
+} {
   aclk pll_0/clk_out1
   aresetn rst_0/peripheral_aresetn
   S_AXIS adc_0/M_AXIS
@@ -129,20 +145,23 @@ cell pavel-demin:user:xadc_bram xadc_0 {} {
   Vaux9 Vaux9
 }
 
-# STS: servo words 0-4, FIFO fill count as word 5, words 6-7 reserved
+# STS: servo words 0-4, FIFO fill count as word 5, build ID as word 6,
+# word 7 reserved
 cell xilinx.com:ip:xlconstant const_1 {
-  CONST_WIDTH 64
+  CONST_WIDTH 32
   CONST_VAL 0
 }
 
 cell xilinx.com:ip:xlconcat concat_0 {
-  NUM_PORTS 3
+  NUM_PORTS 4
   IN0_WIDTH 160
   IN1_WIDTH 32
-  IN2_WIDTH 64
+  IN2_WIDTH 32
+  IN3_WIDTH 32
 } {
   In0 servo_0/sts_data
   In1 fifo_0/read_count
-  In2 const_1/dout
+  In2 servo_0/build_id_o
+  In3 const_1/dout
   dout hub_0/sts_data
 }
