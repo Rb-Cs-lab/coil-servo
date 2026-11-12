@@ -16,10 +16,19 @@ quick-reference facts; if they conflict, flag it — don't silently pick one.
 
 **Status (2026-11-12).** Rewrite steps 1–6 done: model, fixed-point
 mirror, HDL, cocotb benches, host tools and docs describe the MVP. **Register
-map rev 4 is on main and deployed** (`bitstreams/coil_servo.bit.bin`, build
-ID commit `103a127`, built on the **lab laptop** — WSL2 Ubuntu 24.04, Vivado
-2025.1; the NUC is gone; the August image is kept as
-`coil_servo_fullarch_20260827.bit.bin`). Rev 4 = rev 3 plus IN1/IN2
+map rev 5 is on main and deployed** (`bitstreams/coil_servo.bit.bin`, build
+ID commit `275081b`, 2026-11-12, timing met but thin: WNS +0.003 ns). Rev 5
+= rev 4 plus the **zero-setpoint snap**: ctrl b21 `snap_enable`, CFG W23
+`snap_thresh`, STS b14 `snapped` — on a (tick-averaged) zero setpoint OUT1
+goes to 0 at once and the integrator is held cleared, so turn-offs run at
+the freewheel rate (bench 2 A: 2 % in 0.14 ms instead of 1.55 ms); only a
+zero setpoint triggers it (decided 2026-11-12); channels.toml
+`snap_zero_enable` / `snap_zero_amps` (0.1 A, PROVISIONAL — set from the
+measured IN2 noise/drift). Builds on the **lab laptop** (WSL2 Ubuntu 24.04,
+Vivado 2025.1; the NUC is gone): `bash scripts/lab-build.sh`, then
+`bash scripts/lab-copy-to-drive.sh` (Drive folder "RP servo files", synced
+to this PC's G:). Older images: `coil_servo_rev4_20261111`, `_rev3_20261111`,
+`_fullarch_20260827` in bitstreams/. Rev 4 = rev 3 plus IN1/IN2
 zero-offset registers (CFG W21/W22, subtracted from every sample; measure
 with `python -m coil_servo_host.zero <channel> --write --apply`), a build-ID
 register (STS W6) and the PI integrator held cleared while `open_loop` = 1.
@@ -84,9 +93,9 @@ with both MOT coils, water, `mot` profile.** Key results (11-11/12):
 
 Firmware decisions in force: **snap to zero** (decided 2026-11-10) — a
 setpoint target inside the zero window (`zero_win`) bypasses the slew limit.
-It does NOT force OUT1 to 0 — the PI still winds OUT1 down, which leaves a
-slow tail near zero (measured 11-12); only the over-current trip and open
-loop drop OUT1 to 0 at once. **Ramps enforced
+By itself that does not force OUT1 to 0 (the PI winds it down, leaving a
+slow tail near zero, measured 11-12); the rev 5 **zero-setpoint snap**
+does, on a zero setpoint only (decided and deployed 2026-11-12). **Ramps enforced
 in fabric** (decided 2026-11-10; model: raw steps undershoot going down and
 overshoot up to ~20 % on compliance-limited up-steps): ≤ 200 A/ms away from
 zero, ≤ 50 A/ms toward zero (`servo_slew.v`, CFG W15/W20); the control
@@ -102,12 +111,8 @@ physics; `config.py` builds the model `Channel` from it and DERIVES I_FS, the
 OUT1 clamp and the floor (overridable by measured counts) and refuses unsafe
 files; `python -m coil_servo_host.config mot` prints the derived values.
 Still queued: shot-synchronous capture (proposal in docs/dashboard.md);
-**"snap OUT1 to zero"** option (OUT1 → 0, integrator → floor when the
-setpoint enters the zero window; removes the PI tail, works on the present
-hardware — user: not yet, 2026-11-12; **decided: trigger only on a zero
-setpoint, not the whole ±0.5 A zero window**, so small currents can still
-be held — for the analog IN2 path "zero" needs a few-count threshold
-because IN2 noise is ±1–3 counts, set from measured IN2 noise); bridge-open fast turn-off (needs the
+~~"snap OUT1 to zero"~~ done as rev 5 (set `snap_zero_amps` from the
+measured IN2 noise once the control computer drives IN2); bridge-open fast turn-off (needs the
 TVS + blocking diode, waits for parts); latch visibility (latch → DIO5,
 stall detection); level-sensitive latch trip review; dashboard "hold arm"
 mode for software flips.

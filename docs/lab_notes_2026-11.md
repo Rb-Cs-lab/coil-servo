@@ -566,3 +566,50 @@ Plots and details: [benchtop_test_log.md](benchtop_test_log.md), section
   hardware limit, ≥ 0.5 ms with the 200 A/ms firmware ramp, depending on
   the bank's compliance at 100 A with the 5.18 V gate ceiling (Test 4).
   Coil current only; chamber eddy currents come on top.
+
+## Register map rev 5: zero-setpoint snap — built, deployed, tested (11-12, evening)
+
+**What:** the closed-loop turn-off tail (above) removed in firmware. In RUN,
+closed loop, when the requested setpoint averaged over one PI tick is
+within `snap_thresh` of zero (CFG word 23; ctrl b21 `snap_enable`), OUT1 is
+forced to exactly 0 and the integrator held cleared: the bank turns fully
+off at once and the coil freewheels with the bridge closed. One count of
+hysteresis; STS b14 `snapped`. channels.toml: `snap_zero_enable = 1`,
+`snap_zero_amps = 0.1` (4 counts, PROVISIONAL) for `mot` and `mot_bench`.
+Only a zero setpoint triggers it (decided 11-12), so small currents can
+still be held. Works on the present hardware; separate from the
+bridge-open fast turn-off that needs the TVS + blocking diode.
+
+- **Simulation** (HDL in the loop, `sim/tb_coil_servo_top.py`, 5 new tests,
+  237 tests pass): bench model 2 A → 0.1 % in 108 µs instead of 1.74 ms;
+  MOT model 80 A unchanged (1.1 ms — the PI already gets the bank off
+  there); the re-rise matches a rise from rest; threshold hysteresis; ±8
+  counts of IN2 noise does not toggle it; inactive in IDLE and open loop;
+  flips unaffected.
+- **Build** on the lab laptop (`scripts/lab-build.sh`, clean, from
+  `275081b`, HDL identical to `704fd89`): **WNS +0.003 ns, WHS +0.042 ns,
+  0 failing** — met, but the setup margin is thin (rev 4: +0.156 ns); watch
+  it on the next change. 685 496 bytes, SHA-256 `f3533cc8…17aa`. Copied to
+  the Drive folder "RP servo files" (rev 4 kept as `coil_servo_v1.bit.bin`)
+  and to `bitstreams/` (rev 4 archived as `coil_servo_rev4_20261111.bit.bin`).
+- **Deployed** (`deploy mot_bench`): check reports rev 5, commit 275081b,
+  configuration read back OK, snap on (0.109 A). Re-zeroed: IN1 +0.237 A,
+  IN2 +0.166 A. (Remote-desktop note: the laptop session drops Shift and
+  Ctrl, so the build and copy are two scripts with Shift-free names.)
+- **Hardware, closed-loop 2 A pulse** (board capture; the scope refused
+  connections this time):
+
+  | | rise to 98 % | fall to 10 % | fall to 2 % | undershoot |
+  |---|---|---|---|---|
+  | snap off | 0.55 ms | 0.48 ms | **1.55 ms** | −0.03 A |
+  | snap on (4 runs) | 0.55–0.60 ms | 0.13 ms | **0.14 ms** | −0.16 to −0.20 A |
+
+  The fall now runs at the freewheel rate all the way to zero; the dip is
+  the damper capacitor ringing back once (≈ V_f/√(L/C)), as predicted — a
+  near-critically damped MOT damper removes it. Rise unchanged.
+- **Hardware checks:** setpoint 0 and 2 counts (55 mA) → snapped on every
+  read; 10 counts (0.27 A) → not snapped, the loop holds 0.275 A; IN2 analog
+  path at 0 V → snapped on 3000/3000 reads (no chatter) — but IN2 read −3
+  counts after the offset correction, only 1 count inside the threshold:
+  measure IN2 noise and drift with the control computer connected and set
+  `snap_zero_amps` from it; `snap_enable` 0 → OUT1 back on the PI floor.
