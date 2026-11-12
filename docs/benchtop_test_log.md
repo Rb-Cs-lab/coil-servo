@@ -2,12 +2,13 @@
 
 # Benchtop Test Log — MOT coil servo
 
-2026-11-11 and 2026-11-12 · Tests 1–3 of the bring-up campaign (docs/test_campaign.md), all at low power on the bench · Test 3 on a 3 A current-limited bench supply at 5 V (profile `mot_bench`) with one temporary test coil (12 turns, ≈ 45 µH) · firmware register map rev 4, commit 103a127
+2026-11-02 to 2026-11-12 · Tests 0–3 of the bring-up campaign (docs/test_campaign.md), all at low power on the bench · Test 3 on a 3 A current-limited bench supply at 5 V (profile `mot_bench`) with one temporary test coil (12 turns, ≈ 45 µH) · firmware register map rev 4, commit 103a127
 
 ## Status
 
 | Test | Why | Status | Result in one line |
 |---|---|---|---|
+| 0 Pre-checks (11-02 to 11-11) | FETs matched; Red Pitaya, safety logic board, loop and H-bridge each work on their own | [passed] | Latch clock wire missing → added; monostable 7.6 ms; loopback 2.026; open-loop wind-up fixed in rev 4; bridge switches cleanly by hand |
 | 1 Gate stage (11-11) | OUT1 → op-amp → FET gates works, no oscillation, fails safe | [passed] | Op-amp supply wiring fixed; gain 7.93; 50 Ω terminator fitted on OUT1 (1.168 V full scale) |
 | 2 Sensor chain and zero (11-11) | LEM → in-amp → IN1 reads zero correctly | [passed] | Three wiring faults on the in-amp board fixed; LEM offset ≈ 0; Red Pitaya offset calibrated |
 | 3 day 1: first current (11-11) | Sign, grounding, bank behaviour near threshold | [done] | LEM sign fixed; bench supplies must float; IN1 reads ≈ 10 % low; bank onset ≈ 3540 counts |
@@ -22,6 +23,69 @@
 | Extra: range, long hold, flips | Gains over 0.5–2.2 A, drift, flip reliability | [passed] | No trips; 10 min hold stable within 0.5 mA after warm-up; 20/20 flips |
 | 3j Uncooled duty test | Heating limit without water | [moved] | Moved to the 100 A build (≤ 15 W on the bench) |
 | Damper test | Does 3.2 Ω + 10 µF across the coil stop the ringing? | [passed] | Yes: ringing 43–124 mA → 2.5–5 mA with the coil lifted; 2 A hold 100 µs noise 6.5 mA rms |
+
+## Test 0 · Red Pitaya, logic board and power-stage pre-checks (11-02 to 11-11) [passed]
+
+**Why.** Before any current flows, every piece is checked on its own: the FETs are matched, the Red Pitaya runs the firmware and talks to the lab PC, the safety logic board (heartbeat watchdog → latch → bridge-driver disable) trips and stays tripped, the control loop works on a cable, and the H-bridge switches correctly when driven by hand.
+
+### 0a · MOSFET thresholds (11-02)
+
+**How.** Each FET with gate tied to drain, fed through a series resistor from a bench supply; DMM across gate–source gives the threshold V<sub>GS(th)</sub> (pass bank IXTN200N10L2 at 3 mA, bridge IXFN420N10T at 8 mA), 10 of each.
+
+**Result:** pass bank 3.35–3.56 V → installed the six at 3.50–3.56 V (0.06 V spread → ≤ 12 % current-sharing spread at 100 A). Bridge 3.51–3.59 V → installed four within 0.01 V.
+
+### 0b · Logic board on the Red Pitaya, first firmware (11-03)
+
+**How.** Logic board wired to E1, power stage off; the August firmware; `check mot` from the lab PC, then the LED acceptance sequence (green = heartbeat OK, amber = bridge enabled, red = latch tripped).
+
+**Finding:** after a reboot the board had neither the bitstream nor the register server running, so `check` failed. Loaded both by hand over ssh; the host tools now detect this and print the `deploy` command.
+
+**Result:** heartbeat advancing, LED walk, state IDLE, nothing armed or enabled; LED sequence passed. Zero reading +0.18 A (the Red Pitaya's own input offset).
+
+**Monostable timing:** with 68 kΩ the watchdog timed out after ≈ 1.1 ms, about one heartbeat period, so a lost heartbeat could recover on an edge. Changed to 220 kΩ / 100 nF: drop ≈ 7.6 ms after the last heartbeat edge, consistent.
+
+**Noted:** the old firmware started on the arm *level*; the MVP firmware needs an arm *edge* after `servo_enable`, so the recipe is now enable first, then arm.
+
+### 0c · First deploy of the MVP firmware (11-11)
+
+**How.** Board only, arm low, nothing on the inputs; `deploy mot` then `check mot`.
+
+**Result:** image loaded in 69 ms; safe state confirmed (IDLE, OUT1 = 0, bridge disabled, not armed); all 32 configuration words written and read back correctly; zero reading +0.19 A (Red Pitaya input offset).
+
+### 0d · Logic-board acceptance test with the MVP firmware (11-11)
+
+**How.** Power stage off. Arm jumper on E1 pin 11, heartbeat wire DIO6 pulled and re-plugged by hand, LEDs and the `watch` display read at each step (bringup.md 3a).
+
+| Step | Action | Expected | Seen |
+|---|---|---|---|
+| 1 | Arm jumper in *before* `servo_enable` | stays IDLE, amber off (no arm edge) | ✓ |
+| 2 | Unplug and re-plug arm | RUN, amber on | ✓ |
+| 3 | Pull heartbeat (DIO6) | green off, amber off, **red on** | red stayed off ✗ → fixed, then ✓ |
+| 4 | Re-plug heartbeat | green on, red stays on, amber stays off | ✓ after fix |
+| 5 | Stop the servo (IDLE), then press reset | red off, amber stays off | ✓ |
+| 6 | Enable, arm edge; then stop | RUN, then IDLE | ✓ |
+
+**Fault found: the latch did not latch.** Pulling the heartbeat turned the bridge off, but re-plugging it turned the bridge back on by itself. By meter: the monostable's output (CD74HC123 pin 4) was correct, but the latch's clock input (74HC74 pin 3) had **no wire at all** (floating at 0.4–0.6 V; probably came loose after 11-03). Wire added; test passed.
+
+**Design weakness (open):** the latch trips on the *edge* of heartbeat loss. Pressing reset while the heartbeat is still missing clears it, and when the heartbeat returns there is no new edge, so the bridge enables without another reset. Until a level-sensitive trip is fitted: **press reset only with green on, and only after stopping the servo** (dropping arm alone does not stop a running servo).
+
+### 0e · Loopback test with the MVP firmware (11-11)
+
+**Why.** Check the control loop, scaling and trip on a cable before connecting real hardware.
+
+**How.** OUT1 cabled straight to IN1 (the "plant" is just a wire); logic board connected; no power stage. Open-loop OUT1 values, closed-loop setpoints, then a setpoint above the trip level.
+
+**Results:** loopback factor 2.026 (August: 2.03); closed loop holds the setpoint to ±1–2 counts at "20 A" and "50 A"; a "110 A" setpoint trips the board, bridge enable drops, `trip_ack` + stop returns to IDLE.
+
+**Finding — open-loop wind-up:** in open loop the integrator kept integrating and wound up to ≈ 4400 counts, so switching to closed loop jumped OUT1 and tripped the board (on the real coil, a jump towards ~100 A). Fixed in the host tools the same day and in firmware rev 4 (integrator held cleared in open loop).
+
+### 0f · H-bridge and current sensor driven by hand (colleague, reported 11-11)
+
+**How.** Bridge alone, logic board not connected: UCC5350 gate drivers on isolated supplies, logic inputs set by hand; 5 V bench supply; first a resistive load, then the coil with the LEM sensor.
+
+**Results:** no shoot-through; one loose gate connection found and fixed (Q4); resistive load gives +5 V / −5 V / 0 V for the two diagonals and all-off; 1.12 A through the coil each way, reversal correct.
+
+**Finding:** an apparent LEM offset of −5.8 A (primary equivalent). Test 2 later showed it was wiring on the in-amp board, not the sensor; it also prompted the zero-offset registers in firmware rev 4.
 
 ## Test 1 · Gate stage (11-11) [passed]
 

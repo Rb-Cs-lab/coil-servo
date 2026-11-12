@@ -120,7 +120,7 @@ during flips. All grounds on supply 0 V.
 | 3j | Short duty test | read plate temperature by hand/IR | 2.5 A for a few minutes | plate barely warm (≈ 15 W total) |
 
 **Results (11-11/12):** [lab_notes_2026-11.md](lab_notes_2026-11.md) and the
-benchtop test log (Tests 1–3) with all plots, [benchtop_test_log.md](benchtop_test_log.md).
+benchtop test log (Tests 0–3: pre-checks, gate stage, sensor chain, bench supply) with all plots, [benchtop_test_log.md](benchtop_test_log.md).
 3j moved to Test 4 (≤ 15 W on the bench).
 
 ## Test 4 — 100 A build (later, with water)
