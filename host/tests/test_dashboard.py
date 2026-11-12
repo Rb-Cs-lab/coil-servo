@@ -277,6 +277,22 @@ def test_software_arm(sim):
     assert act(c, "stop").status_code == 200
 
 
+def test_zero_setpoint_snap_shown(sim):
+    """Rev 5: at a zero setpoint in RUN the snap holds OUT1 at 0 -- the
+    dashboard shows the flag and OUT1 = DAC code 0, not the PI output."""
+    c, devices, tmp = sim
+    rows = dict(devices["mot"].info("mot")["summary"])
+    assert rows["zero-setpoint snap"].startswith("on")
+    enable_and_arm(c)                                   # register, 0 A
+    wait_for(lambda: state(c)["flags"]["snapped"])
+    s = state(c)
+    assert s["out1_mode"] == "snapped" and s["out1_counts"] == 0
+    assert act(c, "setpoint", amps=40, confirm=True, **MOT).status_code == 200
+    wait_for(lambda: not state(c)["flags"]["snapped"])
+    assert state(c)["out1_mode"] == "closed"
+    assert act(c, "stop").status_code == 200
+
+
 def test_out1_actual_is_not_the_pi_output():
     """OUT1 per coil_servo_top.v / servo_output_mux.v, not STS u14."""
     from coil_servo_host.dashboard.servo_channel import out1_actual
@@ -287,6 +303,7 @@ def test_out1_actual_is_not_the_pi_output():
     # IDLE: integrator held at its last value, outputs gated off
     assert out1_actual(dict(run, bridge_en=0, fsm_state_name="IDLE"),
                        cl) == (0, "off")
+    assert out1_actual(dict(run, snapped=1), cl) == (0, "snapped")
     for st in ("TRIP", "TRIPPED"):          # out_kill, bridge still closed
         assert out1_actual(dict(run, fsm_state_name=st), cl) == (0, "off")
     assert out1_actual(run, cl) == (2263, "closed")

@@ -20,6 +20,7 @@ const FLAG_INFO = {
   tripped: ["tripped", "over-current trip (TRIP or TRIPPED)", true],
   out_sat: ["OUT1 at clamp", "the PI asks for more than the command clamp", true],
   u_floor: ["OUT1 at floor", "PI output on its lower bound: current can only decay", false],
+  snapped: ["snapped (OUT1 = 0)", "zero-setpoint snap: the setpoint is within the snap threshold of zero, so the firmware holds OUT1 at exactly 0 and the integrator cleared; the coil freewheels. The PI command (u14) shown is not what the DAC outputs", false],
   int_railed: ["integrator railed", "the integrator hit its limit", true],
   sp_sign_mismatch: ["sign mismatch", "setpoint sign disagrees with the bridge polarity", true],
   timeout_hold: ["timeout hold", "a flip never reached the zero window", true],
@@ -743,6 +744,7 @@ function updateDetail() {
     ? `bench supply limit ${prof.i_supply_max} A · rated ${prof.i_rated} A` : "";
   $("#d-u").textContent = !(on && st.out1_volts != null) ? "—"
     : st.out1_mode === "off" ? `${st.out1_volts.toFixed(4)} V (DAC code 0: outputs off)`
+    : st.out1_mode === "snapped" ? `${st.out1_volts.toFixed(4)} V (DAC code 0: zero-setpoint snap)`
     : `${st.out1_volts.toFixed(4)} V (${st.out1_counts} counts${
         st.out1_mode === "open" ? ", open loop: the clamped setpoint" : ""})`;
   $("#d-pi").textContent = on && st.pi_volts != null

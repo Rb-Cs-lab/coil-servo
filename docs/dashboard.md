@@ -147,7 +147,10 @@ Click a card for its page.
   DAC code 0 — which measures −0.041 V, not 0 V, so the header shows
   "−0.0413 V (DAC code 0: outputs off)" — while the PI value stays at its last
   value (the integrator is held, not cleared); in open loop OUT1 carries
-  the setpoint, limited to the clamp, not the PI value. Then any alarms
+  the setpoint, limited to the clamp, not the PI value. With the
+  zero-setpoint snap on (register map rev 5) and the setpoint at zero in
+  RUN, OUT1 is also DAC code 0 ("DAC code 0: zero-setpoint snap") while the
+  PI value is whatever the cleared integrator gives. Then any alarms
   and the big
   **STOP** button. On a greyed card it says which role the board is in
   ("in use as MOT", with a link) and how to switch.
@@ -159,7 +162,14 @@ Click a card for its page.
   faster than ~0.2 s. Hover for values.
 - **Flags:** the status bits, each with a tooltip. `OUT1 at floor` is
   normal at low current in RUN (the PI sits on its dead-zone floor; current
-  can only decay).
+  can only decay). `snapped (OUT1 = 0)` (rev 5): the setpoint is within the
+  snap threshold of zero, so the firmware holds OUT1 at exactly 0 and the
+  integrator cleared — the pass bank is fully off and the coil freewheels
+  through the bridge. Normal at a zero setpoint in RUN. The snap setting
+  itself (`snap_zero_enable`, `snap_zero_amps` in channels.toml) shows in the
+  Configuration panel as "zero-setpoint snap"; like dither it is part of
+  the profile — change it in channels.toml and Apply profile. The status
+  log has a `snapped` column.
 - **Mode:** whether the servo is enabled, where the setpoint comes from
   (IN2 = the control computer's analog output, or the setpoint register
   = this page), open loop on/off, heartbeat, and the register-map
@@ -202,7 +212,7 @@ look at the logic board.
 
 ### Old bitstream
 
-The host code knows register-map revision 4. A board still running an
+The host code knows register-map revision 5. A board still running an
 older bitstream (the 2026-08-27 image reports revision 0) has a different
 register layout: writing would land values in the wrong registers. The
 dashboard then shows **OLD BITSTREAM** in red and is **monitoring only** for

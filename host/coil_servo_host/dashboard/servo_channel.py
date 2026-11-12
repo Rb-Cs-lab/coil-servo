@@ -39,8 +39,8 @@ from .device import ActionError, ActionSpec, Device
 from .logs import StatusLog, capture_path, prune_auto_captures
 
 FLAG_NAMES = ("armed", "bridge_en", "polarity", "tripped", "out_sat",
-              "u_floor", "int_railed", "sp_sign_mismatch", "timeout_hold",
-              "fault")
+              "u_floor", "snapped", "int_railed", "sp_sign_mismatch",
+              "timeout_hold", "fault")
 # CFG fields that change in normal operation (not part of the profile)
 LIVE_FIELDS = ("servo_enable", "sp_source", "open_loop", "setpoint",
                "capture_sel", "int_clear", "fifo_rst", "trip_ack",
@@ -169,12 +169,16 @@ def out1_actual(s: dict, rb: dict | None) -> tuple[int, str]:
     - "off": bridge enable low, or TRIP/TRIPPED (out_kill): exactly 0. In
       IDLE the integrator is held, so u14 stays at its last value;
     - "open": open loop, the setpoint clamped to +-out_clamp drives OUT1;
+    - "snapped": zero-setpoint snap (rev 5, STS b14): OUT1 forced to
+      exactly 0 in RUN while u14 still shows the PI output;
     - "closed": u14 (with dither on, OUT1 moves by a count around it).
     Below the handoff deadband OUT1 is 0 (OUT2 is unused in the MVP).
     open_loop/out_clamp/deadband come from the CFG read-back (refreshed
     every cfg_refresh_s); without one, closed loop and no deadband."""
     if not s["bridge_en"] or s["fsm_state_name"] in ("TRIP", "TRIPPED"):
         return 0, "off"
+    if s.get("snapped"):
+        return 0, "snapped"
     if rb is not None and rb["open_loop"]:
         c = rb["out_clamp"]
         u, mode = max(-c, min(c, s["sp_active"])), "open"

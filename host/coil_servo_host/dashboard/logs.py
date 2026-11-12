@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 
 STATUS_COLUMNS = ["time", "unix_s", "state", "armed", "bridge_en",
-                  "polarity", "tripped", "out_sat", "u_floor",
+                  "polarity", "tripped", "out_sat", "u_floor", "snapped",
                   "sp_sign_mismatch", "timeout_hold", "fault", "map_rev",
                   "i_amps", "sp_amps", "u14", "pi_volts", "out1_counts",
                   "out1_volts", "profile"]
@@ -175,7 +175,7 @@ class StatusLog(SegmentCsv):
         self.write(t, [_stamp(t), f"{t:.3f}", s["fsm_state_name"],
                        s["armed"], s["bridge_en"], s["polarity"],
                        s["tripped"], s["out_sat"], s["u_floor"],
-                       s["sp_sign_mismatch"], s["timeout_hold"], s["fault"],
+                       s.get("snapped", 0), s["sp_sign_mismatch"], s["timeout_hold"], s["fault"],
                        s["map_rev"], f"{i_amps:.4f}", f"{sp_amps:.4f}",
                        s["u14"], f"{pi_volts:.5f}", out1_counts,
                        f"{out1_volts:.5f}", profile])

@@ -203,6 +203,16 @@ class SimBoard(Board):
         counts = c["setpoint"] if c["sp_source"] else self._in2_counts(t)
         return counts * self.m.amps_per_lsb
 
+    def _snapped(self) -> bool:
+        """Zero-setpoint snap (rev 5, coil_servo_top.v): RUN, closed loop,
+        snap_enable, the requested setpoint within snap_thresh of zero
+        (no tick averaging or hysteresis here)."""
+        c = self._c
+        if not c.get("snap_enable") or self.state != "RUN" or c["open_loop"]:
+            return False
+        req = self._target_amps(self._clock()) / self.m.amps_per_lsb
+        return abs(req) <= c["snap_thresh"]
+
     def _trip(self) -> None:
         self.state = "TRIP"
         self.t_trip = self._clock()
@@ -322,6 +332,7 @@ class SimBoard(Board):
             sp_sign_mismatch=int(self.mismatch),
             u_floor=int(self.state == "RUN" and not c["open_loop"]
                         and self.u14 <= c["u_floor"]),
+            snapped=int(self._snapped()),
             tripped=int(self.state in ("TRIP", "TRIPPED")),
             map_rev=self.map_rev,
             i_meas=max(-(1 << 21), min((1 << 21) - 1,
