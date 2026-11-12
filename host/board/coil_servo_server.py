@@ -58,7 +58,7 @@ class MockMem:
 
     # STS word 0 bits 31:24 report the register-map revision; mirror of
     # coil_servo_model.registers.MAP_REV (host/tests check they agree)
-    MAP_REV = 4
+    MAP_REV = 5
 
     def __init__(self):
         self.words = {0x4100_0000: self.MAP_REV << 24}

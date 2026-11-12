@@ -185,7 +185,7 @@ unchanged. No hardware change.
   down-step rule, section 3.3) — with a setpoint slew limiter in fabric
   (CFG words 15/20). A target inside the flip zero window is taken at
   once, so stepping to zero stays a full-speed freewheel snap-off
-  (undershoot is impossible at a zero target). **Bench 2026-11-12:** in practice the PI winds OUT1 down rather than dropping it, so the current falls at the freewheel rate only down to a few tenths of an amp and then tails (2 A: 2 % only after ≈ 1.3 ms); a "snap OUT1 to zero" option is proposed (lab_notes_2026-11.md). The integration bench steps 0 → 70 → 20 A with no
+  (undershoot is impossible at a zero target). **Rev 5:** the PI alone winds OUT1 down and leaves a slow tail near zero (bench 2026-11-12); the zero-setpoint snap (register_map.md ctrl b21 / word 23) forces OUT1 to 0 on a zero setpoint so the turn-off is freewheel-limited throughout. The integration bench steps 0 → 70 → 20 A with no
   overshoot or undershoot.
 - *Actuator hunting.* In the fixed-point simulation a steady hold hunts
   between two adjacent OUT1 codes, ~0.12 A of coil current (~50 mA p-p

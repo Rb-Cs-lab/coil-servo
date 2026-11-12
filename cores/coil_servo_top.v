@@ -79,6 +79,7 @@ module coil_servo_top #
   wire        out2_enable    = cfg_data[18];  // 0 = OUT2 held at 0 (MVP)
   wire        trip_ack       = cfg_data[19];  // TRIPPED -> IDLE
   wire        dither_enable  = cfg_data[20];  // OUT1 sigma-delta dither
+  wire        snap_enable    = cfg_data[21];  // zero-setpoint snap (rev 5)
   wire signed [13:0] sp_reg       = cfg_data[45:32];    // W1
   wire signed [17:0] kp_mant      = cfg_data[81:64];    // W2
   wire        [4:0]  kp_shift     = cfg_data[100:96];   // W3
@@ -100,6 +101,7 @@ module coil_servo_top #
   wire        [15:0] slew_down    = cfg_data[655:640];  // W20
   wire signed [13:0] in1_offset   = cfg_data[685:672];  // W21
   wire signed [13:0] in2_offset   = cfg_data[717:704];  // W22
+  wire        [13:0] snap_thresh  = cfg_data[749:736];  // W23
 
   assign fifo_resetn = aresetn & ~fifo_rst;
 
@@ -227,6 +229,38 @@ module coil_servo_top #
   assign bridge_enable_o = bridge_en;
 
   // ------------------------------------------------------------------
+  // Zero-setpoint snap (rev 5; register_map.md ctrl b21, W23, STS b14).
+  // In RUN, closed loop: when the selected setpoint, averaged over one PI
+  // tick, is within snap_thresh of zero, OUT1 is forced to exactly 0 and
+  // the integrator is held cleared. The bank turns fully off at once and
+  // the coil freewheels at its natural rate with the bridge closed --
+  // instead of the PI winding OUT1 down through the bank's turn-on region
+  // (bench 2026-11-12: a ~1.3 ms tail at 2 A). When the setpoint leaves
+  // zero, the integrator restarts from the RUN floor (its anti-windup
+  // bound), the same as a step from rest. The tick average keeps per-sample
+  // IN2 noise from toggling the snap; one count of hysteresis keeps a
+  // setpoint sitting on the threshold from chattering.
+  // ------------------------------------------------------------------
+  wire signed [21:0] sp_dec;
+  wire tick_s;
+  servo_decimator dec_s (
+    .aclk(aclk), .aresetn(aresetn),
+    .in_valid(valid_q), .e_fast({sp_sel[13], sp_sel}),
+    .e_out(sp_dec), .out_valid(tick_s)
+  );
+  // |sp_dec| <= 2^20 (s14 x 128), so the negation cannot overflow
+  wire [21:0] abs_sp_dec = sp_dec[21] ? -sp_dec : sp_dec;
+  wire [21:0] snap_on_lim  = {1'b0, snap_thresh, 7'd0};
+  wire [21:0] snap_off_lim = {1'b0, snap_thresh, 7'd0} + 22'd128;
+  reg snap_zero;
+  always @(posedge aclk)
+    if (!aresetn || !snap_enable || !run_state || open_loop)
+      snap_zero <= 1'b0;
+    else if (tick_s)
+      snap_zero <= snap_zero ? (abs_sp_dec <= snap_off_lim)
+                             : (abs_sp_dec <= snap_on_lim);
+
+  // ------------------------------------------------------------------
   // PI and output stage
   // ------------------------------------------------------------------
   wire signed [13:0] u14;
@@ -255,7 +289,7 @@ module coil_servo_top #
     // against an error the open-loop drive does not correct, and hit OUT1
     // on the switch back to closed loop (loopback 2026-11-11)
     .int_hold(int_hold),
-    .int_clear(fsm_int_clear | int_clear_host | open_loop),
+    .int_clear(fsm_int_clear | int_clear_host | open_loop | snap_zero),
     .u14(u14), .out_sat(out_sat), .at_floor(at_floor), .resid(pi_resid),
     .acc_mon(acc_mon),
     .int_railed(int_railed)
@@ -284,7 +318,8 @@ module coil_servo_top #
 
   reg signed [13:0] u_drive;
   always @(posedge aclk)
-    u_drive <= !aresetn ? 14'sd0 : (open_loop ? sp_clamped : u_dith);
+    u_drive <= (!aresetn || snap_zero) ? 14'sd0 :
+               (open_loop ? sp_clamped : u_dith);
 
   wire signed [13:0] out1, out2;
 
@@ -345,10 +380,11 @@ module coil_servo_top #
   assign sts_data[11]      = timeout_hold;
   assign sts_data[12]      = at_floor;
   assign sts_data[13]      = tripped;
-  assign sts_data[23:14]   = 10'd0;
+  assign sts_data[14]      = snap_zero;
+  assign sts_data[23:15]   = 9'd0;
   // register-map revision (docs/register_map.md; registers.MAP_REV): the
   // host refuses to write CFG to a bitstream whose layout it doesn't know
-  assign sts_data[31:24]   = 8'd4;
+  assign sts_data[31:24]   = 8'd5;
   assign sts_data[53:32]   = i_dec;          // W1, s22 (host sign-extends)
   assign sts_data[63:54]   = 10'd0;
   assign sts_data[77:64]   = sp_active;      // W2, s14 (host sign-extends)

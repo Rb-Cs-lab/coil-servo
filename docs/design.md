@@ -31,6 +31,11 @@ the Verilog. Numeric examples use the MOT channel; formulas are per-channel.
 >   `slew_up` (away from zero) / `slew_down` (toward zero) per clock, in
 >   2⁻¹⁴ counts; an FSM-forced zero bypasses it, open loop bypasses it,
   and a target with |target| < `zero_win` is taken at once (snap-off).
+>   Rev 5 adds the **zero-setpoint snap** in `coil_servo_top.v`: in RUN,
+>   closed loop, a selected setpoint whose one-tick average is within
+>   `snap_thresh` of zero forces the output stage to exactly 0 and holds
+>   the integrator cleared (OUT1 bank fully off; the coil freewheels),
+>   released with one count of hysteresis.
 > - **Node D/E — lower bound.** The output bound is
 >   `min(max(u, floor), clamp)`. In the MVP (`out2_enable` = 0) the floor
 >   is 0, or `u_floor` (≈ 90 % of the pass-bank dead zone) while the FSM

@@ -128,6 +128,9 @@ def test_loader_accepts_a_valid_file(tmp_path):
     dict(out2=1),                              # OUT2 is not fitted
     dict(extra="u_floor_counts = 5000"),       # floor above the clamp
     dict(extra="out_clamp_counts = 9000"),     # clamp outside the DAC range
+    dict(extra="snap_zero_enable = 2"),        # snap switch is 0 or 1
+    dict(extra="snap_zero_enable = 1\nsnap_zero_amps = -0.1"),
+    dict(extra="snap_zero_enable = 1\nsnap_zero_amps = 0.3"),  # >= half zero_win
 ])
 def test_loader_rejects_unsafe_configs(tmp_path, kw):
     with pytest.raises(ValueError):
@@ -343,3 +346,17 @@ def test_sensor_offsets_convert_and_are_bounded(tmp_path):
     p.write_text(bad, encoding="utf-8")
     with pytest.raises(ValueError, match="10 %"):
         load_channel("mot", p)
+
+
+def test_zero_setpoint_snap_settings(tmp_path):
+    """Optional keys, default off; amps -> counts of the setpoint scale.
+    The real channels.toml turns it on for the MOT and the bench."""
+    ch = load_channel("mot", path=write_toml(tmp_path))
+    assert ch["cfg"]["snap_enable"] == 0 and ch["cfg"]["snap_thresh"] == 0
+    ch = load_channel("mot", path=write_toml(
+        tmp_path, extra="snap_zero_enable = 1\nsnap_zero_amps = 0.1"))
+    assert ch["cfg"]["snap_enable"] == 1
+    assert ch["cfg"]["snap_thresh"] == round(0.1 / ch["i_fs"] * 8192)
+    for name in ("mot", "mot_bench"):
+        c = load_channel(name)["cfg"]
+        assert c["snap_enable"] == 1 and 0 < c["snap_thresh"] < c["zero_win"] // 2

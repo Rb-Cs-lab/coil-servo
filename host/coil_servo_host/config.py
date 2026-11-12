@@ -170,6 +170,17 @@ def load_channel(name: str, path: Path = CONFIG_PATH) -> dict:
     for k in ("slew_up_amps_per_ms", "slew_down_amps_per_ms"):
         if float(table[k]) <= 0:
             refuse(f"{k} must be > 0 (0 freezes the setpoint)")
+    # zero-setpoint snap (register map rev 5); optional, default off
+    snap_en = int(table.get("snap_zero_enable", 0))
+    snap_amps = float(table.get("snap_zero_amps", 0.0))
+    if snap_en not in (0, 1):
+        refuse(f"snap_zero_enable = {snap_en} must be 0 or 1")
+    if snap_amps < 0:
+        refuse(f"snap_zero_amps = {snap_amps} A must be >= 0")
+    if snap_amps >= 0.5 * float(table["zero_win_amps"]):
+        refuse(f"snap_zero_amps = {snap_amps} A must stay well below the flip "
+               f"zero window ({table['zero_win_amps']} A): every setpoint at or "
+               f"below it means 'off', so it could not be held")
     for k in ("out2_enable", "boost_mode"):
         if int(table[k]) != 0:
             refuse(f"{k} must be 0: OUT2 / the boost output are not fitted "
@@ -224,6 +235,8 @@ def load_channel(name: str, path: Path = CONFIG_PATH) -> dict:
         out2_enable=int(table["out2_enable"]),
         boost_mode=int(table["boost_mode"]),
         dither_enable=int(table["dither_enable"]),
+        snap_enable=snap_en,
+        snap_thresh=amps_to_counts(snap_amps, i_fs),
         in1_offset=amps_to_counts(in1_off, i_fs),
         in2_offset=amps_to_counts(in2_off, i_fs),
         # board LEDs: a fixed pattern marks bench settings (0 = production)
@@ -367,6 +380,10 @@ def summary_rows(ch: dict) -> list:
          f"(= {kp * 8192 / m.I_FS:.4g} counts/A, "
          f"{ki * 8.192 / m.I_FS:.4g} counts/(A ms))"),
         ("dither", "on" if c["dither_enable"] else "off"),
+        ("zero-setpoint snap",
+         (f"on: |setpoint| <= {c['snap_thresh'] * m.amps_per_lsb:.3g} A "
+          f"({c['snap_thresh']} counts) -> OUT1 = 0 at once, coil freewheels")
+         if c["snap_enable"] else "off (OUT1 follows the PI down to zero)"),
         ("IN1 / IN2 zero offset", f"{c['in1_offset'] * m.amps_per_lsb:+.3f} A "
          f"({c['in1_offset']:+d} counts) / "
          f"{c['in2_offset'] * m.amps_per_lsb:+.3f} A "

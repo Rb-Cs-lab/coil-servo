@@ -89,7 +89,7 @@ once, OUT1 drops below the dead zone, and the coil **freewheels at full
 speed: ~1.3 ms from 100 A, ~1.1 ms from 80 A**. The bridge stays closed
 and enabled — a turn-off is not a flip. (The down-limit exists to
 prevent undershoot, which cannot happen at a zero target. A ramp *to*
-zero that you shape yourself is followed as usual.) **Bench 2026-11-12:** in practice the PI winds OUT1 down rather than dropping it, so the current falls at the freewheel rate only down to a few tenths of an amp and then tails (2 A: 2 % only after ≈ 1.3 ms); a "snap OUT1 to zero" option is proposed (lab_notes_2026-11.md).
+zero that you shape yourself is followed as usual.) **OUT1 itself (register map rev 5):** with the slew snap alone the PI still winds OUT1 down, and on the bench (2026-11-12) the current fell at the freewheel rate only to a few tenths of an amp and then tailed (2 A: 2 % only after ≈ 1.3 ms). Rev 5 adds the **zero-setpoint snap** (`snap_zero_enable` / `snap_zero_amps` in channels.toml): when the requested setpoint is zero (within a few counts, for IN2 noise), OUT1 goes to exactly 0 at once and the integrator is held cleared, so the whole turn-off runs at the freewheel rate; the next pulse starts from the floor like any step from rest. Only a zero setpoint triggers it, so small currents can still be held.
 
 The fastest turn-off the MVP hardware can do is the freewheel; a much
 faster snap-off (~50 µs) needs the blocking diode + TVS upgrade

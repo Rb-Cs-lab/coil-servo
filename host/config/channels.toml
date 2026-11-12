@@ -67,6 +67,14 @@ trip_timeout_us = 3000.0        # bridge opens at the latest after this
                                 # (freewheel from 100 A takes ~1.3 ms)
 slew_up_amps_per_ms = 200.0     # setpoint ramp away from zero (decided)
 slew_down_amps_per_ms = 50.0    # setpoint ramp toward zero (decided)
+snap_zero_enable = 1            # zero-setpoint snap (rev 5, decided 11-12):
+                                # setpoint 0 -> OUT1 = 0 at once, the coil
+                                # freewheels (~1.3 ms from 100 A) instead of
+                                # the PI winding OUT1 down (a slow tail)
+snap_zero_amps = 0.1            # |setpoint| at or below this counts as zero
+                                # (tick-averaged). PROVISIONAL: covers IN2
+                                # noise; set from the measured IN2 noise.
+                                # Must stay well below zero_win_amps.
 
 # --- flip / stop ---
 zero_win_amps = 0.5             # flip zero window -- PROVISIONAL (calibrate
@@ -198,6 +206,8 @@ trip_timeout_us = 3000.0        # same as production; freewheel from 2.5 A
 slew_up_amps_per_ms = 200.0     # same physical rates as production: they
 slew_down_amps_per_ms = 50.0    # are set by rail/L and V_f/L, not by the
                                 # current scale
+snap_zero_enable = 1            # zero-setpoint snap, as [mot]
+snap_zero_amps = 0.1            # PROVISIONAL, as [mot] (~4 counts at G=1)
 
 # --- flip / stop ---
 zero_win_amps = 0.5             # flip zero window -- PROVISIONAL, suits both

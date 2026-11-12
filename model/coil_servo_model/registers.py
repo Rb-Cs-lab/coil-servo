@@ -21,6 +21,7 @@ CFG_FIELDS = {
     "out2_enable":    (0, 18, 1, False),
     "trip_ack":       (0, 19, 1, False),
     "dither_enable":  (0, 20, 1, False),
+    "snap_enable":    (0, 21, 1, False),
     "setpoint":       (1, 0, 14, True),
     "kp_mant":        (2, 0, 18, True),
     "kp_shift":       (3, 0, 5, False),
@@ -42,14 +43,16 @@ CFG_FIELDS = {
     "slew_down":      (20, 0, 16, False),
     "in1_offset":     (21, 0, 14, True),
     "in2_offset":     (22, 0, 14, True),
+    "snap_thresh":    (23, 0, 14, False),
 }
 
 CFG_WORDS = 32      # CFG_DATA_WIDTH = 1024 bits
 # Register-map revision reported in STS word 0 bits 31:24. Bump it (here,
 # in coil_servo_top.v and in the server's mock) on any layout change. The
 # 2026-08-27 full-architecture bitstream reads 0; rev 3 = 2026-11-11 MVP
-# build; rev 4 adds the IN1/IN2 offset registers and the build ID.
-MAP_REV = 4
+# build; rev 4 adds the IN1/IN2 offset registers and the build ID; rev 5
+# the zero-setpoint snap (ctrl b21 snap_enable, word 23, STS b14).
+MAP_REV = 5
 STS_WORDS = 8       # STS_DATA_WIDTH = 256 bits
 
 STS_FIELDS = {
@@ -64,6 +67,7 @@ STS_FIELDS = {
     "timeout_hold":     (0, 11, 1, False),
     "u_floor":          (0, 12, 1, False),
     "tripped":          (0, 13, 1, False),
+    "snapped":          (0, 14, 1, False),
     "map_rev":          (0, 24, 8, False),
     "i_meas":           (1, 0, 22, True),
     "sp_active":        (2, 0, 14, True),

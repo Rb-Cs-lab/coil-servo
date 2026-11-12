@@ -21,6 +21,7 @@ A pin-level safety monitor runs under every test (MVP safety invariants):
     time after it (the edge sits strictly inside the enable-low window).
 """
 
+import math
 from dataclasses import replace
 
 import cocotb
@@ -227,7 +228,7 @@ async def build_id_and_map_revision(dut):
     0x1ABCDEF); the map revision is the one the host expects."""
     await setup(dut, cfg=0)
     assert int(dut.build_id_o.value) == 0x1ABCDEF
-    assert sts(dut)["map_rev"] == MAP_REV == 4
+    assert sts(dut)["map_rev"] == MAP_REV == 5
 
 
 @cocotb.test()
@@ -686,3 +687,217 @@ async def dio_invert_flips_arm_sense(dut):
     dut.arm_i.value = 0                           # edge into armed
     await ClockCycles(dut.aclk, 10)
     assert sts(dut)["fsm_state_name"] == "RUN"
+
+
+# ----------------------------------------------------------------------
+# Zero-setpoint snap (register map rev 5: ctrl b21 snap_enable, W23
+# snap_thresh, STS b14 snapped)
+# ----------------------------------------------------------------------
+SNAP_ON = dict(snap_enable=1, snap_thresh=0)
+
+
+def _dump_trace(name: str, data: dict):
+    """Write a trace for the plots when COIL_SNAP_TRACES names a directory."""
+    import json
+    import os
+    d = os.environ.get("COIL_SNAP_TRACES")
+    if d:
+        with open(os.path.join(d, name + ".json"), "w") as f:
+            json.dump(data, f)
+
+
+async def _pulse(dut, ch, cfg_fn, amps, snap, hold_ticks, off_ticks, again_ticks):
+    """Arm, step to `amps`, hold, step the setpoint to 0, then step back up.
+    Records OUT1 (DAC, end of tick), the plant current and STS snapped per
+    tick. Returns (trace dict, index of the step to zero, index of the
+    second step up)."""
+    extra = dict(SNAP_ON) if snap else dict(snap_enable=0, snap_thresh=0)
+    await setup(dut, cfg_fn(setpoint=0, **extra))
+    await arm(dut)
+    world = World(dut, sp_amps=amps, ch=ch, cfg_fn=cfg_fn, cfg_extra=extra)
+    tr = {"t": [], "i": [], "out1": [], "snapped": [], "ben": [], "sp": []}
+
+    async def run(n, sp):
+        world.sp_amps = sp
+        for _ in range(n):
+            o1 = await world.tick()
+            s = sts(dut)
+            tr["t"].append(world.t)
+            tr["i"].append(world.plant.I)
+            tr["out1"].append(o1)
+            tr["snapped"].append(s["snapped"])
+            tr["ben"].append(int(dut.bridge_enable_o.value))
+            tr["sp"].append(sp)
+
+    await run(hold_ticks, amps)
+    k_off = len(tr["t"])
+    await run(off_ticks, 0.0)
+    k_up = len(tr["t"])
+    await run(again_ticks, amps)
+    return tr, k_off, k_up
+
+
+def _first_below(tr, k0, level):
+    for k in range(k0, len(tr["i"])):
+        if tr["i"][k] <= level:
+            return (k - k0 + 1) * T_S
+    return None
+
+
+@cocotb.test()
+async def snap_turns_the_bank_off_at_once_and_restarts_cleanly(dut):
+    """Bench profile (2 A, one test coil on a 3 A supply) and the MOT (80 A),
+    snap off and on. With the snap on: OUT1 is exactly 0 from the second
+    tick after the setpoint reaches 0, the bridge stays closed, STS reports
+    `snapped`, and the current reaches zero at the freewheel rate, no later
+    than without the snap; the step back up afterwards matches the first
+    rise from rest (the integrator restarts from the floor)."""
+    # tol: hold / re-rise tolerance. On the bench model one OUT1 count is
+    # ~0.14 A, so a 2 A hold (one sample per tick into the plant) hunts by
+    # a few percent; the MOT holds to 1 %.
+    cases = [("bench", BENCH, bench_cfg, 2.0, 0.05, 2600, 2500, 2600),
+             ("mot", MOT, run_cfg, 80.0, 0.01, 1700, 2000, 1700)]
+    for name, ch, cfg_fn, amps, tol, hold, off, again in cases:
+        res = {}
+        for snap in (0, 1):
+            tr, k_off, k_up = await _pulse(dut, ch, cfg_fn, amps, snap,
+                                           hold, off, again)
+            _dump_trace(f"snap_{name}_{'on' if snap else 'off'}",
+                        dict(tr, k_off=k_off, k_up=k_up, amps=amps))
+            res[snap] = (tr, k_off, k_up)
+            assert all(tr["ben"]), f"{name}: the bridge opened"
+            assert abs(tr["i"][k_off - 1] - amps) < tol * amps, \
+                f"{name}: not at {amps} A before the step to zero"
+
+        tr, k_off, k_up = res[1]
+        # OUT1 exactly 0 from the 2nd tick after the step (tick average)
+        assert all(o == 0 for o in tr["out1"][k_off + 2:k_up]), \
+            f"{name}: OUT1 not held at 0 during the snap"
+        assert all(tr["snapped"][k_off + 2:k_up]), f"{name}: STS snapped not set"
+        assert not any(tr["snapped"][k_up + 2:]), f"{name}: snap did not release"
+        assert not any(res[0][0]["snapped"]), f"{name}: snapped with snap off"
+
+        # freewheel: |dI/dt| = (V_f + I R_fw)/L -> time to zero
+        t_fw = ch.L / ch.R_fw * math.log(1 + amps * ch.R_fw / ch.V_f)
+        lim = {s: _first_below(res[s][0], res[s][1], 0.02 * amps)
+               for s in (0, 1)}
+        zero = {s: _first_below(res[s][0], res[s][1], 1e-3 * amps)
+                for s in (0, 1)}
+        cocotb.log.info(f"{name}: to 2 % off {lim[0]} on {lim[1]} s; to 0.1 % "
+                        f"off {zero[0]} on {zero[1]} s; freewheel {t_fw:.3e} s")
+        assert zero[1] is not None and zero[1] <= t_fw + 4 * T_S, \
+            f"{name}: snap-off took {zero[1]} s, freewheel {t_fw:.3e} s"
+        assert zero[0] is None or zero[1] <= zero[0], f"{name}: snap slower"
+
+        # second rise vs the first rise from rest
+        rise1 = tr["i"][:300]
+        rise2 = tr["i"][k_up:k_up + 300]
+        dev = max(abs(a - b) for a, b in zip(rise1, rise2))
+        assert dev < 2 * tol * amps, f"{name}: second rise differs by {dev:.3f} A"
+        assert max(tr["i"][k_up:]) < (1 + tol) * amps, f"{name}: overshoot on re-step"
+
+
+@cocotb.test()
+async def snap_threshold_has_one_count_of_hysteresis(dut):
+    """snap_thresh 4 counts, register setpoint path: 3 counts engages the
+    snap, 5 stays snapped (inside the hysteresis), 6 releases, 5 does not
+    re-engage, 4 does. A small non-zero setpoint above the threshold is
+    servoed normally (OUT1 on or above the floor)."""
+    extra = dict(snap_enable=1, snap_thresh=4)
+    await setup(dut, run_cfg(setpoint=0, **extra))
+    await arm(dut)
+
+    async def hold(code, n=20):
+        dut.cfg_data.value = run_cfg(setpoint=code, **extra)
+        await ClockCycles(dut.aclk, 128 * n)
+        return sts(dut)["snapped"], dacs(dut)[0]
+
+    for code, want in ((3, 1), (5, 1), (6, 0), (5, 0), (4, 1), (-3, 1), (-6, 0)):
+        snapped, o1 = await hold(code)
+        assert snapped == want, f"setpoint {code}: snapped {snapped}, want {want}"
+        if want:
+            assert o1 == 0, f"setpoint {code}: OUT1 {o1} while snapped"
+        else:
+            assert o1 >= FLOOR, f"setpoint {code}: OUT1 {o1} below the floor"
+
+
+@cocotb.test()
+async def snap_rides_through_in2_noise_without_chatter(dut):
+    """Analog setpoint path (sp_source 0): IN2 carries +-8 counts of
+    per-sample noise around 0. With snap_thresh 2 the tick average engages
+    the snap and holds it: OUT1 is 0 on every clock for 200 ticks. The same
+    noise around a 30 A setpoint never engages it."""
+    import random
+    rng = random.Random(7)
+    extra = dict(snap_enable=1, snap_thresh=2, sp_source=0)
+    await setup(dut, run_cfg(setpoint=0, **extra))
+    await arm(dut)
+
+    async def noisy(center, n_ticks, check):
+        for _ in range(n_ticks):
+            for _ in range(128):
+                dut.s_axis_tdata.value = pack_adc(0, center + rng.randint(-8, 8))
+                await RisingEdge(dut.aclk)
+                check()
+
+    await noisy(0, 5, lambda: None)                 # engage
+
+    def held():
+        assert dacs(dut)[0] == 0, "OUT1 left 0 during the snap"
+        assert sts(dut)["snapped"] == 1, "snap released by noise"
+    await noisy(0, 200, held)
+
+    sp30 = counts(30.0)
+
+    def never():
+        assert sts(dut)["snapped"] == 0, "snapped at 30 A"
+    await noisy(sp30, 3, lambda: None)
+    await noisy(sp30, 100, never)
+
+
+@cocotb.test()
+async def snap_only_in_closed_loop_run(dut):
+    """Snap enabled: no effect in IDLE, none in open loop (the setpoint
+    drives OUT1 directly there), and switching snap_enable off at a zero
+    setpoint returns OUT1 to the floor (rev 4 behaviour)."""
+    await setup(dut, run_cfg(setpoint=0, **SNAP_ON))
+    await ClockCycles(dut.aclk, 128 * 5)
+    assert sts(dut)["fsm_state_name"] == "IDLE" and sts(dut)["snapped"] == 0
+    await arm(dut)
+    await ClockCycles(dut.aclk, 128 * 5)
+    assert sts(dut)["snapped"] == 1 and dacs(dut)[0] == 0
+    dut.cfg_data.value = run_cfg(setpoint=0)                 # snap off
+    await ClockCycles(dut.aclk, 128 * 5)
+    assert sts(dut)["snapped"] == 0 and dacs(dut)[0] == FLOOR
+
+    await setup(dut, run_cfg(open_loop=1, setpoint=0, **SNAP_ON))
+    await arm(dut)
+    await ClockCycles(dut.aclk, 128 * 5)
+    assert sts(dut)["snapped"] == 0, "snap active in open loop"
+
+
+@cocotb.test()
+async def flip_with_snap_enabled(dut):
+    """A flip at 30 A with the snap enabled: the FSM forces the loop's
+    setpoint to zero, but the requested setpoint stays at 30 A, so the snap
+    stays out of the way; the flip completes and the loop re-settles."""
+    await setup(dut, run_cfg(setpoint=0, **SNAP_ON))
+    await arm(dut)
+    world = World(dut, sp_amps=30.0, cfg_extra=SNAP_ON)
+    for _ in range(1000):
+        await world.tick()
+    dut.flip_req_i.value = 1
+    await ClockCycles(dut.aclk, 10)
+    dut.flip_req_i.value = 0
+    pol0 = int(dut.bridge_polarity_o.value)
+    for _ in range(3000):
+        await world.tick()
+        assert sts(dut)["snapped"] == 0
+        if int(dut.bridge_polarity_o.value) != pol0 and \
+                sts(dut)["fsm_state_name"] == "RUN":
+            break
+    else:
+        raise AssertionError("flip never completed")
+    for _ in range(1300):
+        await world.tick()
+    assert abs(world.plant.I - 30.0) < 0.1

@@ -16,10 +16,12 @@
 // servo does nothing until configured -- fail-safe).
 //
 // SNAP: a target inside the zero window (|target| < snap_win, the flip
-// zero window zero_win) is taken at once, unlimited. A step to zero is then
-// a true snap-off -- the coil freewheels at full speed -- and the down-limit,
+// zero window zero_win) is taken at once, unlimited, and the down-limit,
 // whose job is to prevent undershoot, is not needed there: the current
-// cannot go below zero (decided 2026-11-10).
+// cannot go below zero (decided 2026-11-10). This only moves the SETPOINT:
+// the PI still winds OUT1 down (a slow tail near zero, bench 2026-11-12).
+// Forcing OUT1 itself to 0 on a zero setpoint is the zero-setpoint snap in
+// coil_servo_top.v (register map rev 5).
 //
 // hold_zero (FSM forced zero: IDLE, ramp-down, flip, trip) drops the output
 // to 0 at once and keeps it there, so after a re-arm or a flip the setpoint
