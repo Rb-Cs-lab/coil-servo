@@ -464,3 +464,17 @@ served by the `test-log` entry in
 - Firmware/config: bench `I_rated` 2.2 A; offsets re-zeroed after an
   unplanned Red Pitaya reboot (IN1 +0.289 A, IN2 +0.179 A — the input drifts
   while warming up after power-up).
+- **Extra checks, coil flat on the table (second Claude session; data
+  `logs/t3b_*`):**
+  - Closed-loop steps 0 → 0.5 / 1.0 / 1.5 / 2.0 / 2.2 A: 98 % in 1.36 /
+    0.95 / 0.70 / 0.62 / 0.63 ms (faster at higher current: the bank's gain
+    rises), overshoot 25–41 mA = at the noise level; no sample above the
+    trip at 2.2 A. Down-steps 2.2 → 1.0, 1.0 → 0, 2.0 → 0 A: 98 % in 0.34 /
+    1.22 / 1.49 ms (fast drop, then the integrator unwinds); floor leakage
+    leaves 14–18 mA at setpoint 0.
+  - 10 min hold at 2.0 A: mean 1.9958 A; after the first (warm-up) minute
+    the window means agree within ≈ 0.5 mA (0.025 %); per-point resolution
+    ±5.8 mA. OUT1 fell 3948 → 3927 counts as the bank warmed (≈ 0.2 A of
+    open-loop drift removed by the loop).
+  - 20 flips at ±1 A: 20/20, no TIMEOUT_HOLD, no trip; request → RUN with the
+    new polarity ≈ 1.1 ms (host-timed).
