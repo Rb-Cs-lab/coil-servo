@@ -382,8 +382,8 @@ the steel optical table. Calculated from its geometry (Neumann integral):
 until now was a guess for one MOT coil). Arm and flip requests from software
 (pulses of the `dio_invert` setting: bit 1 = arm, bit 0 = flip request), so
 the arm jumper stays out. Plots and step-by-step detail:
-[test3_bench_log.md](test3_bench_log.md) (generated from the session's log
-page, `logs/testlog/test3_log.html` (lab PC only -- logs/ is not in git;
+[benchtop_test_log.md](benchtop_test_log.md) (generated from the session's log
+page, `logs/testlog/benchtop_log.html` (lab PC only -- logs/ is not in git;
 served by the `test-log` entry in
 `.claude/launch.json`)); data in `logs/t3_*`.
 

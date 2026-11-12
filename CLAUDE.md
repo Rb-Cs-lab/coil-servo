@@ -29,7 +29,7 @@ dashboard" session.
 
 **Bring-up campaign** ([docs/test_campaign.md](docs/test_campaign.md), results in
 [docs/lab_notes_2026-11.md](docs/lab_notes_2026-11.md), plots in
-[docs/test3_bench_log.md](docs/test3_bench_log.md)): Tests 1–3 done
+[docs/benchtop_test_log.md](docs/benchtop_test_log.md)): Tests 1–3 done
 (gate stage, sensor zero, bench supply ≤ 3 A on a temporary 12-turn test
 coil, profile `mot_bench`). **Next: control-computer integration on the bench
 (IN2 setpoint, DIO3 flip, DIO4 arm), then Test 4 — 100 A on the SE-600-5
