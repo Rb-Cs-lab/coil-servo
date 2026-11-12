@@ -41,8 +41,25 @@ with both MOT coils, water, `mot` profile.** Key results (11-11/12):
   27.3 mA per count** (vs ammeter, closed-loop 2 A hold). IN2's own scale is
   not measured yet. Offsets drift a little after power-up — re-zero.
 - **Turn-off path confirmed: freewheel through the bridge body diode**
-  (drain bar at rail + one diode drop; the TVS is never reached). Setpoint
-  → 0 in closed loop is slower (the PI winds OUT1 down, ~0.3 ms at 2 A).
+  (drain bar at rail + one diode drop; the TVS is never reached). OUT1 → 0:
+  2 A → 0 in ≈ 170 µs (≈ 0.5 V/45 µH), then a ≈ −0.2 A swing into the
+  damper capacitor for ≈ 100 µs; bank turn-off rings the drain bar to
+  12.1 V for µs (bank TVS ≈ 13.3 V — will clamp at 100 A, scope in Test 4).
+  **Closed-loop setpoint → 0 has a PI tail** (2 → 0.35 A at the freewheel
+  rate, then 2 % only at ≈ 1.3 ms: the integrator unwinds through the
+  bank's turn-on region).
+- **LEM moved inside the coil–damper loop** (bridge → damper/varistor tap →
+  LEM → coil; 11-12) so it reads true coil current; loop unaffected. For
+  the MOT: LEM between the coils, damper across the whole pair. Bridge
+  opened at 2 A (firmware trip, `trip_timeout` 0): energy into the damper,
+  current zero in ≈ 25 µs, gone by ≈ 200 µs. Size the MOT damper near
+  critical damping (R ≈ 2√(L/C)).
+- **Unexplained 5 A surge (11-12):** during a 2 A hold awaiting a heartbeat
+  pull, the bridge apparently re-closed with OUT1 wound to the clamp; the
+  firmware over-current trip caught it. Latch re-checked (holds through a
+  2 s heartbeat loss). Root weakness: **the firmware cannot see the
+  latch** — proposed: latch output → DIO5 + firmware stop/integrator clear,
+  and/or stall detection. Not done.
 - Firmware trip fires at the set level (2.85 A for 2.79 A), flips happen
   only inside the zero window, **dead time measured 1.0 µs each side** of the
   polarity edge (at the Red Pitaya pins), heartbeat-latch trip opens the
@@ -66,8 +83,10 @@ with both MOT coils, water, `mot` profile.** Key results (11-11/12):
   so a pulsed software arm does not allow flips.
 
 Firmware decisions in force: **snap to zero** (decided 2026-11-10) — a
-setpoint target inside the zero window (`zero_win`) bypasses the slew limit,
-so IN2 → 0 freewheels at full speed (~1.3 ms from 100 A). **Ramps enforced
+setpoint target inside the zero window (`zero_win`) bypasses the slew limit.
+It does NOT force OUT1 to 0 — the PI still winds OUT1 down, which leaves a
+slow tail near zero (measured 11-12); only the over-current trip and open
+loop drop OUT1 to 0 at once. **Ramps enforced
 in fabric** (decided 2026-11-10; model: raw steps undershoot going down and
 overshoot up to ~20 % on compliance-limited up-steps): ≤ 200 A/ms away from
 zero, ≤ 50 A/ms toward zero (`servo_slew.v`, CFG W15/W20); the control
@@ -82,9 +101,13 @@ first, then raise arm). `host/config/channels.toml` holds the measurable
 physics; `config.py` builds the model `Channel` from it and DERIVES I_FS, the
 OUT1 clamp and the floor (overridable by measured counts) and refuses unsafe
 files; `python -m coil_servo_host.config mot` prints the derived values.
-Still queued: shot-synchronous capture (proposal in docs/dashboard.md); fast
-turn-off ("snap OUT1 to zero", waits for parts); level-sensitive latch trip
-review; dashboard "hold arm" mode for software flips.
+Still queued: shot-synchronous capture (proposal in docs/dashboard.md);
+**"snap OUT1 to zero"** option (OUT1 → 0, integrator → floor when the
+setpoint enters the zero window; removes the PI tail, works on the present
+hardware — user: not yet, 2026-11-12); bridge-open fast turn-off (needs the
+TVS + blocking diode, waits for parts); latch visibility (latch → DIO5,
+stall detection); level-sensitive latch trip review; dashboard "hold arm"
+mode for software flips.
 **GUI rule (user, 2026-11-11):** anything like this — a new setting, status
 or calibration — also goes into the dashboard (separate dashboard session);
 ask if unsure.

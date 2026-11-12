@@ -490,3 +490,73 @@ served by the `test-log` entry in
   its capacitor with the wiring. **For the MOT build: plan an RC damper across
   the pair** (R ≈ ωL at the ringing frequency for 16 µH, C to pass it,
   resistor rated for the 100 A pulses) and confirm on the real coils.
+
+## LEM moved inside the coil–damper loop; turn-off measurements (11-12, late)
+
+Plots and details: [benchtop_test_log.md](benchtop_test_log.md), section
+"LEM inside the coil–damper loop". Data `logs/t3c_*` (lab PC).
+
+- **Why:** the damper and varistor were connected at the coil terminals and
+  the LEM sat on the bridge side of that connection, so it read coil +
+  damper + varistor current. Current circulating coil → damper → coil (after
+  a turn-off, or when the bridge opens) was invisible. **Moved** so the order
+  is bridge → damper/varistor tap → LEM → coil. For the MOT the planned LEM
+  position between the two coils is inside the loop automatically, as long
+  as the damper goes across the whole pair.
+- **Sign and loop:** sign unchanged (OUT1 3800 counts → +0.65 A). Closed-loop
+  1 A step 90 % 0.61 ms, 98 % 0.81 ms, +2.4 % — the coil–damper resonance in
+  the feedback path does not hurt the loop.
+- **Turn-off, bridge closed (open loop, OUT1 → 0), 2 A:** freewheel at
+  ≈ 0.5 V across the coil, ≈ 12–13 mA/µs, 2 A → 0 in ≈ 170 µs (two runs
+  agree; the scope and the board's own capture agree). Then a **≈ −0.2 A
+  swing for ≈ 100 µs** (the coil ringing once into the damper capacitor),
+  gone by ≈ 200 µs. The bank turn-off rings the drain bar up to **12.1 V**
+  for a few µs (≈ 500 kHz), just under the bank TVS (5KP12CA ≈ 13.3 V) —
+  at 100 A expect the TVS to clamp it; scope it in Test 4.
+- **Bridge opened at 2 A** (firmware trip with `trip_timeout` = 0 and
+  `trip_level` 1 A, temporarily; same electrical event as the heartbeat
+  trip without integrator wind-up): coil voltage jumps to ≈ 6 V = 2 A ×
+  3.2 Ω, current zero in ≈ 25 µs, swings to ≈ −0.3 A, gone by ≈ 150–200 µs;
+  the energy goes into the damper, not the supply. 12.7 V / 0.4 µs spike on
+  node A (wiring inductance). The morning's "gone in ≈ 10 µs" (3h, no
+  damper, LEM outside) no longer describes the coil. At 100 A the bridge
+  body diodes clamp the coil at ≈ rail + 1.5 V and most of the 0.08 J goes
+  into the supply; size the MOT damper near critical damping
+  (R ≈ 2√(L/C)) so the current does not ring back through zero.
+- **Unexplained 5 A surge.** During a closed-loop 2 A hold waiting for a
+  heartbeat pull, the firmware over-current trip fired; the scope shows
+  ≈ 4.7–5 A with the bridge closed, the rail sagging 4.3 → 1.9 V (3 A supply
+  in current limit, its output capacitors supplying the rest), then the
+  trip and a normal freewheel. The latch reset was pressed before the LEDs
+  were read. **Latch check afterwards** (supply output off, RUN at setpoint
+  0 with OUT1 wound to the clamp): DIO6 pulled ≈ 2 s → red on, amber off;
+  re-plugged → red stays on, amber stays off ✓ (quick-flick test not done).
+  Cause open: reset pressed while still in RUN (wound-up integrator), a
+  heartbeat loss too short for the pull test, or a disturbance on the
+  reading. **Underlying weakness: the firmware cannot see the latch** — when
+  the latch opens the bridge the PI winds OUT1 to the clamp, and any reset
+  or glitch re-closes the bridge at full drive. Proposed (not done): latch
+  output → DIO5 with the firmware stopping and clearing the integrator on
+  it, and/or stall detection (OUT1 at the clamp, current far below the
+  setpoint for > ~1 ms → stop). Until then: stop the servo before reset.
+- **Noise on the raw current traces** is pickup on the 5 mV/A IN1 line
+  (≈ 3 mV rms, with the scope's 20 MHz limit already on), white: 575 mA rms
+  raw → 36 mA rms in 50 µs averages with the current at zero. The real
+  steadiness is the board's averaged reading (6.5 mA rms per 100 µs at
+  2 A; mean within 0.5 mA over 10 min).
+- **Closed-loop 2 A square pulse (8 ms):** rise 10 → 90 % 360 µs, 98 % at
+  ≈ 0.56 ms, +2 % (PI-limited; the rail could do ≈ 20 µs). Fall: 2 → 0.35 A
+  in ≈ 130 µs, then a **PI tail**: 10 % at ≈ 0.43 ms, 2 % at ≈ 1.3 ms (the
+  integrator unwinds at ≈ 280 counts/ms through the bank's turn-on region).
+  Present with the LEM inside or outside. **Proposed firmware option "snap
+  OUT1 to zero"** (OUT1 → 0 and integrator → floor when the setpoint enters
+  the zero window): turn-off at the natural freewheel rate; works with the
+  present hardware (bridge stays closed). Separate from the bridge-open fast
+  turn-off that needs the TVS + blocking diode. Not implemented yet.
+- **Estimates for 100 A on the MOT pair:** freewheel turn-off ≈ 1.3 ms
+  (1.0–1.7 ms; t = (L/R)·ln(1 + I₀R/V_f), V_f ≈ 0.6–1.0 V, R ≈ 8–12 mΩ; the
+  same formula gives 165 µs for the bench vs 170 µs measured); bridge open
+  ≈ 0.2 ms; future 30 V-clamp turn-off ≈ 50 µs; rise 0 → 100 A ≈ 0.4 ms
+  hardware limit, ≥ 0.5 ms with the 200 A/ms firmware ramp, depending on
+  the bank's compliance at 100 A with the 5.18 V gate ceiling (Test 4).
+  Coil current only; chamber eddy currents come on top.
