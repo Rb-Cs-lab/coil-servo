@@ -487,6 +487,10 @@ Coil current only; the field at the atoms also waits for chamber eddy currents (
 
 *Hardware. With the snap on the fall runs at the freewheel rate all the way to zero; the −0.17 A dip is the damper capacitor ringing back once (as predicted). The rise is unchanged.*
 
+![2 A pulse: rev 4 versus rev 5 with the snap off and on, and their difference](img/benchtop/t3d_pulse_old_vs_new.png)
+
+*The same 2 A pulse with this afternoon's rev 4 firmware and tonight's rev 5 (snap off and on). Rise and flat top are identical; rev 4 and rev 5 with the snap off overlap on the fall, so switching the snap off reproduces the old behaviour exactly. Bottom right: rev 4 minus rev 5 with the snap on, the current the old firmware was still pushing through the coil after the setpoint went to zero (~0.35 A just after the fast part, still ~0.1 A at 1.5 ms; the peak near 120 µs includes the new run's damper dip). Times from each fall's 50 % point: fall to 2 % at 1220 µs (rev 4), 1241 µs (rev 5 off), 77 µs (rev 5 on).*
+
 | 2 A pulse (hardware) | Rise to 98 % | Fall to 10 % | Fall to 2 % | Undershoot |
 |---|---|---|---|---|
 | Snap off | 0.55 ms | 0.48 ms | **1.55 ms** | −0.03 A |
