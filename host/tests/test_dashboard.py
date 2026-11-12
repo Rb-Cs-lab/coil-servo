@@ -478,6 +478,8 @@ def test_one_device_per_board_and_cards():
     assert "1.168 V" in rows["measured: OUT1 full scale"]
     assert "-41.3 mV" in rows["measured: OUT1 offset"]
     assert "5.18 V" in rows["measured: gate ceiling"]
+    assert "1.1 V on IN1" in rows["measured: IN1 full scale"]
+    assert "I_FS = 220 A" in rows["measured: IN1 full scale"]
 
 
 def test_cards_file_is_checked(tmp_path):

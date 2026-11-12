@@ -178,10 +178,16 @@ def out1_actual(s: dict, rb: dict | None) -> tuple[int, str]:
 
 
 def measured_rows(m) -> list:
-    """The measured OUT1/gate-stage calibration (channels.toml physics,
-    Test 1, 2026-11-11) as read-only (label, text) rows for the
+    """The measured IN1 scale and OUT1/gate-stage calibration
+    (channels.toml physics, Tests 1 and 3, 2026-11-11) as read-only (label, text) rows for the
     Configuration panel. Empty for a value that is not set."""
     rows = []
+    v = getattr(m, "in1_fs_volts", 1.0)
+    if v != 1.0:
+        rows.append(("measured: IN1 full scale",
+                     f"{v:.4g} V on IN1 at the full-scale ADC code "
+                     f"(in1_fs_volts; nominal 1.0 V): sensor scale I_FS = "
+                     f"{m.I_FS:.4g} A, {m.amps_per_lsb * 1e3:.2f} mA per count"))
     if getattr(m, "out1_fs_volts", None) is not None:
         rows.append(("measured: OUT1 full scale",
                      f"{m.out1_fs_volts:.4g} V at the op-amp input per "

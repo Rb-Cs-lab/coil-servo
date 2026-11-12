@@ -178,8 +178,11 @@ Click a card for its page.
 - **Configuration:** what `python -m coil_servo_host.config <channel>`
   prints (supply limit for bench profiles, sensor scale, pass-bank gain,
   dead zone, floor, clamp, trip, zero window, ramps, PI gains, dither,
-  zero offsets, board LEDs) for this card's profile, plus three read-only
-  *measured* rows from the gate-stage test (Test 1, 2026-11-11): OUT1 full
+  zero offsets, board LEDs) for this card's profile, plus read-only
+  *measured* rows: IN1 full scale (`in1_fs_volts`, the volts on IN1 at the
+  full-scale ADC code — the MOT board reads 1.10 V, not the nominal 1.0 V,
+  which sets I_FS = 220 A; shown only when not nominal) and, from the
+  gate-stage test (Test 1, 2026-11-11), OUT1 full
   scale (`out1_fs_volts`), the OUT1 offset at DAC code 0
   (`out1_offset_volts`) and the gate ceiling (`V_opamp_max`). They come
   from `channels.toml`; change them there. Then which profile the board
@@ -320,7 +323,7 @@ written to the action log with the client's IP address.
   (±15 V) and warmed up, and the control computer's setpoint output is at
   0 V. Measuring changes nothing. A loud warning above 0.3 A on IN1
   ("sensor needs attention": a magnetised LEM read −5.8 A on 2026-11-11);
-  above 10 % of the sensor full scale (20 A at I_FS = 200 A) the result is
+  above 10 % of the sensor full scale (22 A at the MOT's I_FS = 220 A) the result is
   refused — that is a broken, unpowered or saturated sensor, not an
   offset. Then:
   - **Store in channels.toml** — writes `in1_offset_amps` /
