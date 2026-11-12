@@ -236,6 +236,13 @@ def test_simulated_run_through_the_api(sim):
         "out1_volts", "pi_volts"}
 
 
+def test_static_files_are_revalidated(sim):
+    """After an update a plain reload must fetch the new app.js."""
+    c, _, _ = sim
+    r = c.get("/static/app.js")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
+
+
 def test_software_arm(sim):
     """The arm edge from software (dio_invert bit 1 pulse): refused before
     Enable, reaches RUN after it with DIO4 low, and leaves dio_invert as

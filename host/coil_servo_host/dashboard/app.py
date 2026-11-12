@@ -33,6 +33,17 @@ from starlette.responses import (FileResponse, JSONResponse, Response,
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
+
+class _NoCacheStatic(StaticFiles):
+    """Static files the browser must revalidate on every load: after a
+    dashboard update a plain reload then gets the new app.js (the ETag
+    still makes an unchanged file a cheap 304)."""
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
 from .access import AccessPolicy
 from .device import ActionError
 
@@ -79,7 +90,8 @@ def create_app(devices: dict, policy: AccessPolicy | None = None,
         return devices[name]
 
     async def index(request):
-        return FileResponse(STATIC / "index.html")
+        return FileResponse(STATIC / "index.html",
+                            headers={"Cache-Control": "no-cache"})
 
     async def whoami(request):
         return JSONResponse(policy.describe(client_of(request)))
@@ -199,7 +211,7 @@ def create_app(devices: dict, policy: AccessPolicy | None = None,
         Route("/api/devices/{name}/actions/{action}", action,
               methods=["POST"]),
         Route("/api/stream", stream),
-        Mount("/static", StaticFiles(directory=STATIC), name="static"),
+        Mount("/static", _NoCacheStatic(directory=STATIC), name="static"),
     ]
     return Starlette(routes=routes, lifespan=lifespan,
                      exception_handlers={ActionError: action_error})
