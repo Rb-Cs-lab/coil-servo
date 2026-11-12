@@ -236,6 +236,40 @@ def test_simulated_run_through_the_api(sim):
         "out1_volts", "pi_volts"}
 
 
+def test_software_arm(sim):
+    """The arm edge from software (dio_invert bit 1 pulse): refused before
+    Enable, reaches RUN after it with DIO4 low, and leaves dio_invert as
+    the profile has it; also arms with DIO4 already high."""
+    c, devices, _ = sim
+    board = devices["mot"].board
+    assert act(c, "apply_profile", confirm=True, **MOT).status_code == 200
+    inv0 = board.read_cfg()["dio_invert"]
+    r = act(c, "soft_arm", confirm=True)
+    assert r.status_code == 409 and "after Enable" in r.json()["error"]
+    assert act(c, "soft_arm").status_code != 200          # needs confirm
+    assert act(c, "enable", source="register", confirm=True).status_code == 200
+    r = act(c, "soft_arm", confirm=True)
+    assert r.status_code == 200, r.text
+    assert "RUN" in r.json()["message"]
+    wait_for(lambda: state(c)["state"] == "RUN")
+    wait_for(lambda: state(c)["pending"] is None)
+    assert board.read_cfg()["dio_invert"] == inv0
+    assert state(c)["held"] == ["mot"]                    # still matches
+    r = act(c, "soft_arm", confirm=True)                  # already running
+    assert r.status_code == 409
+    assert act(c, "stop").status_code == 200
+    wait_for(lambda: state(c)["state"] == "IDLE")
+    # DIO4 left high: the toggle is a falling edge, putting it back arms
+    assert act(c, "sim_arm", level=True).status_code == 200
+    assert act(c, "enable", source="register", confirm=True).status_code == 200
+    r = act(c, "soft_arm", confirm=True)
+    assert r.status_code == 200, r.text
+    assert "DIO4 input was high" in r.json()["message"]
+    wait_for(lambda: state(c)["state"] == "RUN")
+    assert board.read_cfg()["dio_invert"] == inv0
+    assert act(c, "stop").status_code == 200
+
+
 def test_out1_actual_is_not_the_pi_output():
     """OUT1 per coil_servo_top.v / servo_output_mux.v, not STS u14."""
     from coil_servo_host.dashboard.servo_channel import out1_actual

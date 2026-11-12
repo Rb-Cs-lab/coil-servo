@@ -87,6 +87,13 @@ ACTIONS = {a.name: a for a in [
                     source="'register' (setpoint from this page, starts at "
                            "0 A) or 'in2' (analog setpoint from the control "
                            "computer)")),
+    ActionSpec("soft_arm", "Arm (software, testing)", "control", True,
+               "TESTING: give the FSM its arm edge from software instead of "
+               "the DIO4 line -- pulses dio_invert bit 1 (CFG word 13, "
+               "inverts the arm input ahead of the edge detector) and puts "
+               "it back. Only after Enable, while it waits in IDLE. Leave "
+               "the DIO4 cable unplugged (pull-down: reads low). Bypasses "
+               "the control computer's arm: bench tests only."),
     ActionSpec("setpoint", "Set current", "control", True,
                "Set the setpoint register (only with source = register). "
                "Refused above the profile's rated current.",
@@ -904,6 +911,60 @@ class CoilServoChannel(Device):
         return (f"servo enabled as [{name}] (setpoint from "
                 f"{'this page, 0 A' if source == 'register' else 'IN2'}), "
                 f"waiting in IDLE for an arm edge")
+
+    def _act_soft_arm(self, params) -> str:
+        """The arm edge from software: dio_invert bit 1 inverts DIO4 ahead
+        of the FSM's edge detector (coil_servo_top.v), so 0 -> 1 is a rising
+        edge with DIO4 low. Put back at once: losing arm in RUN never drops
+        the bridge, and the board keeps matching its profile."""
+        with self._lock:
+            p = self.pending
+        if not p or p.get("action") != "enable":
+            raise ActionError("software arm only after Enable, while the "
+                              "servo waits in IDLE for its arm edge")
+        if self.job:
+            raise ActionError(f"a {self.job['name']} is running")
+        rb = self._readback_now()
+        with self._io:
+            s = self.board.sts()
+        if s["fsm_state_name"] != "IDLE" or s["bridge_en"] \
+                or not rb["servo_enable"]:
+            raise ActionError(f"software arm needs IDLE with servo_enable = "
+                              f"1 (state {s['fsm_state_name']})")
+        inv = rb["dio_invert"]
+        dio4_high = bool(s["armed"])   # FPGA arm level, after the inversion
+        left = None
+        try:
+            self._write(dio_invert=inv ^ 0b010)
+            left = self._wait_left_idle(0.3)
+        finally:
+            self._write(dio_invert=inv)
+        if left is None:
+            # with DIO4 high the toggle was a falling edge; putting the bit
+            # back is the rising one
+            left = self._wait_left_idle(0.3)
+        self._readback_now()
+        if left is None:
+            raise ActionError("no arm edge seen: the servo stayed in IDLE "
+                              "(dio_invert put back to "
+                              f"{inv:#05b}); check the state and alarms")
+        self._event("soft_arm", f"software arm edge, state {left}"
+                    + (" (DIO4 was high)" if dio4_high else ""))
+        return (f"software arm: {left}"
+                + (" -- note: the DIO4 input was high (cable plugged in?)"
+                   if dio4_high else ""))
+
+    def _wait_left_idle(self, timeout: float) -> str | None:
+        """Poll STS until the FSM leaves IDLE; its state name, or None."""
+        t_end = time.monotonic() + timeout
+        while True:
+            with self._io:
+                s = self.board.sts()
+            if s["fsm_state_name"] != "IDLE":
+                return s["fsm_state_name"]
+            if time.monotonic() > t_end:
+                return None
+            time.sleep(0.01)
 
     def _check_pending(self, s: dict) -> None:
         with self._lock:

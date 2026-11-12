@@ -157,11 +157,19 @@ class SimBoard(Board):
         """The DIO4 arm line. A rising edge in IDLE with servo_enable = 1
         starts the servo."""
         self._advance()
-        if level and not self.arm and self.state == "IDLE" \
-                and self._c["servo_enable"]:
+        was = self._armed(self._c)
+        self.arm = bool(level)
+        self._arm_edge(was, self._armed(self._c), self._c)
+
+    def _armed(self, c: dict) -> bool:
+        """The FPGA's arm signal: DIO4 XOR dio_invert bit 1 (the inversion
+        sits before the edge detector, as in coil_servo_top.v)."""
+        return self.arm != bool(c["dio_invert"] & 0b010)
+
+    def _arm_edge(self, was: bool, now: bool, c: dict) -> None:
+        if now and not was and self.state == "IDLE" and c["servo_enable"]:
             self.state = "RUN"
             self.bridge_en = True
-        self.arm = bool(level)
 
     def set_power(self, on: bool) -> None:
         """False: the drive disappears (latch tripped, supply off, open
@@ -220,6 +228,7 @@ class SimBoard(Board):
         if old["servo_enable"] and not new["servo_enable"] \
                 and self.state == "RUN":
             self.state = "RAMP_DOWN"
+        self._arm_edge(self._armed(old), self._armed(new), new)
 
     def _advance(self) -> None:
         """Bring the coarse simulation up to now (1 ms steps)."""
@@ -308,7 +317,7 @@ class SimBoard(Board):
         return pack_sts(
             fsm_state=FSM_STATES.index(self.state),
             bridge_en=int(self.bridge_en),
-            armed=int(self.arm),
+            armed=int(self._armed(c)),
             out_sat=int(in_run and self.u14 >= c["out_clamp"] > 0),
             sp_sign_mismatch=int(self.mismatch),
             u_floor=int(self.state == "RUN" and not c["open_loop"]

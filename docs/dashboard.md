@@ -294,6 +294,20 @@ written to the action log with the client's IP address.
   Sweep act as the card's profile and are refused unless the board holds
   it (apply the profile first) — so you cannot run the Test setup's
   board with the MOT's settings by mistake, or the reverse.
+- **Arm (software, testing)** — for bench tests, so nobody has to plug
+  the arm cable in and out: after *Enable*, while the page says "raise arm
+  now", this gives the servo its arm edge from the page instead. It uses
+  an existing setting, `dio_invert` bit 1 (CFG word 13), which inverts how
+  the FPGA reads DIO4 *before* it looks for the rising edge: switching it
+  on with DIO4 low looks exactly like an arm edge. The dashboard switches
+  it straight back (losing arm in RUN never opens the bridge, by design),
+  so the board keeps matching its profile, and checks that the board left
+  IDLE. **Leave the DIO4 cable unplugged** — the input has a pull-down and
+  reads low. (With DIO4 high it still arms, one step later, and the
+  message says so.) Lab PC only, with a confirmation, logged. It bypasses
+  the control computer's arm, so it is for testing, not for runs with the
+  experiment. Stop as usual with STOP; to run again: Enable, then arm.
+  Works with the deployed bitstream; no hardware change.
 - **Set current** — the setpoint register in amps (only with the source
   *this page*); refused above the profile's rated current (100 A on the
   MOT, 2.5 A on the Test setup). The firmware ramps to it.

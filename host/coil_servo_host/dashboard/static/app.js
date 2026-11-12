@@ -412,7 +412,8 @@ function renderControls(card, sim) {
       <div class="row"><label>setpoint source
         <select id="src"><option value="register">this page (starts at 0 A)</option>
         <option value="in2">IN2 — control computer</option></select></label>
-        <button class="btn" id="b-enable">Enable</button></div>
+        <button class="btn" id="b-enable">Enable</button>
+        <button class="btn" id="b-softarm" title="after Enable: the arm edge from this page instead of DIO4">Arm (software, testing)</button></div>
       <div class="row" style="margin-top:8px"><label>current
         <input type="number" id="amps" step="0.1" min="${-rated}" max="${rated}" value="0"> A</label>
         <button class="btn" id="b-sp">Set</button>
@@ -481,6 +482,15 @@ function renderControls(card, sim) {
        (DIO4) gets a <b>rising edge</b>; then the bridge closes and current
        can flow.</p><p>${what}</p>`, "Enable servo"))
       post(dev, "enable", {...P, source: src, confirm: true});
+  };
+  $("#b-softarm").onclick = async () => {
+    if (await confirmDialog(`Arm ${card.title} from software?`,
+      `<p><b>Testing only.</b> Gives the servo its arm edge from this page
+       instead of the DIO4 line: the bridge closes and current can flow,
+       starting at the setpoint chosen with Enable.</p>
+       <p>Leave the DIO4 arm cable <b>unplugged</b> (the input then reads
+       low). This bypasses the control computer's arm.</p>`, "Arm now"))
+      post(dev, "soft_arm", {confirm: true});
   };
   $("#b-sp").onclick = async () => {
     const a = parseFloat($("#amps").value);
@@ -791,6 +801,9 @@ function updateDetail() {
   if (ctlOk && !held)
     for (const el of document.querySelectorAll("#ctl .needs-held button, #ctl .needs-held input, #ctl .needs-held select"))
       el.disabled = true;
+  if ($("#b-softarm"))
+    $("#b-softarm").disabled = !(ctlOk && held && st.pending
+      && st.pending.action === "enable" && st.state === "IDLE");
   for (const id of ["#b-arm-up", "#b-arm-dn", "#b-simtrip", "#b-cut", "#b-restore"])
     if ($(id)) $(id).disabled = !(S.who.control && !st.control_block);
   $("#b-stop").disabled = !(S.who.stop && !st.stop_block);
