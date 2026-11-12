@@ -173,8 +173,9 @@ def test_status_polling_and_unit_conversion(mock_server, tmp_path):
     words exactly like watch.py."""
     ch = load_channel("mot")
     with Board("127.0.0.1", port=mock_server) as b:
-        # RUN, armed, bridge on; i_meas = 2048 codes x 128 (= 50 A at
-        # I_FS 200 A); sp_active = -1024 counts; u14 = 4096 counts
+        # RUN, armed, bridge on; i_meas = 2048 codes x 128 (= I_FS / 4,
+        # 50 A at the nominal 200 A); sp_active = -1024 counts (-I_FS / 8);
+        # u14 = 4096 counts
         b.write_words(STS_BASE, [(MAP_REV << 24) | (1 << 7) | (1 << 5) | 1,
                                  2048 * 128, (-1024) & 0x3FFF, 4096])
     dev = mock_channel(mock_server, logdir=tmp_path)
@@ -183,8 +184,8 @@ def test_status_polling_and_unit_conversion(mock_server, tmp_path):
         wait_for(lambda: dev.snapshot().get("state") == "RUN")
         s = dev.snapshot()
         assert s["connection"] == "online" and s["map_ok"]
-        assert s["i_amps"] == pytest.approx(50.0)
-        assert s["sp_amps"] == pytest.approx(-25.0)
+        assert s["i_amps"] == pytest.approx(ch["i_fs"] / 4)
+        assert s["sp_amps"] == pytest.approx(-ch["i_fs"] / 8)
         assert s["u14"] == 4096
         assert s["out1_volts"] == pytest.approx(
             0.5 * ch["model"].out1_factor + ch["model"].out1_offset_volts, abs=1e-5)
@@ -194,7 +195,8 @@ def test_status_polling_and_unit_conversion(mock_server, tmp_path):
         assert s["alarms"] == []
         assert any("match no profile" in w for w in s["warnings"])
         h = dev.history(60)
-        assert len(h["t"]) >= 1 and h["i_amps"][-1] == pytest.approx(50.0)
+        assert len(h["t"]) >= 1 and h["i_amps"][-1] == pytest.approx(
+            ch["i_fs"] / 4)
     finally:
         dev.close()
 
@@ -648,7 +650,7 @@ def test_capture_via_real_board(mock_server, tmp_path):
         wait_for(lambda: dev.snapshot().get("state"))
         dev.perform("capture", {}, "127.0.0.1")
         cap = dev.latest_capture()
-        lsb = 200.0 / 16384
+        lsb = load_channel("mot")["i_fs"] / 16384
         assert cap["i_amps"][0] == pytest.approx(200 * lsb, abs=1e-4)
         assert cap["sp_amps"][0] == pytest.approx(190 * lsb, abs=1e-4)
         assert Path(cap["file"]).exists()

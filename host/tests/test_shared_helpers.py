@@ -49,7 +49,9 @@ def test_step_command_validation():
     """command_counts raises ValueError (the dashboard's refusal); the CLI's
     setpoint_counts turns the same cases into SystemExit (test_step.py)."""
     ch = load_channel("mot")
-    assert command_counts(ch, 50.0, open_loop=False)[0] == 2048
+    # 2048 at the nominal I_FS 200 A
+    assert command_counts(ch, 50.0, open_loop=False)[0] == round(
+        50.0 / ch["i_fs"] * 8192)
     with pytest.raises(ValueError, match="rated"):
         command_counts(ch, 100.5, open_loop=False)
     with pytest.raises(ValueError, match="OUT1 only drives up"):

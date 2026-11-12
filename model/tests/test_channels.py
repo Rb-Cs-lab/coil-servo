@@ -1,5 +1,7 @@
 """Channel table integrity: coil values and MVP derived quantities."""
 
+from dataclasses import replace
+
 import pytest
 
 from coil_servo_model import CHANNELS
@@ -25,8 +27,22 @@ def test_coil_table():
 def test_mvp_sensing_scale():
     # LEM 2000:1 -> 10 ohm burden -> in-amp gain 1: +1 V on IN1 = 200 A,
     # 24.4 mA per ADC code (mvp_architecture.md 6).
-    assert MOT.I_FS == pytest.approx(200.0)
-    assert MOT.amps_per_lsb == pytest.approx(0.0244, rel=1e-3)
+    nominal = replace(MOT, in1_fs_volts=1.0)
+    assert nominal.I_FS == pytest.approx(200.0)
+    assert nominal.amps_per_lsb == pytest.approx(0.0244, rel=1e-3)
+    # the MOT board's IN1 reads ~10 % low (measured 2026-11-11): full-scale
+    # code at ~1.10 V, so the scale in use is 200 A x in1_fs_volts
+    assert MOT.in1_fs_volts == pytest.approx(1.10)
+    assert MOT.I_FS == pytest.approx(200.0 * MOT.in1_fs_volts)
+    assert MOT.amps_per_lsb == pytest.approx(MOT.I_FS / 8192)
+
+
+def test_in1_fs_volts_scales_i_fs_linearly():
+    base = replace(MOT, in1_fs_volts=1.0).I_FS
+    for v in (0.9, 1.0, 1.07, 1.10, 1.13, 2.0):
+        ch = replace(MOT, in1_fs_volts=v)
+        assert ch.I_FS == pytest.approx(base * v)
+        assert ch.amps_per_lsb == pytest.approx(base * v / 8192)
 
 
 def test_mvp_measured_thresholds_and_dead_zone():

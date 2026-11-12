@@ -84,6 +84,12 @@ class Channel:
     # sensitivity by N (low-current bench profile). 1 = the coil lead passes
     # through once.
     lem_turns: int = 1
+    # IN1 voltage at the ADC's full-scale code (8192): nominally 1 V, but the
+    # firmware uses raw ADC codes (the Red Pitaya's factory calibration is
+    # not applied), so each board's input reads slightly off. MEASURED
+    # 2026-11-11 on the MOT board: ~1.10 V (IN1 read ~10 % low against the
+    # bench supply's ammeter and the scope).
+    in1_fs_volts: float = 1.0
 
     out2_enable: bool = False    # OUT2 (active clamp) not fitted in the MVP
 
@@ -95,8 +101,10 @@ class Channel:
     # --- Sensing scale ---
     @property
     def I_FS(self) -> float:
-        """Coil current at +1.000 V on IN1 [A]."""
-        return self.lem_ratio / (self.R_burden * self.G_inamp * self.lem_turns)
+        """Coil current at the IN1 full-scale ADC code (8192) [A]:
+        nominally +1.000 V on IN1, in1_fs_volts as measured."""
+        return (self.in1_fs_volts * self.lem_ratio
+                / (self.R_burden * self.G_inamp * self.lem_turns))
 
     @property
     def amps_per_lsb(self) -> float:
@@ -204,7 +212,9 @@ class Channel:
 # reuse the MOT power-stage parts as PLACEHOLDERS until their stage exists
 # (shim supply not chosen -- rail <= 10 V).
 CHANNELS = {
-    "mot": Channel(name="mot", L=16e-6, R_coil=6.4e-3, I_rated=100.0),
+    # in1_fs_volts: the MOT board's IN1 reads ~10 % low (MEASURED 2026-11-11, PROVISIONAL)
+    "mot": Channel(name="mot", L=16e-6, R_coil=6.4e-3, I_rated=100.0,
+                   in1_fs_volts=1.10),
     "z_shim": Channel(name="z_shim", L=29e-6, R_coil=11.6e-3, I_rated=60.0),
     "x_shim": Channel(name="x_shim", L=57e-6, R_coil=14.2e-3, I_rated=60.0),
     "y_shim": Channel(name="y_shim", L=57e-6, R_coil=14.2e-3, I_rated=60.0),
@@ -226,7 +236,7 @@ BENCH_CHANNELS = {
         R_coil=3.2e-3,
         I_rated=2.5,         # highest closed-loop setpoint on the bench
         I_supply_max=3.0,    # bench supply CC limit -- the real hard limit
-        lem_turns=1,         # LEM on the 4/0 lead, one pass: I_FS = 200 A
+        lem_turns=1,         # LEM on the 4/0 lead, one pass: I_FS = 220 A
         # Clamp set directly (decided 2026-11-11), ~11 % (407 counts, ~0.4 V of gate) above the
         # nominal dead zone: at 2.5 A the clamp derived from I_rated would
         # sit only ~44 counts above it, inside the dead-zone uncertainty and

@@ -232,17 +232,18 @@ def test_zero_calibration_measures_raw_codes(server, tmp_path):
     from coil_servo_host.config import CONFIG_PATH, load_channel
     from coil_servo_model.registers import MAP_REV
     raw_in1, raw_in2 = -238, 7                  # a -5.8 A LEM, IN2 ~ 0
+    i_fs = load_channel("mot")["i_fs"]          # the scale the tool uses
     word = ((raw_in2 & 0x3FFF) << 16) | (raw_in1 & 0x3FFF)
     with Board("127.0.0.1", port=server) as b:
         b.write_words(0x4200_0000, [word])               # FIFO data
         b.write_words(STS_BASE + 4 * 5, [16384])          # FIFO full
-        r = zero.measure_offsets(b, 200.0, records=2, spacing_s=0.0)
+        r = zero.measure_offsets(b, i_fs, records=2, spacing_s=0.0)
         assert r["in1_counts"] == raw_in1 and r["in2_counts"] == raw_in2
-        assert abs(r["in1_amps"] - raw_in1 * 200 / 8192) < 1e-9
+        assert abs(r["in1_amps"] - raw_in1 * i_fs / 8192) < 1e-9
         # refused while the servo runs
         b.write_words(STS_BASE, [(MAP_REV << 24) | 1 | (1 << 5)])
         with pytest.raises(RuntimeError, match="stopped"):
-            zero.measure_offsets(b, 200.0, records=1)
+            zero.measure_offsets(b, i_fs, records=1)
     cfg_path = tmp_path / "channels.toml"
     shutil.copy(CONFIG_PATH, cfg_path)
     zero.write_offsets("mot", r["in1_amps"], r["in2_amps"], cfg_path)

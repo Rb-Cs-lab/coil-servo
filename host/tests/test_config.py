@@ -7,8 +7,8 @@ from dataclasses import replace
 import pytest
 
 from coil_servo_host.config import (BENCH_LED, CONFIG_PATH, banner,
-                                    identify_profile, load_channel,
-                                    profile_report, summary)
+                                    channel_table, identify_profile,
+                                    load_channel, profile_report, summary)
 from coil_servo_model import (BENCH_CHANNELS, CHANNELS, decode_gain,
                               slew_rate_code)
 from coil_servo_model.analysis import suggest_gains
@@ -24,7 +24,8 @@ def test_loads_and_derives_from_the_model(name):
     # channels.toml physics == the model's (one source of numbers)
     assert m == CHANNELS[name]
     assert m.V_th == VTH_INSTALLED
-    assert ch["i_fs"] == pytest.approx(200.0)
+    # nominal chain 200 A at 1 V on IN1, times the board's measured IN1 scale
+    assert ch["i_fs"] == pytest.approx(200.0 * m.in1_fs_volts) == m.I_FS
 
     # derived values: clamp asks for rated current, floor at 90 % of dead zone
     assert cfg["out_clamp"] == m.clamp_counts
@@ -32,15 +33,20 @@ def test_loads_and_derives_from_the_model(name):
     assert 0 < cfg["u_floor"] < cfg["out_clamp"]
 
     # protection
-    assert cfg["trip_level"] == round(m.I_rated / 200.0 * 8192)
-    assert cfg["slew_up"] == slew_rate_code(200e3, 200.0) == 1074
-    assert cfg["slew_down"] == slew_rate_code(50e3, 200.0) == 268
+    i_fs = ch["i_fs"]
+    assert cfg["trip_level"] == round(m.I_rated / i_fs * 8192)
+    assert cfg["trip_level"] * m.amps_per_lsb <= m.I_rated + m.amps_per_lsb / 2
+    assert cfg["slew_up"] == slew_rate_code(200e3, i_fs)
+    assert cfg["slew_down"] == slew_rate_code(50e3, i_fs)
+    if m.in1_fs_volts == 1.0:
+        assert (cfg["slew_up"], cfg["slew_down"]) == (1074, 268)
 
     # MVP: nothing on OUT2 / boost; dither on
     assert cfg["out2_enable"] == 0 and cfg["boost_mode"] == 0
     assert cfg["dither_enable"] == 1
 
-    # gains are the commissioned ones rescaled by the plant gain
+    # gains are the commissioned ones rescaled by the plant gain (at the
+    # IN1 scale in use, in1_fs_volts included)
     kp, ki_tick = suggest_gains(m)
     assert decode_gain(cfg["kp_mant"], cfg["kp_shift"]) == pytest.approx(kp, rel=1e-3)
     assert decode_gain(cfg["ki_mant"], cfg["ki_shift"]) == pytest.approx(ki_tick, rel=1e-3)
@@ -56,14 +62,17 @@ def test_loads_and_derives_from_the_model(name):
 
 
 def test_mot_values():
-    cfg = load_channel("mot")["cfg"]
+    ch = load_channel("mot")
+    cfg, i_fs = ch["cfg"], ch["i_fs"]
     # OUT1 measured 2026-11-11 (Test 1): 142.6 uV/count terminated,
     # -41.3 mV at code 0, op-amp gain 7.93
     assert cfg["out_clamp"] == 4144
     assert cfg["u_floor"] == 3047
-    assert cfg["trip_level"] == 4096               # 100 A
+    # 100 A (4096 counts at the nominal I_FS 200 A, 3724 at 220 A)
+    assert cfg["trip_level"] == round(100.0 / i_fs * 8192)
+    assert cfg["trip_level"] * i_fs / 8192 == pytest.approx(100.0, abs=0.02)
     assert cfg["trip_timeout"] == 375_000          # 3 ms
-    assert cfg["zero_win"] == round(0.5 / 200.0 * 8192)   # 20 counts
+    assert cfg["zero_win"] == round(0.5 / i_fs * 8192)    # ~20 counts
 
 
 BASE_TOML = """
@@ -158,10 +167,16 @@ def test_bench_profile_loads_and_matches_the_model(tmp_path, g_inamp):
     path = bench_with_gain(tmp_path, g_inamp)
     ch = load_channel("mot_bench", path=path)
     cfg, m = ch["cfg"], ch["model"]
-    assert m == replace(BENCH_CHANNELS["mot_bench"], G_inamp=g_inamp)
+    table = channel_table("mot_bench", path)
+    # physics mirror the model; the clamp override lives in channels.toml
+    # only (build_model), so compare it against the file
+    assert m == replace(BENCH_CHANNELS["mot_bench"], G_inamp=g_inamp,
+                        out_clamp_counts=m.out_clamp_counts)
+    assert m.out_clamp_counts == table.get("out_clamp_counts")
     mot = load_channel("mot")
     assert ch["host"] == mot["host"]                       # same board
-    i_fs = 200.0 / g_inamp                                 # LEM: one pass
+    assert m.in1_fs_volts == mot["model"].in1_fs_volts     # same board
+    i_fs = 200.0 * m.in1_fs_volts / g_inamp                # LEM: one pass
     assert ch["i_fs"] == pytest.approx(i_fs)
     assert m.lem_turns == 1 and m.I_supply_max == 3.0
     assert ch["bench"] is True and mot["bench"] is False
@@ -169,7 +184,7 @@ def test_bench_profile_loads_and_matches_the_model(tmp_path, g_inamp):
     # current ordering: rated < trip < supply limit < I_FS
     trip_amps = cfg["trip_level"] * m.amps_per_lsb
     assert m.I_rated < trip_amps < m.I_supply_max < ch["i_fs"]
-    assert cfg["trip_level"] == round(2.8 / i_fs * 8192)   # 115 / 1147
+    assert cfg["trip_level"] == round(2.8 / i_fs * 8192)   # 104 / 1042 at 1.10 V
     # the trip fires when the 1 us-averaged reading exceeds the level; the
     # supply limit is 0.19-0.2 A higher (~8 / ~82 counts). The 4-sample
     # persistence cannot carry the current across that (closed-loop rise
@@ -179,26 +194,26 @@ def test_bench_profile_loads_and_matches_the_model(tmp_path, g_inamp):
     assert 0.15 < margin_amps < 0.21
     assert margin_amps / m.amps_per_lsb > 7                # whole counts
 
-    # OUT1-side values do not depend on the sensor: clamp 4000, floor 90 %
-    assert cfg["out_clamp"] == 4000 == m.clamp_counts
-    assert cfg["u_floor"] == round(0.9 * m.dead_zone * 8192) == 3047
+    # OUT1-side values do not depend on the sensor: clamp set directly in
+    # the file, floor measured (u_floor_counts) or 90 % of the dead zone
+    assert cfg["out_clamp"] == m.clamp_counts == table["out_clamp_counts"]
+    assert cfg["u_floor"] == table.get(
+        "u_floor_counts", round(0.9 * m.dead_zone * 8192))
+    assert m.dead_zone * 8192 * 0.8 < cfg["u_floor"] < cfg["out_clamp"]
+    assert cfg["out_clamp"] > m.dead_zone * 8192
 
     # amps-denominated values follow the scale automatically
     assert cfg["slew_up"] == slew_rate_code(200e3, i_fs)
     assert cfg["slew_down"] == slew_rate_code(50e3, i_fs)
-    assert cfg["zero_win"] == round(0.5 / i_fs * 8192)     # 20 / 205
+    assert cfg["zero_win"] == round(0.5 / i_fs * 8192)     # 19 / 186 at 1.10 V
     assert cfg["trip_timeout"] == 375_000
 
-    # gains in counts per amp -> the normalized gains follow I_FS and equal
-    # suggest_gains on this plant (= [mot]'s at G_inamp = 1)
-    kp, ki_tick = suggest_gains(m)
+    # gains in counts per amp (tuned on the bench, channels.toml) -> the
+    # normalized gains follow I_FS: kp = counts/A x I_FS / 8192
+    kp = table["kp_counts_per_amp"] * i_fs / 8192
+    ki_tick = table["ki_counts_per_amp_ms"] * 1e3 * i_fs / 8192 * T_S
     assert decode_gain(cfg["kp_mant"], cfg["kp_shift"]) == pytest.approx(kp, rel=1e-3)
     assert decode_gain(cfg["ki_mant"], cfg["ki_shift"]) == pytest.approx(ki_tick, rel=1e-3)
-    if g_inamp == 1.0:
-        for k in ("kp", "ki"):
-            assert decode_gain(cfg[f"{k}_mant"], cfg[f"{k}_shift"]) == pytest.approx(
-                decode_gain(mot["cfg"][f"{k}_mant"], mot["cfg"][f"{k}_shift"]),
-                rel=1e-3)
 
     # the bench marker: LED 7 on the board, banner in every tool
     assert cfg["led"] == BENCH_LED == 0x80 and mot["cfg"]["led"] == 0
@@ -239,7 +254,10 @@ def bench_toml(tmp_path, sup=3.0, turns=1, i_rated=2.5, trip=2.8, **kw):
 
 def test_loader_accepts_a_valid_bench_file(tmp_path):
     ch = load_channel("mot_bench", path=bench_toml(tmp_path))
-    assert ch["i_fs"] == pytest.approx(200.0)
+    # no in1_fs_volts in this file -> the model's (the board's measured) scale
+    m = ch["model"]
+    assert m.in1_fs_volts == BENCH_CHANNELS["mot_bench"].in1_fs_volts
+    assert ch["i_fs"] == pytest.approx(200.0 * m.in1_fs_volts)
     # no out_clamp_counts in this file -> the clamp is derived from I_rated
     assert ch["cfg"]["out_clamp"] == ch["model"].clamp_counts
     assert ch["model"].out_clamp_counts is None
@@ -297,15 +315,17 @@ def test_gains_in_counts_per_amp(tmp_path):
 def test_lem_turns_change_the_scale(tmp_path):
     # kept as a parameter (not used on the bench as built)
     ch = load_channel("mot_bench", path=bench_toml(tmp_path, turns=5))
-    assert ch["i_fs"] == pytest.approx(40.0)
-    assert ch["cfg"]["trip_level"] == round(2.8 / 40.0 * 8192)
+    i_fs = 200.0 * ch["model"].in1_fs_volts / 5            # 40 A nominal
+    assert ch["i_fs"] == pytest.approx(i_fs)
+    assert ch["cfg"]["trip_level"] == round(2.8 / i_fs * 8192)
 
 
 def test_in_amp_gain_changes_the_scale(tmp_path):
     ch = load_channel("mot", path=write_toml(tmp_path, g_inamp=2.0, trip=90.0,
                                              i_rated=90.0))
-    assert ch["i_fs"] == pytest.approx(100.0)
-    assert ch["cfg"]["trip_level"] == round(90.0 / 100.0 * 8192)
+    i_fs = 200.0 * ch["model"].in1_fs_volts / 2            # 100 A nominal
+    assert ch["i_fs"] == pytest.approx(i_fs)
+    assert ch["cfg"]["trip_level"] == round(90.0 / i_fs * 8192)
 
 
 
@@ -318,7 +338,7 @@ def test_sensor_offsets_convert_and_are_bounded(tmp_path):
     p = tmp_path / "channels.toml"
     p.write_text(text, encoding="utf-8")
     ch = load_channel("mot", p)
-    assert ch["cfg"]["in1_offset"] == round(-5.8 / 200 * 8192)   # -238
+    assert ch["cfg"]["in1_offset"] == round(-5.8 / ch["i_fs"] * 8192)  # -216
     bad = text.replace("in1_offset_amps = -5.8", "in1_offset_amps = 30.0", 1)
     p.write_text(bad, encoding="utf-8")
     with pytest.raises(ValueError, match="10 %"):

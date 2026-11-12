@@ -6,9 +6,9 @@ What changes against the production MOT channel:
   * the supply's constant-current (CC) limit caps the coil current;
   * the coil is one coil, not the pair -- at <= 3 A L only sets ramp and
     freewheel times of tens of us;
-  * sensing is unchanged: I_FS = 200 A, 24.4 mA per ADC count, so 3 A is
-    only ~123 counts; plant gain and suggested gains are the production
-    ones;
+  * sensing is unchanged: I_FS = 200 A x in1_fs_volts (220 A on the MOT
+    board as measured), 26.9 mA per ADC count, so 3 A is only ~112 counts;
+    plant gain and suggested gains are the production ones;
   * one OUT1 count is ~0.12 A, ~5 % of a 2.5 A hold: without the dither
     the hold hunts by a few %;
   * the RUN floor gap below the dead zone (10 % of it, ~42 A worth of gate
@@ -104,23 +104,33 @@ def test_defaults_leave_production_unchanged():
     assert ch.out_clamp_counts is None
     for c in CHANNELS.values():
         assert c.I_supply_max is None and c.lem_turns == 1
-        assert c.I_FS == pytest.approx(200.0)
+        # nominal chain 200 A at 1 V, times the board's measured IN1 scale
+        assert c.I_FS == pytest.approx(200.0 * c.in1_fs_volts)
+    assert ch.in1_fs_volts == 1.0 and ch.I_FS == pytest.approx(200.0)
 
 
 def test_bench_sensing_is_the_production_scale():
-    # LEM on the 4/0 lead, one pass: 3 A is only ~123 ADC counts
+    # LEM on the 4/0 lead, one pass, same board: 3 A is only ~123 ADC
+    # counts at the nominal 1 V full scale (~112 at the measured 1.10 V)
     assert BENCH.lem_turns == 1
-    assert BENCH.I_FS == pytest.approx(200.0)
-    assert BENCH.amps_per_lsb == pytest.approx(24.4e-3, rel=1e-3)
-    assert BENCH.I_supply_max / BENCH.amps_per_lsb == pytest.approx(123, abs=1)
+    assert BENCH.in1_fs_volts == MOT.in1_fs_volts
+    assert BENCH.I_FS == pytest.approx(MOT.I_FS)
+    assert BENCH.I_FS == pytest.approx(200.0 * BENCH.in1_fs_volts)
+    assert BENCH.amps_per_lsb == pytest.approx(24.4e-3 * BENCH.in1_fs_volts,
+                                               rel=1e-3)
+    assert BENCH.I_supply_max / BENCH.amps_per_lsb == pytest.approx(
+        123 / BENCH.in1_fs_volts, abs=1)
 
 
 def test_lem_turns_and_in_amp_gain_multiply_the_sensitivity():
     # N primary turns: N x the ampere-turns for the same coil current. The
     # optional alternative, in-amp gain (G = 1 + 9.9k/R_G), scales the same.
+    nominal = replace(MOT, in1_fs_volts=1.0)     # 200 A at 1 V on IN1
     for n in (1, 2, 5, 10):
-        assert replace(MOT, lem_turns=n).I_FS == pytest.approx(200.0 / n)
-    assert replace(MOT, G_inamp=10.0).I_FS == pytest.approx(20.0)
+        assert replace(nominal, lem_turns=n).I_FS == pytest.approx(200.0 / n)
+        assert replace(MOT, lem_turns=n).I_FS == pytest.approx(MOT.I_FS / n)
+    assert replace(nominal, G_inamp=10.0).I_FS == pytest.approx(20.0)
+    assert replace(MOT, G_inamp=10.0).I_FS == pytest.approx(MOT.I_FS / 10)
     assert 1 + 9.9e3 / 1.1e3 == pytest.approx(10.0)
 
 
@@ -290,9 +300,10 @@ def test_float_steps_from_an_operating_point_meet_spec(ch, i0, target):
 def test_fixed_point_hold_hunts_without_dither_and_not_with_it():
     # DOCUMENTED: one OUT1 count is ~0.12 A, ~8 % of a 1.5 A hold. Whether
     # the undithered hold hunts depends on where the nearest OUT1 code's
-    # current falls against the 24 mA ADC steps (in this noise-free model:
-    # ~40-50 mA p-p at 1.0-1.5 A, none at some other points); with the
-    # dither it never does. Either way the hold sits within one ADC count.
+    # current falls against the ~27 mA ADC steps (in this noise-free model,
+    # at the measured IN1 scale: ~1.2-1.9 counts p-p at 1.0-2.0 A, ~1.5 at
+    # 1.5 A); with the dither it never does. Either way the hold sits within
+    # one ADC count.
     count_amps = BENCH.G_pass / 8192
     ptp = {}
     for dither in (False, True):
@@ -300,7 +311,7 @@ def test_fixed_point_hold_hunts_without_dither_and_not_with_it():
         tail = res.I[res.t > 1e-3]
         ptp[dither] = np.ptp(tail)
         assert abs(tail.mean() - 1.5) < BENCH.amps_per_lsb
-    assert ptp[False] > 1.5 * BENCH.amps_per_lsb, f"no hunting? {ptp[False]}"
+    assert ptp[False] > BENCH.amps_per_lsb, f"no hunting? {ptp[False]}"
     assert ptp[True] < 0.1 * count_amps                            # ~mA
 
 

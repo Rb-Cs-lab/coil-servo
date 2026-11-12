@@ -37,6 +37,10 @@ out1_offset_volts = -0.0413     # OUT1 at DAC code 0: MEASURED 11-11
 V_opamp_max = 5.18              # gate ceiling = op-amp rail (5.184 V supply), MEASURED
 R_burden = 10.0                 # ohm, LEM burden
 G_inamp = 1.0                   # AD8421 gain -- PROVISIONAL (1 -> I_FS 200 A)
+in1_fs_volts = 1.10             # IN1 volts at full-scale ADC code: MEASURED
+                                # 11-11, PROVISIONAL +-3 % (board vs bench
+                                # supply ammeter 1.07-1.10, vs scope 1.13;
+                                # nominal 1.0) -- refine in a closed-loop hold
 
 # --- derived-value overrides (uncomment once measured directly) ---
 # out_clamp_counts = 4144       # OUT1 command clamp (default: model, the
@@ -47,9 +51,11 @@ floor_frac = 0.9                # floor at 90 % of the dead zone (decided)
 # --- loop ---
 # The commissioned loopback gains (kp 0.5, ki 15080/s) rescaled by the
 # model's plant gain G_pass/I_FS ~ 5.56 (with the OUT1 scale measured
-# 2026-11-11) -- PROVISIONAL: set them from the measured step response.
-kp = 0.0900
-ki = 2713.0                     # 1/s
+# 2026-11-11, and the IN1 scale in1_fs_volts = 1.10) -- PROVISIONAL: set
+# them from the measured step response. (Normalized gains depend on I_FS:
+# 0.0900 / 2713 at the nominal 200 A = the same counts per amp.)
+kp = 0.09897
+ki = 2984.8                     # 1/s
 deadband_counts = 8             # PROVISIONAL
 dither_enable = 1               # OUT1 sigma-delta dither (decided)
 
@@ -81,9 +87,9 @@ boost_mode = 0
 #     python -m coil_servo_host.zero <channel> --write
 # Amps of the sensor scale; the FPGA subtracts them from every IN1/IN2
 # sample. Re-measure after changing the LEM, burden, in-amp gain or cable.
-in1_offset_amps = 0.2067        # measured 2026-11-11 with the power stage connected; this is the Red Pitaya's own IN1 offset (~1.3 mV), the LEM's is ~0
+in1_offset_amps = 0.2649        # measured 2026-11-11 (coil_servo_host.zero)
                                 # (zero tool had read ~0.21 A)
-in2_offset_amps = 0.1539        # measured 2026-11-11 (coil_servo_host.zero)
+in2_offset_amps = 0.1450        # measured 2026-11-11 (coil_servo_host.zero)
 
 # Low-current TEST PROFILE for the MOT channel (docs/bench_supply_test.md):
 # the same board and power stage, powered from a current-limited BENCH
@@ -119,6 +125,7 @@ out1_offset_volts = -0.0413     # OUT1 at DAC code 0: MEASURED 11-11
 V_opamp_max = 5.18              # gate ceiling = op-amp rail (5.184 V supply), MEASURED
 R_burden = 10.0                 # ohm, LEM burden
 lem_turns = 1                   # 4/0 lead through the LEM once
+in1_fs_volts = 1.10             # same board as [mot]: MEASURED 11-11, PROVISIONAL
 
 # In-amp gain: the ONE line to change for finer current resolution.
 #   G_inamp = 1.0  -> I_FS 200 A, 24.4 mA per ADC count (3 A ~ 123 counts).
@@ -142,10 +149,13 @@ G_inamp = 1.0
 # threshold; the production clamp is 4474). On the bench the supply's CC
 # limit, not the clamp, bounds the current. Re-set after measuring the
 # dead zone and G_pass.
-out_clamp_counts = 4000
-# u_floor_counts = ...          # optional, after the dead zone is measured:
-#                               # (measured dead zone - 50 counts) makes
-#                               # steps from zero faster (bench_supply_test.md)
+# MEASURED 11-11 (open-loop scans, logs/t3_open_loop_scan2.json,
+# t3_hold_*.json): current starts at ~3540 counts; ~1.1 A at 3850, ~2.2 A
+# at 3990 (cold FETs; more when warm -- 3990 tripped at 2.8 A warm).
+out_clamp_counts = 4100         # room for 2.5 A (and the 2.9 A trip test);
+                                # the 2.8 A trip and the 3 A CC limit bound it
+u_floor_counts = 3450           # ~90 counts below the measured onset: no
+                                # current at the floor (both scans ~0 A there)
 floor_frac = 0.9                # floor at 90 % of the dead zone (decided)
 
 # --- loop ---
@@ -156,8 +166,13 @@ floor_frac = 0.9                # floor at 90 % of the dead zone (decided)
 # per OUT1 count, bench_supply_test.md 4.2) set kp = 0.5/s, ki = 15.08/s.
 # If the real gain near threshold is lower, these give a slower but still
 # stable loop.
-kp_counts_per_amp = 3.6852
-ki_counts_per_amp_ms = 111.14
+# MEASURED 11-11: s ~ 0.008 A per OUT1 count at 1-2 A (square-law bank near
+# threshold; the model's 0.136 A/count is for 100 A). kp = 0.5/s,
+# ki = 15.08/s (bench_supply_test.md 4.2) would give kp 62.5 / ki 1885.
+# Tuning on the hardware starts at 1/4 of that (slow, safely stable) and
+# doubles while the step response stays clean -- PROVISIONAL.
+kp_counts_per_amp = 15.6
+ki_counts_per_amp_ms = 471.0
 deadband_counts = 8             # PROVISIONAL
 dither_enable = 1               # OUT1 dither: one OUT1 count is ~0.14 A,
                                 # ~6 % of a 2.5 A hold
@@ -204,9 +219,9 @@ boost_mode = 0
 #     python -m coil_servo_host.zero <channel> --write
 # Amps of the sensor scale; the FPGA subtracts them from every IN1/IN2
 # sample. Re-measure after changing the LEM, burden, in-amp gain or cable.
-in1_offset_amps = 0.2067        # measured 2026-11-11 with the power stage connected; the Red Pitaya's own IN1 offset (~1.3 mV), the LEM's is ~0
+in1_offset_amps = 0.2598        # measured 2026-11-11 (coil_servo_host.zero)
                                 # (zero tool had read ~0.21 A)
-in2_offset_amps = 0.1323        # measured 2026-11-11 (coil_servo_host.zero)
+in2_offset_amps = 0.1466        # measured 2026-11-11 (coil_servo_host.zero)
 
 [z_shim]
 board_host = "rp-zshim.local"   # PLACEHOLDER

@@ -21,6 +21,8 @@ A pin-level safety monitor runs under every test (MVP safety invariants):
     time after it (the edge sits strictly inside the enable-low window).
 """
 
+from dataclasses import replace
+
 import cocotb
 from cocotb.triggers import ClockCycles, RisingEdge
 
@@ -66,9 +68,33 @@ def run_cfg(**over):
 
 
 # Low-current bench profile: the register values the host derives from
-# channels.toml [mot_bench], unchanged (docs/bench_supply_test.md).
-BENCH = BENCH_CHANNELS["mot_bench"]
-BENCH_REGS = load_channel("mot_bench")["cfg"]
+# channels.toml [mot_bench] (docs/bench_supply_test.md) -- the protection
+# values (clamp, trip, zero window, slew, timeouts) unchanged. Three are
+# replaced, because they were measured / tuned on the real bank and do not
+# fit the model plant this bench closes the loop around:
+#   * u_floor: the measured floor (u_floor_counts, set ~90 counts below the
+#     bank's MEASURED onset ~3540) lies above the model's dead zone (3385),
+#     where the model plant already conducts -> the model's 90 % floor;
+#   * PI gains: tuned against the real near-threshold slope (~0.008 A per
+#     OUT1 count); on the model's ~0.136 A/count they would put the
+#     proportional loop gain above 1 -> suggest_gains on the model plant;
+#   * in1/in2 offsets: the board's measured zero offsets; the simulated
+#     ADC has none -> 0.
+# The plant uses the clamp actually loaded (out_clamp_counts from the file).
+BENCH_FILE_REGS = load_channel("mot_bench")["cfg"]
+BENCH = replace(BENCH_CHANNELS["mot_bench"],
+                out_clamp_counts=BENCH_FILE_REGS["out_clamp"])
+
+
+def _bench_gains():
+    kp, ki_tick = suggest_gains(BENCH)
+    kp_m, kp_s = encode_gain(kp, 5)
+    ki_m, ki_s = encode_gain(ki_tick, 6)
+    return dict(kp_mant=kp_m, kp_shift=kp_s, ki_mant=ki_m, ki_shift=ki_s)
+
+
+BENCH_REGS = dict(BENCH_FILE_REGS, in1_offset=0, in2_offset=0,
+                  u_floor=round(0.9 * BENCH.dead_zone * 8192), **_bench_gains())
 
 
 def bench_cfg(**over):
@@ -543,11 +569,12 @@ async def over_current_trip_through_the_pins(dut):
 
 @cocotb.test()
 async def bench_profile_holds_2a_and_trips_below_the_supply_limit(dut):
-    """The mot_bench register values (clamp 4000, trip 2.8 A = 115 counts,
-    4 samples) against one MOT coil on a 3 A current-limited supply (no IN1
-    offset in the bench): the loop holds 2 A within one ADC count (24 mA;
-    dither on, gate-averaged), then a 2.9 A setpoint trips the firmware
-    before the supply's limit (~123 counts) is reached, the coil
+    """The mot_bench register values (clamp from the file, trip 2.8 A =
+    104 counts at I_FS 220 A, 4 samples; floor and gains for the model
+    plant, see BENCH_REGS) against one MOT coil on a 3 A current-limited
+    supply (no IN1 offset in the bench): the loop holds 2 A within one ADC
+    count (~27 mA; dither on, gate-averaged), then a 2.9 A setpoint trips
+    the firmware before the supply's limit (~112 counts) is reached, the coil
     freewheels, the bridge opens inside the zero window, and the FSM
     latches in TRIPPED."""
     await setup(dut, bench_cfg(setpoint=0))

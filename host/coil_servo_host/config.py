@@ -45,7 +45,7 @@ RAIL_LIMIT_DEFAULT = 10.0
 PHYSICS_KEYS = ("I_rated", "V_rail", "V_th", "g_fs", "gain_opamp",
                 "out1_terminated", "out1_fs_volts", "out1_offset_volts",
                 "V_opamp_max", "R_burden", "G_inamp", "lem_turns",
-                "I_supply_max")
+                "I_supply_max", "in1_fs_volts")
 
 
 def amps_to_counts(amps: float, i_fs: float) -> int:
@@ -92,7 +92,7 @@ def build_model(name: str, table: dict) -> Channel:
         over["V_th"] = tuple(float(v) for v in over["V_th"])
     for k in ("I_rated", "V_rail", "g_fs", "gain_opamp", "R_burden", "G_inamp",
               "I_supply_max", "out1_fs_volts", "out1_offset_volts",
-              "V_opamp_max"):
+              "V_opamp_max", "in1_fs_volts"):
         if k in over:
             over[k] = float(over[k])
     if "out1_terminated" in over:
@@ -341,7 +341,8 @@ def summary_rows(ch: dict) -> list:
             f"{margin * m.amps_per_lsb:.2f} A below it; an IN1 offset more "
             f"negative than that keeps it from firing)"))
     rows += [
-        ("sensor scale I_FS", f"{m.I_FS:g} A at +1 V on IN1 "
+        ("sensor scale I_FS", f"{m.I_FS:.4g} A at IN1 full scale "
+         f"({m.in1_fs_volts:g} V) "
          f"({m.amps_per_lsb * 1e3:.2f} mA per ADC count{turns})"),
         ("pass bank G_pass", f"{m.G_pass / f:.0f} A per volt at OUT1 "
          f"(OUT1 {'terminated' if m.out1_terminated else 'UNterminated'}; "

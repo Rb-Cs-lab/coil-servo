@@ -312,3 +312,62 @@ terminator; no current anywhere (high-current supplies disconnected).
   re-measure once the control computer's analog output is connected). Stored
   in channels.toml [mot] and [mot_bench]; after loading, `check mot` reads
   −0.06 A (≈ 2 counts). **Pass.**
+
+## Test 3 — bench supply, one coil (11-11, first session, profile mot_bench)
+
+Setup: bench supply 5.0 V / 3.0 A CC in place of the SE-600-5, one MOT coil
+between bridge nodes A and B (4/0), LEM on its lead (one pass), pass bank and
+OPA994 gate stage as in Test 1 (OUT1 50 Ω terminator stays). Scope ×1 BNC on
+all four: CH1 IN1 tee, CH2 drain bar, CH3 node A, CH4 bridge enable (DIO1
+tee). Logic board latch reset with heartbeat present.
+
+- **Current sign was reversed** (in-amp inputs swapped vs Jeff's drawing):
+  the first open-loop scan read a growing *negative* current and stopped by
+  itself. Fixed by turning the LEM round; re-zeroed.
+- **Ground loops: do NOT earth the bench supplies.** With the coil, op-amp
+  and ±15 V supplies strapped to earth (and scope grounds on the source bar)
+  part of the coil current returned through earth and the BNC shields: IN1
+  read ~2× low and with the wrong sign on the scope, and the bridge dropped
+  out after ~8 s at ~1 A (enable still commanded — most likely a ground-noise
+  latch trip). With all supplies floating (earthed only through the scope)
+  the board, the scope and the supply ammeter agree, and a 5-minute open-loop
+  hold at ~1.1 A ran without a dropout.
+- **IN1 reads ~10 % low:** the firmware uses raw ADC codes (the Red Pitaya's
+  factory calibration is not applied). At a 1.09 A supply reading the board
+  read 0.99–1.02 A (drifting up as the FETs warmed); the scope (5.50 mV at
+  5 mV/A) gave 1.10–1.15 A. New measured key `in1_fs_volts = 1.10`
+  (PROVISIONAL ±3 %) in [mot] and [mot_bench] and in the model: I_FS = 220 A,
+  26.9 mA per count. Refine in a closed-loop hold (constant current; read the
+  supply at leisure). Re-zeroed on the new scale: IN1 +9.7 counts, IN2 +5.5.
+- **Pass bank at bench currents (open loop, logs/t3_open_loop_scan2.json,
+  t3_hold_3850/3990.json):** current starts at ~3540 counts (gate ≈ 3.65 V;
+  model 3385), ~1.1 A at 3850, ~2.2 A at 3990 cold — and 3990 tripped at
+  2.8 A once the FETs were warm (at fixed gate the current rises as they
+  heat). Roughly square-law near threshold; ~0.008 A per OUT1 count at
+  1–2 A versus the model's 0.136 A/count (the model's g_fs is for 100 A).
+  (The scan's absolute amps were taken before the ground-loop fix and are
+  ~2× low; onset and shape are valid.)
+- Rail droop ~0.24 V at 1 A upstream of node A (bench supply leads).
+- **Firmware trip verified in passing:** open loop at 3990 counts with warm
+  FETs → TRIPPED at 2.8 A, bridge opened, acknowledged with trip_ack.
+- **[mot_bench] updated:** out_clamp_counts 4100 (room for 2.5 A and the
+  2.9 A trip test), u_floor_counts 3450 (~90 counts below onset, ~0 A there),
+  PI gains for the measured slope would be kp 62.5 / ki 1885 counts/A(/ms);
+  tuning starts at 1/4 (kp 15.6, ki 471) and doubles while the step stays
+  clean. (A quick model check with a hand-adjusted bank was not usable —
+  hardware decides.)
+- Not yet done: closed-loop steps (first attempt timed out waiting for the
+  arm edge), trip test in closed loop, freewheel capture, flips, heartbeat
+  trip, hold noise, duty.
+
+**Next session:** power up; deploy (`deploy mot_bench` — the bitstream is lost
+when the Red Pitaya is powered off), `check mot_bench`, re-zero, then 3d
+closed-loop steps from 1 A, reading the supply in a steady closed-loop hold
+to finalise `in1_fs_volts`.
+- **Model follow-up (open):** the model's pass bank (dead zone 3385 counts,
+  0.136 A/count) does not match the bench measurement near threshold (onset
+  ~3540, ~0.008 A/count, square-law). The HDL bench therefore runs
+  [mot_bench] with the file's protection values but the model's floor and
+  gains. Fit the model's near-threshold bank to the measured scan before
+  using it to tune bench gains. [mot] normalized gains rescaled to the
+  220 A IN1 scale (kp 0.09897 / ki 2984.8 = unchanged counts per amp).
