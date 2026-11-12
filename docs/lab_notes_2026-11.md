@@ -613,3 +613,14 @@ bridge-open fast turn-off that needs the TVS + blocking diode.
   counts after the offset correction, only 1 count inside the threshold:
   measure IN2 noise and drift with the control computer connected and set
   `snap_zero_amps` from it; `snap_enable` 0 → OUT1 back on the PI floor.
+- **Re-test after a Red Pitaya power cycle** (redeploy, latch reset,
+  re-zero IN1 +0.237 A / IN2 +0.150 A): 2 A pulse, fall to 2 % in 1.31 ms
+  (snap off) vs 0.14 ms (snap on), rise unchanged, undershoot −0.19 A;
+  threshold / IN2 / off checks pass again (0.27 A held at 0.272 A).
+- **IN2 noise at 0 V** (terminated input, 20 raw 131 µs captures over
+  20 s, after the offset correction): 4.1 counts rms per sample (why single
+  STS reads of `sp_active` show ±5), but the 1 µs averages the snap uses
+  have sd 0.43 counts, mean +0.75 (the integer offset register leaves
+  ~0.7), max +2.45 — none of 2560 above the 4-count threshold. Margin
+  ≈ 1.5 counts to engage, 2.5 to release. Re-measure with the control
+  computer driving IN2 before Test 4.
