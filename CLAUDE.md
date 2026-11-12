@@ -14,59 +14,76 @@ rest of the repo in line is [docs/mvp_rewrite_brief.md](docs/mvp_rewrite_brief.m
 §11 — work it in order, one step per session. This file is the
 quick-reference facts; if they conflict, flag it — don't silently pick one.
 
-**Rewrite status (2026-11-11): steps 1–6 done.** Model, fixed-point
-mirror, HDL, cocotb benches, host tools and docs describe the MVP (all
-benches close the loop around the MVP plant). Step 6: the MVP bitstream
-(register-map rev 3, from `aa2a92f1`) was built on the **lab laptop** (WSL2
-Ubuntu 24.04, Vivado 2025.1 — the NUC is no longer available) after three
-timing iterations (slew/PI/FSM/dither pipelined): WNS +0.072 ns, 0 failing
-endpoints. It is `bitstreams/coil_servo.bit.bin`; the August image is kept
-as `coil_servo_fullarch_20260827.bit.bin`. First deploy pending. Dashboard
-work lives in the separate "Coil-servo web dashboard" session. Step 5 rewrote the interface brief, operating
-scenarios, bring-up checklist, README/ONBOARDING, added
-`docs/lab_notes_2026-11.md`, moved the dropped full-architecture features
-to future_upgrades.md §8, and gave design.md an MVP-changes preamble.
-`deploy` now post-checks the safe state. **Decided 2026-11-10: snap to
-zero** — a setpoint target inside the zero window (`zero_win`) bypasses the
-slew limit, so IN2 → 0 freewheels at full speed (~1.3 ms from 100 A).
-Step 3 added (register_map.md): CFG widened to 32
-words; `out2_enable` (OUT2 ≡ 0), RUN-only PI floor `u_floor` (W16),
-over-current trip `trip_level`/`trip_ticks`/`trip_timeout` (W17–19) +
-`trip_ack`, FSM states TRIP/TRIPPED, arm *edge* required to leave IDLE
-(so: set `servo_enable` first, then raise arm), setpoint slew limiter
-`slew_up`/`slew_down` (W15/W20).
-Step 4: `host/config/channels.toml` holds the measurable physics (V_th,
-g_fs, op-amp gain, termination, burden, in-amp gain, rail); `config.py`
-builds the model `Channel` from it and DERIVES I_FS, the OUT1 clamp and the
-floor (overridable by measured counts), writes trip/slew/dither, refuses
-unsafe files (rail > 6 V MOT / 10 V shims, slew 0, OUT2/boost ≠ 0 …);
-`python -m coil_servo_host.config mot` prints the derived values. Tools wait
-for the arm edge (`Board.wait_for_run`). The full-architecture model is
-deleted (git history). **The board still runs the 2026-08-27 bitstream,
-whose register map differs** (16 CFG words: words 16–20 would alias onto
-0–4) — STS word 0 bits 31:24 now carry the register-map revision (3) and
-`Board` refuses CFG writes to any other revision, so rebuild first
-(step 6).
-Model findings (see the `model/tests/test_float_loop.py` docstring): raw
-setpoint steps undershoot going down and overshoot up to ~20 % on
-compliance-limited up-steps of ~55–95 A, so **the firmware enforces ramps
-(decided 2026-11-10): ≤ 200 A/ms away from zero, ≤ 50 A/ms toward zero**
-(`servo_slew.v`, CFG words 15/20); the control computer may step. Gain-8 resolution
-(one OUT1 count ≈ 0.12 A → ~50 mA hunting at a hold): **decided 2026-11-10,
-OUT1 sigma-delta dither in fabric** (`servo_dither.v`, ctrl b20
-`dither_enable`) — in simulation the hold then sits within one ADC count;
-real benefit (DAC linearity, op-amp at tens of MHz) is a bench measurement.
-Does not help ground noise (future_upgrades.md §7 would).
-Turn-off decision made (bridge stays closed, freewheel model by default).
+**Status (2026-11-12).** Rewrite steps 1–6 done: model, fixed-point
+mirror, HDL, cocotb benches, host tools and docs describe the MVP. **Register
+map rev 4 is on main and deployed** (`bitstreams/coil_servo.bit.bin`, build
+ID commit `103a127`, built on the **lab laptop** — WSL2 Ubuntu 24.04, Vivado
+2025.1; the NUC is gone; the August image is kept as
+`coil_servo_fullarch_20260827.bit.bin`). Rev 4 = rev 3 plus IN1/IN2
+zero-offset registers (CFG W21/W22, subtracted from every sample; measure
+with `python -m coil_servo_host.zero <channel> --write --apply`), a build-ID
+register (STS W6) and the PI integrator held cleared while `open_loop` = 1.
+STS word 0 bits 31:24 carry the revision; `Board` refuses CFG writes to any
+other revision. Dashboard work lives in the separate "Coil-servo web
+dashboard" session.
 
-**Register-map rev 4 (branch `fw-rev4`, 2026-11-11, needs a Vivado build
-before it goes to main):** IN1/IN2 zero-offset registers (CFG W21/W22,
-subtracted from every sample; measure with `python -m coil_servo_host.zero`
-— characterise every new LEM; host keys `in1_offset_amps`/`in2_offset_amps`),
-build-ID register (STS W6, git commit stamped in by block_design.tcl), PI
-integrator held cleared while `open_loop` = 1. Main stays at rev 3 (matching
-the deployed bitstream) until the rev-4 bitstream is built and committed.
-Still queued: shot-synchronous capture (proposal in docs/dashboard.md).
+**Bring-up campaign** ([docs/test_campaign.md](docs/test_campaign.md), results in
+[docs/lab_notes_2026-11.md](docs/lab_notes_2026-11.md), plots in
+[docs/test3_bench_log.md](docs/test3_bench_log.md)): Tests 1–3 done
+(gate stage, sensor zero, bench supply ≤ 3 A on a temporary 12-turn test
+coil, profile `mot_bench`). **Next: control-computer integration on the bench
+(IN2 setpoint, DIO3 flip, DIO4 arm), then Test 4 — 100 A on the SE-600-5
+with both MOT coils, water, `mot` profile.** Key results (11-11/12):
+
+- **IN1 scale measured: `in1_fs_volts` = 1.12** (full-scale ADC code at
+  1.12 V, raw codes, factory calibration not applied) → **I_FS = 224 A,
+  27.3 mA per count** (vs ammeter, closed-loop 2 A hold). IN2's own scale is
+  not measured yet. Offsets drift a little after power-up — re-zero.
+- **Turn-off path confirmed: freewheel through the bridge body diode**
+  (drain bar at rail + one diode drop; the TVS is never reached). Setpoint
+  → 0 in closed loop is slower (the PI winds OUT1 down, ~0.3 ms at 2 A).
+- Firmware trip fires at the set level (2.85 A for 2.79 A), flips happen
+  only inside the zero window, **dead time measured 1.0 µs each side** of the
+  polarity edge (at the Red Pitaya pins), heartbeat-latch trip opens the
+  bridge at current (bench: rail spike +2.5–3.2 V for ~10 µs from 90 µJ).
+- **Deploying (or a Red Pitaya reboot) trips the logic-board latch**
+  (the heartbeat pauses while the bitstream loads): reset the latch after
+  every deploy, with the heartbeat present.
+- **Bench power stage rings at 10–20 kHz** (±0.1–0.2 A, f ∝ 1/√I) when
+  the coil is not damped by nearby metal — not the PI loop (same in open
+  loop), not the gate stage, not a capacitor; the bank changes its current
+  at fixed gate voltage near threshold. **Cured by an RC damper across the
+  coil** (3.2 Ω + 10 µF on the 45 µH test coil). **The MOT pair needs its own
+  damper** (sized for 16 µH, pulse-rated at 100 A) — check for ringing at
+  low currents in Test 4. Mechanism not yet understood.
+- Bench PI gains tuned on hardware: kp 31.2 counts/A, ki 942 counts/(A·ms)
+  (×2 more oscillates at 21 kHz); bench `I_rated` 2.2 A. Dither makes no
+  difference on the bench (one count ≈ 8 mA there); its real test is at
+  100 A. Hold average stable within ≈ 0.5 mA over 10 min at 2 A.
+- Software arm/flip for bench tests: pulse `dio_invert` bit 1 (arm) / bit 0
+  (flip request). **Flips need the arm *level* high** (`flip_req && armed`),
+  so a pulsed software arm does not allow flips.
+
+Firmware decisions in force: **snap to zero** (decided 2026-11-10) — a
+setpoint target inside the zero window (`zero_win`) bypasses the slew limit,
+so IN2 → 0 freewheels at full speed (~1.3 ms from 100 A). **Ramps enforced
+in fabric** (decided 2026-11-10; model: raw steps undershoot going down and
+overshoot up to ~20 % on compliance-limited up-steps): ≤ 200 A/ms away from
+zero, ≤ 50 A/ms toward zero (`servo_slew.v`, CFG W15/W20); the control
+computer may step. **OUT1 sigma-delta dither** (decided 2026-11-10,
+`servo_dither.v`, ctrl b20 `dither_enable`) for the gain-8 resolution (one
+OUT1 count ≈ 0.12–0.14 A at 100 A). Turn-off keeps the bridge closed
+(freewheel). Register-map features (register_map.md): 32 CFG words;
+`out2_enable` (OUT2 ≡ 0); RUN-only PI floor `u_floor` (W16); over-current
+trip `trip_level`/`trip_ticks`/`trip_timeout` (W17–19) + `trip_ack`; FSM
+states TRIP/TRIPPED; arm *edge* required to leave IDLE (set `servo_enable`
+first, then raise arm). `host/config/channels.toml` holds the measurable
+physics; `config.py` builds the model `Channel` from it and DERIVES I_FS, the
+OUT1 clamp and the floor (overridable by measured counts) and refuses unsafe
+files; `python -m coil_servo_host.config mot` prints the derived values.
+Still queued: shot-synchronous capture (proposal in docs/dashboard.md); fast
+turn-off ("snap OUT1 to zero", waits for parts); level-sensitive latch trip
+review; dashboard "hold arm" mode for software flips.
 **GUI rule (user, 2026-11-11):** anything like this — a new setting, status
 or calibration — also goes into the dashboard (separate dashboard session);
 ask if unsure.
@@ -130,7 +147,7 @@ Bitstream loading on the board: `fpgautil -b coil_servo.bit.bin`
 | Port | Dir | Signal |
 |---|---|---|
 | IN1 | in | Measured coil current (signed); same scaling as IN2 |
-| IN2 | in | Setpoint from control system analog out, ÷10 to ±1 V (at I_FS = 200 A: 20 A per computer volt) |
+| IN2 | in | Setpoint from control system analog out, ÷10 to ±1 V (nominally 20 A per computer volt at I_FS = 200 A; IN2's own scale not yet measured — IN1 measured 224 A full scale) |
 | OUT1 | out | Pass bank command → op-amp (gain ≈ 8) → pass-FET gates |
 | OUT2 | out | Active clamp command — **unused in the MVP, must sit at 0 V** |
 | DIO0_P | out | Bridge polarity (via logic board → UCC5350 drivers) |
@@ -172,15 +189,21 @@ Power stage as built:
   V_th ≈ 3.53 V → OUT1 ≈ 0.44 V) and up to ~1600 A/V at OUT1. The coil L/R
   pole is not in the loop; L only appears as slew limits at the compliance
   edges. Normalized plant gain up to ~8 (loopback was 2.03), so the
-  commissioned PI gains must be rescaled before real-load tuning.
+  commissioned PI gains must be rescaled before real-load tuning. Near
+  threshold (bench, ≤ 2 A) the bank is square-law, ≈ 0.008 A per OUT1 count,
+  current onset ≈ 3540 counts, and its current rises as it warms (the loop
+  absorbs ≈ 0.2 A over 10 min at 2 A).
+- **Coil damper:** the bank and coil ring at 10–20 kHz unless damped; an RC
+  damper across the coil cures it (bench, 11-12). Plan one for the MOT pair.
 - **Unipolar actuator:** the bank only sources current or sources less.
   **Decided 2026-11-10: turn-off keeps the bridge closed** — the firmware
   never opens the bridge at current. The coil then freewheels through the
   bridge body diodes (~1.3 ms from 100 A on the MOT, mvp_architecture.md
-  §3.3); model this as the default, with the brief's TVS-clamped behaviour
-  behind a flag until a scope capture of the drain bar confirms it.
-- **Sensing:** LEM LF 310-S → 10 Ω burden → AD8421 (G = 1, PROVISIONAL) →
-  IN1: **I_FS = 200 A** at +1 V, 24.4 mA per ADC count.
+  §3.3). **Confirmed on the bench 2026-11-12** (drain bar at rail + one diode
+  drop, TVS never reached); the TVS-clamped model stays behind a flag.
+- **Sensing:** LEM LF 310-S → 10 Ω burden → AD8421 (G = 1, REF to GND) →
+  49.9 Ω → IN1. Nominal I_FS = 200 A at +1 V; **measured: full-scale code at
+  1.12 V → I_FS = 224 A, 27.3 mA per ADC count** (`in1_fs_volts`).
 - **Safety logic board** (built, tested 2026-11-03): heartbeat → CD74HC123
   monostable → 74HC74 latch with manual reset (powers up tripped) → NAND
   with DIO1_P → driver DISABLE. The only automatic trip in the MVP; no relay
@@ -249,18 +272,25 @@ Each of these must be a named, commented-provisional parameter
   dependence), OUT1 50 Ω termination yes/no → also sets the OUT1 clamp value
 - OPA994 supply rail (undocumented; must exceed the max gate command)
 - In-amp gain (1 vs 2) → I_FS 200 A vs 100 A
-- Turn-down path: bridge freewheel vs bank TVS (one scope capture decides)
+- ~~Turn-down path: bridge freewheel vs bank TVS~~ — freewheel, confirmed on
+  the bench 2026-11-12
 - Bridge-open-at-current energy path: SE-600-5 output-cap overvoltage / OVP
+  (bench preview: +2.5–3.2 V rail spike for ~10 µs from 90 µJ; at 100 A
+  ~0.08 J — measure in Test 4)
+- Coil damper values for the MOT pair (16 µH; pulse rating at 100 A), and
+  whether the 10–20 kHz ringing appears on the real coils
 - Actuator resolution and ground noise at a steady hold vs the 0.1 % spec
   (gain-8 stage: one OUT1 count ≈ 0.14–0.4 % of rated)
-- IN1 offset (~1.4 mV ≈ 0.29 A at I_FS = 200 A — calibrate before trusting
-  the ±0.5 A flip zero window)
+- IN1 offset: Red Pitaya input offset ≈ +0.26–0.29 A (LEM offset ≈ 0),
+  calibrated with the zero tool; drifts slightly after power-up — re-zero
+  before trusting the ±0.5 A flip zero window. IN2 scale not yet measured
 - Hold capacitor across the rail (C_hold) yes/no
 - Chamber eddy-current settling time (limits post-flip field settling; FSM
   delay constants are placeholders)
 - Uncooled duty-cycle limit for the first test round
-- PI gains (loopback values; rescale by measured plant gain, then set from
-  the measured step response)
+- PI gains for the 100 A plant (bench gains are tuned: kp 31.2 counts/A,
+  ki 942 counts/(A·ms); the MOT plant has ~17× more gain per count — tune
+  from measured steps in Test 4)
 
 If a design decision depends on one of these, flag it explicitly.
 

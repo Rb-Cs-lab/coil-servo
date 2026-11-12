@@ -119,6 +119,10 @@ during flips. All grounds on supply 0 V.
 | 3i | Hold noise, dither on vs off | — | 2 A hold, Red Pitaya decimated capture + scope CH1 high-resolution | noise vs the 0.1 % spec; decides future_upgrades §7 |
 | 3j | Short duty test | read plate temperature by hand/IR | 2.5 A for a few minutes | plate barely warm (≈ 15 W total) |
 
+**Results (11-11/12):** [lab_notes_2026-11.md](lab_notes_2026-11.md) and the
+Test 3 bench log with all plots, [test3_bench_log.md](test3_bench_log.md).
+3j moved to Test 4 (≤ 15 W on the bench).
+
 ## Test 4 — 100 A build (later, with water)
 
 Kelvin + LCR on both coils and the 4/0 cabling; water cooling on; SE-600-5;

@@ -381,10 +381,11 @@ the steel optical table. Calculated from its geometry (Neumann integral):
 **L ≈ 45 µH, R ≈ 25 mΩ** (model and channels.toml updated; the 9 µH used
 until now was a guess for one MOT coil). Arm and flip requests from software
 (pulses of the `dio_invert` setting: bit 1 = arm, bit 0 = flip request), so
-the arm jumper stays out. Plots and step-by-step detail: the session's log
+the arm jumper stays out. Plots and step-by-step detail:
+[test3_bench_log.md](test3_bench_log.md) (generated from the session's log
 page, `logs/testlog/test3_log.html` (lab PC only -- logs/ is not in git;
 served by the `test-log` entry in
-`.claude/launch.json`); data in `logs/t3_*`.
+`.claude/launch.json`)); data in `logs/t3_*`.
 
 - **Bring-up:** deploy + check clean; offsets IN1 +0.256 A, IN2 +0.157 A.
   **Deploying trips the logic-board latch** (loading the bitstream pauses
