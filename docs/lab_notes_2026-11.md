@@ -553,6 +553,12 @@ Plots and details: [benchtop_test_log.md](benchtop_test_log.md), section
   the zero window): turn-off at the natural freewheel rate; works with the
   present hardware (bridge stays closed). Separate from the bridge-open fast
   turn-off that needs the TVS + blocking diode. Not implemented yet.
+  **Decided (user, 11-12): trigger the snap only on a zero setpoint**, not
+  the whole ±0.5 A zero window, so currents below 0.5 A can still be held.
+  For the analog IN2 path "zero" needs a threshold of a few counts (IN2
+  reads ±1–3 counts of noise at 0 V), to be set from measured IN2 noise.
+  Expected side effect: the ≈ −0.2 A damper swing returns on the bench
+  (≈ V_f/√(L/C)); a near-critically damped MOT damper removes it.
 - **Estimates for 100 A on the MOT pair:** freewheel turn-off ≈ 1.3 ms
   (1.0–1.7 ms; t = (L/R)·ln(1 + I₀R/V_f), V_f ≈ 0.6–1.0 V, R ≈ 8–12 mΩ; the
   same formula gives 165 µs for the bench vs 170 µs measured); bridge open

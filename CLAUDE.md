@@ -104,7 +104,10 @@ files; `python -m coil_servo_host.config mot` prints the derived values.
 Still queued: shot-synchronous capture (proposal in docs/dashboard.md);
 **"snap OUT1 to zero"** option (OUT1 → 0, integrator → floor when the
 setpoint enters the zero window; removes the PI tail, works on the present
-hardware — user: not yet, 2026-11-12); bridge-open fast turn-off (needs the
+hardware — user: not yet, 2026-11-12; **decided: trigger only on a zero
+setpoint, not the whole ±0.5 A zero window**, so small currents can still
+be held — for the analog IN2 path "zero" needs a few-count threshold
+because IN2 noise is ±1–3 counts, set from measured IN2 noise); bridge-open fast turn-off (needs the
 TVS + blocking diode, waits for parts); latch visibility (latch → DIO5,
 stall detection); level-sensitive latch trip review; dashboard "hold arm"
 mode for software flips.
