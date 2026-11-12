@@ -82,15 +82,15 @@ measured):
 | Setting | `mot` (SE-600-5) | `mot_bench` | Why |
 |---|---|---|---|
 | Supply | SE-600-5, 5 V / 100 A | bench, **CV 5.0 V, CC 3.0 A** (`I_supply_max`) | the CC limit is the hard current limit of the campaign |
-| Coil | the pair, 16 µH | **one coil, ~8–10 µH** (PROVISIONAL, model 9 µH, 3.2 mΩ) | not calculated: half the pair plus the mutual term. At ≤ 3 A it only sets ramp and freewheel times of a few tens of µs — no effect on the test plan |
+| Coil | the pair, 16 µH | **one temporary test coil: 12 turns, ~45 µH, ~25 mΩ** (calculated from its geometry, 2026-11-12) | not one of the MOT pair. It sets the ramp and freewheel times (~0.1–0.3 ms at ≤ 3 A). On the steel table its eddy currents lower L and add loss; lifted off it, the bench rings at 10–20 kHz (lab notes 2026-11-12) |
 | Sensing | LEM, one pass, I_FS 200 A | **same** (24.4 mA per count) | optional: in-amp gain 10 (below) |
-| Rated (`I_rated`) | 100 A | **2.5 A** | highest closed-loop setpoint; the `step` tool refuses more |
+| Rated (`I_rated`) | 100 A | **2.2 A** (was 2.5 A until 2026-11-12) | highest closed-loop setpoint; the `step` tool refuses more. Lowered because the bench ringing (±0.15 A) brought 2.5 A holds within single samples of the 2.79 A trip |
 | Firmware trip | 100 A | **2.8 A** (115 counts) | above every allowed setpoint, 0.2 A (~8 counts) below the 3.0 A supply limit, so it fires before the supply goes into CC and can be tested (4.4) — **provided the IN1 offset is not more negative than about −0.15 A** (4.1) |
 | OUT1 clamp | derived: 4474 counts | **set directly: 4000 counts** (decided 2026-11-11) | at 2.5 A the derived clamp sits only ~44 counts above the dead zone — inside its uncertainty — and could block the first measurement. 4000 counts (0.49 V at OUT1, ~3.9 V gate) leaves ~0.4 V of gate headroom; the supply limit, not the clamp, bounds the current |
 | Gains | kp 0.1044, ki 3149 s⁻¹ | **same**, written as 4.28 counts/A and 129 counts/(A·ms) | the per-amp form does not depend on I_FS, so the in-amp switch below needs no gain edit |
 | Ramp rates | 200 / 50 A/ms | **200 / 50 A/ms** | unchanged on purpose: the physical limits are rail/L and V_f/L, not the current |
 | Flip zero window | 0.5 A | **0.5 A** (PROVISIONAL) | the IN1 offset is ~0.29 A at this scale and must be calibrated first; 0.5 A is 20 % of rated on the bench |
-| Trip timeout | 3 ms | 3 ms | the freewheel from 2.5 A takes only ~30–40 µs; the timeout is a safety net |
+| Trip timeout | 3 ms | 3 ms | the freewheel from 2.8 A takes ~0.2 ms (measured 225 µs); the timeout is a safety net |
 | Dither | on | on | one OUT1 count is ~0.12 A (5 % of 2.5 A) |
 | Board LED 7 | off | **on** | physical sign that bench settings are loaded |
 
@@ -173,7 +173,10 @@ G = 10. The host tools below use the setpoint register instead.
    state IDLE, "after this check: board holds the 'mot_bench' settings",
    and **LED 7 lit**.
 3. Logic board: press the latch reset (the red LED goes off) with arm
-   (DIO4) **low**. Turn the supply output **on**. Nothing should flow: the
+   (DIO4) **low**. **Reset again after every deploy or Red Pitaya reboot:**
+   loading the bitstream pauses the heartbeat, which trips the latch
+   (found 2026-11-12: the first step then gives no current and no amber
+   light). Turn the supply output **on**. Nothing should flow: the
    supply shows ~0 A, CV mode.
 4. In a second terminal, leave this running for the whole campaign (it
    also re-checks every few seconds which settings the board holds):
@@ -300,13 +303,15 @@ never fire, and the servo would wind its integrator up against the clamp
 
 ### 4.5 Turn-off path: the freewheel scope capture
 
-Hold 2.5 A (closed loop, e.g. `step mot_bench --amps 2.5` — the tool
-returns the setpoint to zero at the end, which is a snap-off). Scope the
+Hold ~2 A. Setpoint → 0 is *not* an instant turn-off: the PI winds OUT1
+down over ~0.2 ms. For the path itself use open loop and set OUT1 to 0 at
+once (2026-11-12 procedure), or look at a trip. Scope the
 pass-bank **drain bar**, bridge **node A** and IN1, triggered on the fall.
 
-- **Freewheel (expected):** the drain bar rises to ≈ V_rail + ~0.6 V and
-  the current falls almost linearly to zero in ~30–40 µs (rate V_f / L,
-  roughly 60–90 A/ms for one coil). The slope gives the body-diode drop
+- **Freewheel (expected, confirmed 2026-11-12):** the drain bar rises to
+  ≈ V_rail + ~0.6 V and the current falls almost linearly to zero (rate
+  V_f / L; measured 8 mA/µs with the 45 µH test coil lifted, 12 mA/µs on
+  the steel table: 1.4 A → 0 in ~0.1–0.16 ms). The slope gives the body-diode drop
   at low current, V_f = L × dI/dt — with L itself uncertain, record the
   slope and the drain-bar voltage.
 - **TVS instead:** drain bar at ~13 V and a fall of only a few µs. Report
@@ -330,18 +335,22 @@ shoot-through protection (mvp_architecture.md section 4).
 
 ### 4.7 Heartbeat-latch trip at current
 
-Hold 2.5 A, then pull the DIO6 wire. The logic board opens the bridge at
-current; the coil's ½·L·I² ≈ **30 µJ** (40 µJ at 3 A, with L ≈ 9 µH) goes
-back into the bench supply. A bench supply cannot sink current, so this
-charges its output capacitor — a bump of millivolts for typical
-capacitors; some supplies show a brief error or trip their over-voltage
-protection. Scope the rail. At this energy nothing can be harmed; on the
+Hold 2 A, then pull the DIO6 wire. The logic board opens the bridge at
+current; the coil's ½·L·I² ≈ **90 µJ** (with L ≈ 45 µH) goes back into
+the bench supply. Measured 2026-11-12: the current is gone in ~10–13 µs
+and the rail spikes by +2.5 to +3.2 V for ~10 µs (lead inductance), then
+sits ~0.4 V higher because the 2 A lead drop disappears. Scope the rail
+AC-coupled at ≥ 0.5 V/div. At this energy nothing can be harmed; on the
 SE-600-5 the same event returns ~0.08 J (100 A, the pair), which is the
 open question this test previews (mvp_architecture.md 3.3).
 
-Recovery — the operating rule: **disarm (DIO4 low) first**, then
-`servo_enable = 0`, re-plug DIO6, press the latch reset, and only then
-enable and arm again.
+Recovery — the operating rule (corrected 2026-11-11): **stop the servo
+first** (`servo_enable = 0`, wait for IDLE — bridge enable low), re-plug
+DIO6, wait for the heartbeat LED (green), press the latch reset, and only
+then enable and give a fresh arm edge. Disarming alone does not work:
+losing arm in RUN never drops the bridge, by design. While the bridge is
+open the PI sees no current and drives OUT1 to the clamp (seen on
+2026-11-12), which is why the servo must be stopped before the reset.
 
 ### 4.8 Optional: transfer function
 

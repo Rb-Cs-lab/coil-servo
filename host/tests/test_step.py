@@ -28,7 +28,7 @@ def test_open_loop_counts_bypass_the_model():
     (None, 3600, False),        # counts are an OUT1 command: open loop only
     (None, "clamp+1", True),    # above the bench clamp (out_clamp_counts)
     (None, -1, True),
-    (2.6, None, False),         # above the bench rated 2.5 A
+    (2.3, None, False),         # above the bench rated 2.2 A
     (-1.0, None, True),         # OUT1 only drives up
 ])
 def test_mistakes_are_refused(amps, counts, open_loop):

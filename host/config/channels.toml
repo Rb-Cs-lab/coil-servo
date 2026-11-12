@@ -93,8 +93,8 @@ in2_offset_amps = 0.1450        # measured 2026-11-11 (coil_servo_host.zero)
 
 # Low-current TEST PROFILE for the MOT channel (docs/bench_supply_test.md):
 # the same board and power stage, powered from a current-limited BENCH
-# SUPPLY (5 V, 3 A limit) in place of the SE-600-5, driving ONE coil of the
-# pair (its L/R are PROVISIONAL model values in channels.py: ~9 uH, 3.2 mOhm).
+# SUPPLY (5 V, 3 A limit) in place of the SE-600-5, driving ONE TEMPORARY
+# test coil (12 turns; L ~45 uH, R ~25 mOhm calculated, in channels.py).
 # The LEM stays on the 4/0 lead, one pass. Switching bench <-> production in
 # software is ONLY the channel name: mot_bench vs mot, with every host tool
 # (deploy/check/watch/step/sweep/config). Never use mot_bench on the
@@ -107,8 +107,11 @@ bench = true                    # bench profile: tools print a warning banner,
 board_host = "192.168.0.65"     # the MOT board (same board as [mot])
 
 # --- physics (overrides of model/coil_servo_model/channels.py) ---
-I_rated = 2.5                   # amps: highest closed-loop setpoint on the
-                                # bench (refused at/above I_supply_max)
+I_rated = 2.2                   # amps: highest closed-loop setpoint on the
+                                # bench (refused at/above I_supply_max).
+                                # 2.5 -> 2.2 on 11-12: the bench ringing at
+                                # 11-14 kHz (+-0.15 A) put 2.5 A holds within
+                                # samples of the 2.79 A trip (Test 3d/3i)
 I_supply_max = 3.0              # bench supply CC (current-limit) setting --
                                 # the real hard limit on the bench
 V_rail = 5.0                    # bench supply CV (voltage) setting: same as
@@ -222,9 +225,9 @@ boost_mode = 0
 #     python -m coil_servo_host.zero <channel> --write
 # Amps of the sensor scale; the FPGA subtracts them from every IN1/IN2
 # sample. Re-measure after changing the LEM, burden, in-amp gain or cable.
-in1_offset_amps = 0.2557        # measured 2026-11-12 (coil_servo_host.zero)
+in1_offset_amps = 0.2894        # measured 2026-11-12 (coil_servo_host.zero)
                                 # (zero tool had read ~0.21 A)
-in2_offset_amps = 0.1571        # measured 2026-11-12 (coil_servo_host.zero)
+in2_offset_amps = 0.1791        # measured 2026-11-12 (coil_servo_host.zero)
 
 [z_shim]
 board_host = "rp-zshim.local"   # PLACEHOLDER

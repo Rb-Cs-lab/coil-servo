@@ -512,7 +512,7 @@ def test_one_device_per_board_and_cards():
     snap = devices["mot"].snapshot()
     bench = [p for p in snap["profiles"] if p["name"] == "mot_bench"][0]
     assert bench["bench"] is True and bench["i_supply_max"] == 3.0
-    assert bench["i_rated"] == 2.5
+    assert bench["i_rated"] == 2.2
     rows = dict(devices["mot"].info("mot_bench")["summary"])
     assert "supply limit" in rows
     # the measured gate-stage calibration, read-only (Test 1, 2026-11-11)
@@ -549,7 +549,7 @@ def test_shared_board_profile_switch(tmp_path):
         dev = devices["mot"]
         assert dev.board.read_cfg()["led"] == 0x80
         s = state(c)
-        assert s["held"] == ["mot_bench"] and s["i_rated"] == 2.5
+        assert s["held"] == ["mot_bench"] and s["i_rated"] == 2.2
         assert s["i_supply_max"] == 3.0 and s["alarms"] == []
         assert dev.board.m.I_supply_max == 3.0           # sim follows
         r = act(c, "enable", confirm=True, **MOT)

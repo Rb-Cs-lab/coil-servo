@@ -93,9 +93,10 @@ def test_bench_profile_is_the_mot_stage_with_a_limited_supply():
                    out_clamp_counts=None)
     assert same == MOT
     assert "mot_bench" not in CHANNELS      # production table untouched
-    # one coil of a series-opposed pair: L_pair/2 + M, PROVISIONAL
-    assert MOT.L / 2 <= BENCH.L <= 10e-6
-    assert BENCH.R_coil == pytest.approx(MOT.R_coil / 2)
+    # the temporary 12-turn test coil: L, R calculated from its geometry
+    # (2026-11-12), consistent with the measured freewheel slope
+    assert 40e-6 <= BENCH.L <= 50e-6
+    assert BENCH.R_coil == pytest.approx(25e-3)
 
 
 def test_defaults_leave_production_unchanged():
@@ -166,10 +167,10 @@ def test_heartbeat_trip_energy_is_tiny():
     # bridge opened at the supply limit: the coil energy goes back into the
     # bench supply's output capacitor
     energy = 0.5 * BENCH.L * BENCH.I_supply_max ** 2
-    assert energy < 50e-6                     # ~40 uJ with L ~9 uH
+    assert energy < 250e-6                    # ~0.2 mJ with L ~45 uH
     plant = Plant(BENCH, i0=BENCH.I_supply_max)
     plant.bridge_enabled = False
-    assert hold(plant, 0.0, 20e-6) == 0.0     # gone within ~7 us
+    assert hold(plant, 0.0, 40e-6) == 0.0     # gone within ~20 us (2 A: ~10-13 us measured)
 
 
 # --- plant: supply current limit ----------------------------------------
@@ -201,8 +202,10 @@ def test_freewheel_is_not_affected_by_the_supply_limit():
         a.step(0.0, 0.0, False, T_S)
         b.step(0.0, 0.0, False, T_S)
         assert a.I == b.I
-    # ~ L I / V_f: a few tens of us from 2.5 A (one coil, L ~9 uH)
-    assert 15e-6 < BENCH.freewheel_time < 60e-6
+    # ~ L I / V_f from 2.5 A with L ~45 uH: ~0.1-0.3 ms. Measured 11-12:
+    # 1.44 A -> 0 in ~160 us (8 mA/us, coil lifted), i.e. ~0.37 V across the
+    # coil -- lower than the model's V_f, so the model is the fast end
+    assert 80e-6 < BENCH.freewheel_time < 400e-6
 
 
 def test_none_limit_reproduces_production_behaviour():

@@ -228,13 +228,16 @@ CHANNELS = {
 BENCH_CHANNELS = {
     "mot_bench": replace(
         CHANNELS["mot"], name="mot_bench",
-        # One coil, not the pair: not calculated. The pair is 16 uH series-
-        # opposed (2 L1 - 2 M), so one coil is L_pair/2 + M ~ 8-10 uH --
-        # PROVISIONAL estimate. At <= 3 A it only sets ramp and freewheel
-        # times of a few tens of us. R: half the pair, PROVISIONAL.
-        L=9e-6,
-        R_coil=3.2e-3,
-        I_rated=2.5,         # highest closed-loop setpoint on the bench
+        # The bench coil is a TEMPORARY test coil, not one of the MOT pair:
+        # one racetrack, 12 turns of 4 x 2 mm hollow Cu (2 mm bore),
+        # 70 x 210 mm, 12 mm inner corner radius. L from the geometry
+        # (Neumann integral, 2026-11-12): ~45 uH in free air; it matches the
+        # measured freewheel slope (8 mA/us at ~0.37 V). On the steel optical
+        # table eddy currents lower it and add loss. R: ~7 m of conductor,
+        # 4.86 mm^2 -> ~25 mOhm. Both CALCULATED, not measured (no LCR).
+        L=45e-6,
+        R_coil=25e-3,
+        I_rated=2.2,         # highest closed-loop setpoint on the bench (2.5 -> 2.2, 11-12: ringing margin to the trip)
         I_supply_max=3.0,    # bench supply CC limit -- the real hard limit
         lem_turns=1,         # LEM on the 4/0 lead, one pass: I_FS = 220 A
         # Clamp set directly (decided 2026-11-11), ~11 % (407 counts, ~0.4 V of gate) above the

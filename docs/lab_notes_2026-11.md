@@ -371,3 +371,96 @@ to finalise `in1_fs_volts`.
   gains. Fit the model's near-threshold bank to the measured scan before
   using it to tune bench gains. [mot] normalized gains rescaled to the
   220 A IN1 scale (kp 0.09897 / ki 2984.8 = unchanged counts per amp).
+
+## Test 3 — bench supply, second session (11-12, profile mot_bench)
+
+Same setup as 11-11. **Correction to 11-11:** the coil is not one of the MOT
+pair but a **temporary test coil**: one racetrack, 12 turns of 4 × 2 mm
+hollow copper (2 mm bore), 70 × 210 mm, 12 mm inner corner radius, lying on
+the steel optical table. Calculated from its geometry (Neumann integral):
+**L ≈ 45 µH, R ≈ 25 mΩ** (model and channels.toml updated; the 9 µH used
+until now was a guess for one MOT coil). Arm and flip requests from software
+(pulses of the `dio_invert` setting: bit 1 = arm, bit 0 = flip request), so
+the arm jumper stays out. Plots and step-by-step detail: the session's log
+page, `logs/testlog/test3_log.html` (lab PC only -- logs/ is not in git;
+served by the `test-log` entry in
+`.claude/launch.json`); data in `logs/t3_*`.
+
+- **Bring-up:** deploy + check clean; offsets IN1 +0.256 A, IN2 +0.157 A.
+  **Deploying trips the logic-board latch** (loading the bitstream pauses
+  the heartbeat): the first closed-loop step gave no current and no amber
+  light. Reset the latch after every deploy or Red Pitaya reboot (now in
+  bench_supply_test.md step 3).
+- **IN1 scale (3c), closed-loop 2 A hold, 60 s:** board 1.988 A, bench supply
+  ammeter 2.02–2.03 A, scope 2.086 A (≈ 3 % high). **`in1_fs_volts` = 1.12**
+  (was 1.10 provisional): I_FS = 224 A, 27.3 mA per count. Agrees with the
+  11-11 first ammeter estimate (1.118). [mot] normalized gains rescaled to
+  keep counts per amp (kp 0.1008, ki 3038.6). Commit d70a45d6.
+- **PI gains (3d), closed-loop 1 A steps, ki/kp fixed:**
+
+  | kp (counts/A) | ki (counts/(A·ms)) | 90 % | 98 % | hold noise | verdict |
+  |---|---|---|---|---|---|
+  | 15.6 | 471 | 1.41 ms | 1.85 ms | 40 mA rms | clean, slow |
+  | **31.2** | **942** | 0.73 ms | 1.04 ms | 40 mA rms | **chosen** |
+  | 62.4 | 1884 | 0.38 ms | 0.53 ms | 86 mA rms | 21 kHz oscillation |
+
+  2 A step at the chosen gains: 98 % in 0.65 ms, no overshoot. A 2.5 A step
+  tripped once (coil lifted, see ringing below); on the table it gave +2.8 %
+  overshoot but 28 single samples above the 2.79 A trip level → **bench
+  `I_rated` lowered 2.5 → 2.2 A**.
+- **Over-current trip (3e), 2.9 A step (I_rated temporarily 2.9):** fired at
+  ≈ 2.85 A (set 2.79 A), DACs to zero, freewheel to zero in ≈ 225 µs, bridge
+  open, TRIPPED; supply CC lamp stayed off. trip_ack + stop → IDLE.
+- **Turn-off path (3f), open loop, OUT1 → 0 at once:** gate falls 4 V → 0
+  in ≈ 4 µs; drain bar jumps to ≈ 5.9 V (rail + one diode drop, brief
+  ringing to 7.4 V) and stays there exactly as long as current flows; the
+  current ramps down linearly. **Freewheel through the bridge body diode
+  confirmed; the TVS is never reached.** Slope 12 mA/µs on the table,
+  8 mA/µs lifted 13–15 cm (slower in free air: the table's eddy currents
+  absorb energy) → ≈ 0.37 V across the 45 µH coil. Setpoint → 0 in closed
+  loop is slower (~0.3 ms) because the PI winds OUT1 down — the planned
+  "snap OUT1 to zero" change (fast turn-off upgrade) addresses that. Warm-bank
+  leakage at the RUN floor: 45–60 mA at 3450 counts.
+- **Flips and dead time (3g), ±2 A:** flips only inside the ±0.49 A zero
+  window (current at the polarity edge +0.13 / −0.29 A), ≈ 300 µs from 2 A,
+  no timeout. **Enable drops 1.02–1.04 µs before and returns 0.98–1.02 µs
+  after each polarity edge** (125 × 8 ns; measured at the Red Pitaya pins;
+  bridge-FET V_GS still to be checked with a floating probe). Flips need the
+  arm *level* high (`if (flip_req && armed)`): the dashboard's software-arm
+  button gives only an edge, so flips after it are ignored — passed to the
+  dashboard session.
+- **Heartbeat-latch trip (3h), 2 A:** bridge opens at once; the coil
+  discharges into the supply through three diodes (up from ground through
+  the pass-bank body diodes, drain bar ≈ −0.5 V) and is at zero in
+  ≈ 10–13 µs (≈ 6.7 V across 45 µH). **Rail: +2.5 to +3.2 V spike for
+  ≈ 10 µs** (lead inductance), then ≈ +0.4 V because the 2 A lead drop
+  vanishes (DC rail 5.06 V at 0 A, 4.65 V at 2 A: ≈ 0.2 Ω of supply leads).
+  The PI saw zero current and drove OUT1 to the clamp until stopped — the
+  stop-before-reset rule. A 2.5 A attempt tripped the firmware first.
+- **Hold noise and dither (3i), 2 A:** dither on/off makes no difference on
+  the bench (one OUT1 count ≈ 8 mA here; the real test is at 100 A, ≈ 0.14 A
+  per count). Average current very stable: means of four 16.8 ms records
+  agree to ±0.2 mA (0.01 %).
+- **Open finding — 10–20 kHz ringing of the bench power stage.** With the
+  coil lifted (and marginally on the table) the current rings by itself:
+  ±0.08–0.2 A, drain ±0.5–0.8 V (exactly L·dI/dt), rail ±0.06 V.
+  - Not the PI loop (same at half the gains and in open loop).
+  - Not the gate stage (a pass-FET gate pin is steady to ±0.1 mV).
+  - Not the varistor across the coil (Digi-Key 495-6502-ND; removed → no
+    change) — there is no capacitor on the H-bridge.
+  - Nothing bypasses the bank: the rail ripple is exactly the supply leads'
+    0.17 Ω + 3.6 µH times the oscillating current, so supply, bank and coil
+    carry the same current — **the bank changes its current at a fixed gate
+    voltage** (drain-voltage and/or die-temperature dependence near
+    threshold, where the bench runs a bank built for 100 A).
+  - Frequency ∝ 1/√I: 20 kHz at 0.71 A, 15 kHz at 1.23 A, 11.5 kHz at
+    1.93 A; drain swing always ≈ 1.6 V p-p (clamped by the freewheel diode).
+  - Coil flat on the table: gone (82 mA rms, no line) — damping decides.
+  - **Matters for the MOT:** a similar ringing would be a few-percent field
+    ripple at 10–20 kHz, far above the loop bandwidth. Next: a series
+    3 Ω + 10 µF damper across the coil (being fitted), then the mechanism
+    (FET data near threshold) before the 100 A build.
+- **3j (uncooled duty) moved to the 100 A build:** ≤ 15 W on the bench.
+- Firmware/config: bench `I_rated` 2.2 A; offsets re-zeroed after an
+  unplanned Red Pitaya reboot (IN1 +0.289 A, IN2 +0.179 A — the input drifts
+  while warming up after power-up).
