@@ -37,10 +37,10 @@ out1_offset_volts = -0.0413     # OUT1 at DAC code 0: MEASURED 11-11
 V_opamp_max = 5.18              # gate ceiling = op-amp rail (5.184 V supply), MEASURED
 R_burden = 10.0                 # ohm, LEM burden
 G_inamp = 1.0                   # AD8421 gain -- PROVISIONAL (1 -> I_FS 200 A)
-in1_fs_volts = 1.10             # IN1 volts at full-scale ADC code: MEASURED
-                                # 11-11, PROVISIONAL +-3 % (board vs bench
-                                # supply ammeter 1.07-1.10, vs scope 1.13;
-                                # nominal 1.0) -- refine in a closed-loop hold
+in1_fs_volts = 1.12             # IN1 volts at full-scale ADC code: MEASURED
+                                # 11-12 in a closed-loop 2 A hold (board
+                                # 1.988 A, bench supply ammeter 2.02-2.03 A;
+                                # 11-11 open loop gave 1.118; nominal 1.0)
 
 # --- derived-value overrides (uncomment once measured directly) ---
 # out_clamp_counts = 4144       # OUT1 command clamp (default: model, the
@@ -51,11 +51,11 @@ floor_frac = 0.9                # floor at 90 % of the dead zone (decided)
 # --- loop ---
 # The commissioned loopback gains (kp 0.5, ki 15080/s) rescaled by the
 # model's plant gain G_pass/I_FS ~ 5.56 (with the OUT1 scale measured
-# 2026-11-11, and the IN1 scale in1_fs_volts = 1.10) -- PROVISIONAL: set
+# 2026-11-11, and the IN1 scale in1_fs_volts = 1.12) -- PROVISIONAL: set
 # them from the measured step response. (Normalized gains depend on I_FS:
 # 0.0900 / 2713 at the nominal 200 A = the same counts per amp.)
-kp = 0.09897
-ki = 2984.8                     # 1/s
+kp = 0.1008
+ki = 3038.6                     # 1/s
 deadband_counts = 8             # PROVISIONAL
 dither_enable = 1               # OUT1 sigma-delta dither (decided)
 
@@ -125,7 +125,7 @@ out1_offset_volts = -0.0413     # OUT1 at DAC code 0: MEASURED 11-11
 V_opamp_max = 5.18              # gate ceiling = op-amp rail (5.184 V supply), MEASURED
 R_burden = 10.0                 # ohm, LEM burden
 lem_turns = 1                   # 4/0 lead through the LEM once
-in1_fs_volts = 1.10             # same board as [mot]: MEASURED 11-11, PROVISIONAL
+in1_fs_volts = 1.12             # same board as [mot]: MEASURED 11-12 (2 A hold)
 
 # In-amp gain: the ONE line to change for finer current resolution.
 #   G_inamp = 1.0  -> I_FS 200 A, 24.4 mA per ADC count (3 A ~ 123 counts).
@@ -169,10 +169,13 @@ floor_frac = 0.9                # floor at 90 % of the dead zone (decided)
 # MEASURED 11-11: s ~ 0.008 A per OUT1 count at 1-2 A (square-law bank near
 # threshold; the model's 0.136 A/count is for 100 A). kp = 0.5/s,
 # ki = 15.08/s (bench_supply_test.md 4.2) would give kp 62.5 / ki 1885.
-# Tuning on the hardware starts at 1/4 of that (slow, safely stable) and
-# doubles while the step response stays clean -- PROVISIONAL.
-kp_counts_per_amp = 15.6
-ki_counts_per_amp_ms = 471.0
+# TUNED 11-12 on the hardware (closed-loop 1 A / 2 A steps, ratio ki/kp
+# fixed): 15.6/471 clean (98 % in 1.85 ms); 31.2/942 clean (1 A: 98 % in
+# 1.04 ms; 2 A: 0.65 ms, +1 % overshoot); 62.4/1884 OSCILLATES at 21 kHz
+# at a 1 A hold. Set at half the oscillation limit (gain margin ~2 at
+# 1-2 A; the bank's gain rises with current, so re-check at 2.5 A).
+kp_counts_per_amp = 31.2
+ki_counts_per_amp_ms = 942.0
 deadband_counts = 8             # PROVISIONAL
 dither_enable = 1               # OUT1 dither: one OUT1 count is ~0.14 A,
                                 # ~6 % of a 2.5 A hold
@@ -219,9 +222,9 @@ boost_mode = 0
 #     python -m coil_servo_host.zero <channel> --write
 # Amps of the sensor scale; the FPGA subtracts them from every IN1/IN2
 # sample. Re-measure after changing the LEM, burden, in-amp gain or cable.
-in1_offset_amps = 0.2598        # measured 2026-11-11 (coil_servo_host.zero)
+in1_offset_amps = 0.2557        # measured 2026-11-12 (coil_servo_host.zero)
                                 # (zero tool had read ~0.21 A)
-in2_offset_amps = 0.1466        # measured 2026-11-11 (coil_servo_host.zero)
+in2_offset_amps = 0.1571        # measured 2026-11-12 (coil_servo_host.zero)
 
 [z_shim]
 board_host = "rp-zshim.local"   # PLACEHOLDER

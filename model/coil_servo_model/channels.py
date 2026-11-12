@@ -87,8 +87,8 @@ class Channel:
     # IN1 voltage at the ADC's full-scale code (8192): nominally 1 V, but the
     # firmware uses raw ADC codes (the Red Pitaya's factory calibration is
     # not applied), so each board's input reads slightly off. MEASURED
-    # 2026-11-11 on the MOT board: ~1.10 V (IN1 read ~10 % low against the
-    # bench supply's ammeter and the scope).
+    # 2026-11-12 on the MOT board: 1.12 V (closed-loop 2 A hold, against the
+    # bench supply's ammeter; IN1 reads ~11 % low at the nominal 1 V).
     in1_fs_volts: float = 1.0
 
     out2_enable: bool = False    # OUT2 (active clamp) not fitted in the MVP
@@ -212,9 +212,9 @@ class Channel:
 # reuse the MOT power-stage parts as PLACEHOLDERS until their stage exists
 # (shim supply not chosen -- rail <= 10 V).
 CHANNELS = {
-    # in1_fs_volts: the MOT board's IN1 reads ~10 % low (MEASURED 2026-11-11, PROVISIONAL)
+    # in1_fs_volts: the MOT board's IN1 reads ~11 % low (MEASURED 2026-11-12)
     "mot": Channel(name="mot", L=16e-6, R_coil=6.4e-3, I_rated=100.0,
-                   in1_fs_volts=1.10),
+                   in1_fs_volts=1.12),
     "z_shim": Channel(name="z_shim", L=29e-6, R_coil=11.6e-3, I_rated=60.0),
     "x_shim": Channel(name="x_shim", L=57e-6, R_coil=14.2e-3, I_rated=60.0),
     "y_shim": Channel(name="y_shim", L=57e-6, R_coil=14.2e-3, I_rated=60.0),

@@ -30,9 +30,9 @@ def test_mvp_sensing_scale():
     nominal = replace(MOT, in1_fs_volts=1.0)
     assert nominal.I_FS == pytest.approx(200.0)
     assert nominal.amps_per_lsb == pytest.approx(0.0244, rel=1e-3)
-    # the MOT board's IN1 reads ~10 % low (measured 2026-11-11): full-scale
-    # code at ~1.10 V, so the scale in use is 200 A x in1_fs_volts
-    assert MOT.in1_fs_volts == pytest.approx(1.10)
+    # the MOT board's IN1 reads ~11 % low (measured 2026-11-12): full-scale
+    # code at 1.12 V, so the scale in use is 200 A x in1_fs_volts
+    assert MOT.in1_fs_volts == pytest.approx(1.12)
     assert MOT.I_FS == pytest.approx(200.0 * MOT.in1_fs_volts)
     assert MOT.amps_per_lsb == pytest.approx(MOT.I_FS / 8192)
 

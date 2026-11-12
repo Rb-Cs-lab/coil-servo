@@ -184,14 +184,14 @@ def test_bench_profile_loads_and_matches_the_model(tmp_path, g_inamp):
     # current ordering: rated < trip < supply limit < I_FS
     trip_amps = cfg["trip_level"] * m.amps_per_lsb
     assert m.I_rated < trip_amps < m.I_supply_max < ch["i_fs"]
-    assert cfg["trip_level"] == round(2.8 / i_fs * 8192)   # 104 / 1042 at 1.10 V
+    assert cfg["trip_level"] == round(2.8 / i_fs * 8192)   # 102 / 1023 at 1.12 V
     # the trip fires when the 1 us-averaged reading exceeds the level; the
     # supply limit is 0.19-0.2 A higher (~8 / ~82 counts). The 4-sample
     # persistence cannot carry the current across that (closed-loop rise
     # near 2.8 A ~1 mA/us), so the margin is what the IN1 offset must not
     # eat (bench doc 4.1)
     margin_amps = m.I_supply_max - cfg["trip_level"] * m.amps_per_lsb
-    assert 0.15 < margin_amps < 0.21
+    assert 0.15 < margin_amps < 0.23                     # 7-8 counts
     assert margin_amps / m.amps_per_lsb > 7                # whole counts
 
     # OUT1-side values do not depend on the sensor: clamp set directly in
