@@ -478,3 +478,14 @@ served by the `test-log` entry in
     open-loop drift removed by the loop).
   - 20 flips at ±1 A: 20/20, no TIMEOUT_HOLD, no trip; request → RUN with the
     new polarity ≈ 1.1 ms (host-timed).
+- **Damper test — the ringing is cured by an RC damper across the coil.**
+  1 Ω + 2.2 Ω (1/4 W metal film) in series with 10 µF (non-polarized) across
+  the coil terminals, next to the varistor (≈ 3.2 Ω ≈ the coil's impedance
+  at 12 kHz). Coil lifted (where it rang reliably), open loop: strongest
+  5–30 kHz line 43 / 76 / 124 mA at 0.7 / 1.2 / 1.9 A without the damper →
+  2.5 / 2.8 / 4.9 mA (noise) with it; drain ripple 326–366 → 63–107 mV rms.
+  Closed-loop 2 A hold: 6.5 mA rms in 100 µs averages (15–21 mA before).
+  A small line at ≈ 72 kHz (≈ 10–14 mA) appears with the damper, probably
+  its capacitor with the wiring. **For the MOT build: plan an RC damper across
+  the pair** (R ≈ ωL at the ringing frequency for 16 µH, C to pass it,
+  resistor rated for the 100 A pulses) and confirm on the real coils.
