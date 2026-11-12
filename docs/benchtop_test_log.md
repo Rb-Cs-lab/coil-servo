@@ -24,6 +24,7 @@
 | 3j Uncooled duty test | Heating limit without water | [moved] | Moved to the 100 A build (≤ 15 W on the bench) |
 | Damper test | Does 3.2 Ω + 10 µF across the coil stop the ringing? | [passed] | Yes: ringing 43–124 mA → 2.5–5 mA with the coil lifted; 2 A hold 100 µs noise 6.5 mA rms |
 | LEM inside the loop: turn-offs (11-12, late) | Is current still flowing after a turn-off, hidden in the coil–damper loop? | [done, open finding] | Freewheel 2 A → 0 in ≈ 170 µs, then a −0.2 A swing for ≈ 100 µs; bridge opened at 2 A: zero in ≈ 25 µs, gone by ≈ 200 µs, energy into the damper; latch holds; an unexplained 5 A surge caught by the firmware trip; closed-loop turn-off has a ≈ 1 ms PI tail |
+| Rev 5: zero-setpoint snap (11-12, evening) | Remove the closed-loop turn-off tail | [passed] | New firmware deployed; 2 A turn-off to 2 % in 0.14 ms instead of 1.55 ms; small setpoints still held; no chatter on IN2 |
 
 ## Test 0 · Red Pitaya, logic board and power-stage pre-checks (11-02 to 11-11) [passed]
 
@@ -470,11 +471,36 @@ Zero reading −0.06 A; open loop OUT1 3800 counts → +0.65 A (sign unchanged).
 
 Coil current only; the field at the atoms also waits for chamber eddy currents (unknown).
 
+## Rev 5: zero-setpoint snap, built and tested (11-12, evening) [passed]
+
+**Why.** The closed-loop square pulse showed a slow tail at turn-off: the PI winds OUT1 down through the bank's turn-on region, so the last ~0.35 A took ~1.3 ms. The open-loop turn-off (OUT1 straight to 0) has no tail.
+
+**What changed (register map rev 5).** In RUN, closed loop, when the requested setpoint averaged over one 1 µs loop tick is within `snap_thresh` of zero, the firmware forces OUT1 to exactly 0 and holds the integrator cleared: the bank shuts off at once and the coil freewheels with the bridge closed. Only a zero setpoint triggers it (decided 11-12), so small currents can still be held. One count of hysteresis; status flag `snapped`. Settings in channels.toml: `snap_zero_enable = 1`, `snap_zero_amps = 0.1` (4 counts, provisional). Switching it off restores the rev 4 behaviour.
+
+**How it was tested.** First in simulation: the real Verilog (cocotb + Icarus) closed around the plant model, five new tests. Then built on the lab laptop (Vivado; timing met, WNS +0.003 ns), deployed to the MOT board with the bench profile, and the 2 A closed-loop pulse repeated with the snap off and on (board capture; the scope refused connections this time).
+
+![Simulated turn-off with and without the snap, bench and MOT models](img/benchtop/snap_sim.png)
+
+*Simulation, HDL in the loop. Bench model (2 A): 0.1 % in 108 µs with the snap, 1.74 ms without. MOT model (80 A): identical either way; there the PI already gets the bank off, and the snap guarantees it.*
+
+![Hardware 2 A pulse with the snap off and on](img/benchtop/t3d_snap_hw.png)
+
+*Hardware. With the snap on the fall runs at the freewheel rate all the way to zero; the −0.17 A dip is the damper capacitor ringing back once (as predicted). The rise is unchanged.*
+
+| 2 A pulse (hardware) | Rise to 98 % | Fall to 10 % | Fall to 2 % | Undershoot |
+|---|---|---|---|---|
+| Snap off | 0.55 ms | 0.48 ms | **1.55 ms** | −0.03 A |
+| Snap on (4 runs) | 0.55–0.60 ms | 0.13 ms | **0.14 ms** | −0.16 to −0.20 A |
+
+**Other checks on the hardware:** setpoint 0 and 2 counts (55 mA) → snapped on every read; 10 counts (0.27 A) → not snapped, the loop holds 0.275 A; analog IN2 path at 0 V → snapped on 3000/3000 reads (no chatter); snap switched off → OUT1 back on the PI floor.
+
+**To watch:** IN2 read −3 counts after its offset correction (its zero drifts), only 1 count inside the 4-count threshold. Measure IN2 noise and drift with the control computer connected and set `snap_zero_amps` from that. Timing margin of this build is thin (+3 ps); check it on the next firmware change.
+
 ## Open items
 
 - ~~Bench model: coil L 9 → ≈ 45 µH; lab notes for day 2; bench doc recovery fix.~~ Done, commit 8edac7cc.
 - Design the RC damper for the MOT pair (16 µH, near critical damping, pulse rating at 100 A); check the 72 kHz line it introduces. LEM between the two coils, damper across the whole pair (LEM inside the loop).
-- **Firmware: "snap OUT1 to zero"** when the setpoint enters the zero window (removes the closed-loop turn-off tail; no new hardware needed).
+- ~~Firmware: "snap OUT1 to zero".~~ Done: register map rev 5, deployed 11-12. Still to do: set `snap_zero_amps` from the measured IN2 noise.
 - **5 A surge / latch visibility:** wire the latch output to DIO5 and stop the servo on it, and/or firmware stall detection. Until then: always stop the servo before pressing reset.
 - Test 4: scope the drain bar at turn-off (TVS clamp level at 100 A) and the node spikes when the bridge opens.
 - Optional: node B probe or LCR meter to measure the test coil's L.
