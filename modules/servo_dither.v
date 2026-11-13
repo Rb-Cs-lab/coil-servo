@@ -37,10 +37,22 @@ module servo_dither
   wire up   = (s >= 9'sd64);
   wire down = (s < -9'sd64);
 
-  wire signed [14:0] u_d = u14 + (up ? 15'sd1 : down ? -15'sd1 : 15'sd0);
-  wire signed [14:0] c15 = {1'b0, clamp};
+  // TIMING (rev 5 snap-in-flip build, 2026-11-13: -50 ps, 13 logic levels
+  // acc -> u_out): the old form added the +-1 decision to u14 and only then
+  // clipped, so the sigma-delta adder, the 15-bit adder and both clip
+  // comparators sat in series. Now the three possible outputs (u14 - 1,
+  // u14, u14 + 1, each clipped to [lo, clamp]) are formed in parallel with
+  // the sigma-delta step, and up/down only select among them. Same function
+  // on every clock (the bit-exact bench against SigmaDelta is unchanged).
+  wire signed [14:0] c15  = {1'b0, clamp};
   wire signed [14:0] lo15 = (lo > $signed(c15)) ? c15 : lo;
-  wire signed [14:0] u_c = (u_d > c15) ? c15 : (u_d < lo15) ? lo15 : u_d;
+  wire signed [14:0] u_0  = u14;
+  wire signed [14:0] u_p  = u_0 + 15'sd1;
+  wire signed [14:0] u_m  = u_0 - 15'sd1;
+  wire signed [14:0] c_0  = (u_0 > c15) ? c15 : (u_0 < lo15) ? lo15 : u_0;
+  wire signed [14:0] c_p  = (u_p > c15) ? c15 : (u_p < lo15) ? lo15 : u_p;
+  wire signed [14:0] c_m  = (u_m > c15) ? c15 : (u_m < lo15) ? lo15 : u_m;
+  wire signed [14:0] u_c  = up ? c_p : down ? c_m : c_0;
 
   always @(posedge aclk) begin
     u_out <= !aresetn ? 14'sd0 : (enable ? u_c[13:0] : u14);
