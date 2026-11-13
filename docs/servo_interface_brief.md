@@ -66,7 +66,7 @@ resistances.
 | Output step | ~0.12 A per OUT1 step (P); ~1 mA on average with the OUT1 dither (the output flicked up and down by one step very fast so its average falls between steps) | Gain-8 gate amplifier |
 | Ramp up, 0 → 100 A | at least 0.5 ms: the firmware allows at most 200 A/ms; the 5 V supply alone would allow ~0.4 ms (P) | Firmware ramp limit / 5 V supply |
 | Ramp down to a lower current | at most 50 A/ms (firmware limit) | Firmware ramp limit |
-| Fast drop to zero | ~1.3 ms from 100 A, the current circulating in the bridge and dying away by itself (P; this path was confirmed on the bench 11-12). A zero setpoint (the rev 5 zero snap) and a trip switch the pass transistors off at once. A flip or a stop first winds the controller down, then opens the bridge once the current is near zero (bench, 2 A: a short pause near 0.4 A) | The bridge transistors' built-in diodes |
+| Fast drop to zero | ~1.3 ms from 100 A, the current circulating in the bridge and dying away by itself (P; this path was confirmed on the bench 11-12). A zero setpoint (the rev 5 zero snap) and a trip switch the pass transistors off at once. In the firmware now loaded (build 275081b), a flip or a stop instead winds the controller down first, then opens the bridge once the current is near zero (bench, 2 A: a short pause near 0.4 A); a firmware update in testing makes flips and stops switch off at once too | The bridge transistors' built-in diodes |
 | Settling | to within 0.1 % in less than 1 ms after a ramp ends (simulation) | Controller; it corrects changes up to 2–5 kHz |
 | Field reversal at 50 A, current only | ~1.2 ms: ~0.8 ms for the current to die away + ~70 µs zero check + 2 µs with the bridge off + 100 µs settling pause (placeholder) + 0.25 ms ramp back up. Bench, ±2 A: 1.0–1.4 ms, 32 of 32 reversals good | Board's sequence + physics |
 | Continuous running | no time limit at 100 A from the controller's side; **limited by heating** (water cooling required, see 1c) | Power stage |
@@ -221,14 +221,17 @@ A change of the setpoint's sign never starts a flip by itself.
 
 **Measured on the bench (2026-11-13, ±2 A, firmware rev 5;
 benchtop_test_log.md section 3g and "day 3"):** every order works (32 of 32
-reversals), but these rules make reversals fastest and unambiguous:
+reversals). The first point below is recommended practice; the other three
+are requirements.
 
-- **Change the setpoint sign first, then send the flip pulse** (anything
-  up to ~0.5 ms later is fine). A setpoint of the opposite sign doubles the
-  controller's error, so the current reaches zero about twice as fast
-  (146 µs instead of ~340 µs from 2 A; steady at the new value within
-  ±2 % after 1.2 ms instead of 1.3–1.4 ms). With the flip first, the
-  current pauses near zero for 150–250 µs.
+- **Recommended: change the setpoint sign first, then send the flip
+  pulse** (anything up to ~0.5 ms later is fine). A setpoint of the
+  opposite sign doubles the controller's error, so the current reaches
+  zero about twice as fast (146 µs instead of ~340 µs from 2 A; steady at
+  the new value within ±2 % after 1.2 ms instead of 1.3–1.4 ms). With the
+  flip first, the current pauses near zero for 150–250 µs in the firmware
+  now loaded (build 275081b); the firmware update in testing removes that
+  pause, after which the order matters less.
 - **Exactly one flip pulse per reversal.** A second pulse *during* a flip
   is ignored (not saved for later); a second pulse *after* the flip has
   finished flips back again — the setpoint sign then no longer matches and
@@ -241,10 +244,12 @@ reversals), but these rules make reversals fastest and unambiguous:
 - To switch the field off, set IN2 to **exactly 0 V** (within about 4
   measurement steps, ≈ 0.1 A): the zero snap (firmware rev 5) then switches
   the pass transistors fully off at once. Any setpoint above that is held.
-  The zero snap does **not** act during a flip or a stop (there the board
+  **Known limitation of the firmware now loaded (build 275081b):** the
+  zero snap does not yet act during a flip or a stop (there the board
   brings the setpoint to zero itself); that is why the current pauses
-  near zero when the flip comes first. Whether to extend the snap to flips
-  and stops is an open decision (section 6).
+  near zero when the flip comes first. A firmware update that makes the
+  snap act during flips and stops too (same settings, nothing changes for
+  the control computer) is being tested (section 6, item 14).
 
 ## 4. What the box guarantees (built into the firmware, checked in simulation)
 
@@ -353,8 +358,10 @@ not fix in advance (the values live in `host/config/channels.toml`).
 13. **Making the safety board visible to the firmware** (DIO5) and/or a
     firmware stop when OUT1 is at its maximum but no current flows
     (section 3). *Open; until then, always stop the servo before reset.*
-14. **The zero snap during flips and stops:** extend it, or rely on the
-    "change the setpoint sign first" rule (section 3). *Open.*
+14. **The zero snap during flips and stops** (section 3). *Being fixed:
+    a firmware update that makes the snap act during flips and stops too
+    is in simulation, then a lab build and a bench re-test. Until it is
+    loaded, "change the setpoint sign first" avoids the pause.*
 15. **IN2's scale and its noise with the control computer connected**
     (the noise sets the zero-snap threshold, now 0.1 A). *Open.*
 
