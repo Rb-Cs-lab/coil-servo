@@ -16,7 +16,9 @@ pass transistors with their own current sensing, active clamp).
 one 5 V supply, a simple gain-8 amplifier driving the transistor gates, no
 clamp, no boost, a heartbeat safety board. The old clamp design (former
 section 2b) is in [future_upgrades.md](future_upgrades.md) section 8.
-2026-11-13 — reworded in plain language; same content.*
+2026-11-13 — reworded in plain language, then updated with the bench
+measurements of 11-11 to 11-13 ([benchtop_test_log.md](benchtop_test_log.md),
+3 A bench supply, temporary test coil).*
 
 ## 1. What the box does
 
@@ -60,13 +62,13 @@ resistances.
 |---|---|---|
 | Largest current | 100 A, either direction (H-bridge) | Supply rating |
 | Over-current trip | 100 A measured, for ~4 µs | Firmware (adjustable) |
-| Measurement step | 24.4 mA per measurement step (full scale 200 A at +1 V) | Current sensor (LEM) + 10 Ω resistor + amplifier with gain 1 |
+| Measurement step | **27.3 mA per measurement step (full scale 224 A, measured 11-12)**; the design value was 24.4 mA (200 A at +1 V), but the Red Pitaya reads full scale at 1.12 V, not 1 V | Current sensor (LEM) + 10 Ω resistor + amplifier with gain 1 + the Red Pitaya's input |
 | Output step | ~0.12 A per OUT1 step (P); ~1 mA on average with the OUT1 dither (the output flicked up and down by one step very fast so its average falls between steps) | Gain-8 gate amplifier |
 | Ramp up, 0 → 100 A | at least 0.5 ms: the firmware allows at most 200 A/ms; the 5 V supply alone would allow ~0.4 ms (P) | Firmware ramp limit / 5 V supply |
 | Ramp down to a lower current | at most 50 A/ms (firmware limit) | Firmware ramp limit |
-| Fast drop to zero (setpoint → 0, flip, stop, trip) | ~1.3 ms from 100 A, the current circulating in the bridge and dying away by itself (P) | The bridge transistors' built-in diodes |
+| Fast drop to zero | ~1.3 ms from 100 A, the current circulating in the bridge and dying away by itself (P; this path was confirmed on the bench 11-12). A zero setpoint (the rev 5 zero snap) and a trip switch the pass transistors off at once. A flip or a stop first winds the controller down, then opens the bridge once the current is near zero (bench, 2 A: a short pause near 0.4 A) | The bridge transistors' built-in diodes |
 | Settling | to within 0.1 % in less than 1 ms after a ramp ends (simulation) | Controller; it corrects changes up to 2–5 kHz |
-| Field reversal at 50 A, current only | ~1.2 ms: ~0.8 ms for the current to die away + ~70 µs zero check + 2 µs with the bridge off + 100 µs settling pause (placeholder) + 0.25 ms ramp back up | Board's sequence + physics |
+| Field reversal at 50 A, current only | ~1.2 ms: ~0.8 ms for the current to die away + ~70 µs zero check + 2 µs with the bridge off + 100 µs settling pause (placeholder) + 0.25 ms ramp back up. Bench, ±2 A: 1.0–1.4 ms, 32 of 32 reversals good | Board's sequence + physics |
 | Continuous running | no time limit at 100 A from the controller's side; **limited by heating** (water cooling required, see 1c) | Power stage |
 
 - **Why the firmware limits ramps:** with this power stage a sudden
@@ -79,6 +81,10 @@ resistances.
   controller follows them.
 - **Shim coils:** placeholders only — their power stages and supplies are
   not chosen yet.
+- **Steadiness, measured on the bench at 2 A:** the average held current
+  stays within 0.5 mA over 10 minutes (after a 1-minute warm-up), and
+  repeats within 1–2 mA from one run to the next. The 0.1 % check at
+  100 A, where one output step is much larger, is part of Test 4.
 
 ## 1c. Coils, supply and heat
 
@@ -114,13 +120,32 @@ continuous running is fine **with the water flowing**. The first test
 round runs without water: short pulses, reduced current, and an explicit
 limit on the on-time.
 
+### A damper across the coils is needed (found on the bench, 11-12)
+
+Without damping, the pass transistors and the coil ring together at
+10–20 kHz (±0.1–0.2 A on the bench), even with the controller switched
+off. A **damper** — a resistor and a capacitor in series across the coil
+(3.2 Ω + 10 µF on the 45 µH test coil) — removed it completely. The
+cause of the ringing is not understood yet.
+
+- **For the MOT pair:** a damper across the whole pair, sized for 16 µH,
+  close to critical damping (R ≈ 2√(L/C), so the current does not swing
+  back through zero after a switch-off), with a resistor that survives
+  the pulses at 100 A (safety cut-off, flips). Check on the real coils
+  whether they ring at all.
+- **Current sensor placement:** the sensor must sit *inside* the
+  coil–damper loop (bridge → damper connection → sensor → coil),
+  otherwise it cannot see current circulating between coil and damper.
+  For the MOT pair: the sensor on the lead between the two coils, the
+  damper across the whole pair.
+
 ## 2. Analog connections (SMA)
 
 | Port | What it carries | Electrical | As built / requirements |
 |---|---|---|---|
-| IN1 | Measured coil current | ±1 V, 1 MΩ input, DC-coupled, 14 bit at 125 million samples/s | Current sensor LEM LF 310-S (2000:1) → 10 Ω resistor → amplifier AD8421 (gain 1, PROVISIONAL) → IN1: **full scale 200 A at +1 V**, positive and negative. The amplifier isolates the 10 Ω resistor from the Red Pitaya (2026-09-08 review). Measured offset ≈ 1.4 mV ≈ 0.29 A — calibrate it before relying on the ±0.5 A "near zero" band used for flips. |
-| IN2 | Setpoint from the control computer | same as IN1 | The control computer's analog output through a ÷10 divider. **Same volts per amp as IN1**: at a 200 A full scale that is **20 A per computer volt** (100 A = 5 V). Its sign must match the bridge direction (section 3). |
-| OUT1 | Command to the pass transistors | 0 … +1 V into 50 Ω (twice that if not terminated), updated 976,600 times per second; plus a ±1-step dither at 125 MHz when switched on | → OPA994 amplifier, gain ≈ 8 → 24.9 Ω → each pass-transistor gate. **Dead zone:** no transistor conducts below ~0.44 V at OUT1 (3.50 V lowest threshold); ~0.55 V asks for ~100 A (P). **Check before first power-on:** OUT1 must be terminated in 50 Ω at the amplifier, or the gate swing doubles (up to a 16 V command). The amplifier's supply voltage must be higher than the largest gate command; it is not documented yet. |
+| IN1 | Measured coil current | ±1 V, 1 MΩ input, DC-coupled, 14 bit at 125 million samples/s | Current sensor LEM LF 310-S (2000:1) → 10 Ω resistor → amplifier AD8421 (gain 1, PROVISIONAL) → IN1: nominally 200 A at +1 V; **measured: full scale 224 A, reached at 1.12 V** (the firmware uses the Red Pitaya's raw readings, without its factory calibration; `in1_fs_volts` = 1.12, checked against the bench supply's ammeter 11-12). Positive and negative. The amplifier isolates the 10 Ω resistor from the Red Pitaya (2026-09-08 review). The zero offset (≈ +0.26–0.29 A, mostly the Red Pitaya's own input) is measured with the zero program and subtracted in the firmware (since rev 4); it drifts a little after power-up, so re-zero before trusting the ±0.5 A "near zero" band used for flips. |
+| IN2 | Setpoint from the control computer | same as IN1 | The control computer's analog output through a ÷10 divider. **Same volts per amp as IN1**: at a 200 A full scale that is **20 A per computer volt** (100 A = 5 V). Because the firmware compares the raw IN1 and IN2 readings, this still holds with the measured 224 A full scale *if* IN2 reads volts the same way IN1 does — **IN2's own scale has not been measured yet** (to do before or with the control computer). Its sign must match the bridge direction (section 3). Its noise at 0 V, with the input terminated, is well below the zero-snap threshold (≈ 1.5 steps of margin); re-check with the control computer connected. |
+| OUT1 | Command to the pass transistors | 0 … +1 V into 50 Ω (twice that if not terminated), updated 976,600 times per second; plus a ±1-step dither at 125 MHz when switched on | → OPA994 amplifier, gain ≈ 8 → 24.9 Ω → each pass-transistor gate. **Dead zone:** no transistor conducts below ~0.44 V at OUT1 (3.50 V lowest threshold); ~0.55 V asks for ~100 A (P). On the bench the current started at ≈ 3540 steps (gate ≈ 3.65 V), and near there the transistors give only ≈ 8 mA per step. **The 50 Ω terminator at the amplifier is fitted (Test 1b, 11-11)** and must stay: without it the gate swing doubles. Measured with it: 1.168 V at full scale (142.6 µV per step), −41.3 mV at zero, amplifier gain 7.93. The amplifier's supply is 5.18 V, which is also the highest gate voltage it can give. |
 | OUT2 | (command for the active clamp in the full design) | — | **Not used in the MVP: held at exactly 0 V by the firmware** (`out2_enable` = 0). Leave unconnected. |
 
 *How fast the controller reacts, for context: it updates 976,600 times per
@@ -129,8 +154,10 @@ the MVP the coil's inductance doesn't slow the controller down — the pass
 transistors act as a current source — so the analog parts (gate charging
 ~0.6 µs, the amplifier, the current sensor) and how strongly the
 transistors respond (3–8 in the controller's units) decide its speed. The
-controller settings from the cable test are scaled by that response and
-then set from measured steps.*
+controller settings were tuned on the bench (kp 31.2 steps/A, ki 942
+steps/(A·ms), half the strength at which it oscillates); at 100 A the
+transistors give about 17× more current per step, so the MOT coils need
+their own tuning from measured steps (Test 4).*
 
 ## 3. Digital connections (E1 header — 3.3 V logic, no buffer, NOT 5 V tolerant)
 
@@ -156,6 +183,22 @@ noticed that the bridge was cut off, so the controller may have turned
 OUT1 up to its maximum while trying to get current — pressing reset would
 then switch the bridge on at full drive. Taking arm away is not enough: it
 never switches a running servo off.
+
+**Also (found on the bench):**
+- **Press reset only with the green heartbeat light on.** The cut-off is
+  triggered by the *moment* the heartbeat stops. A reset pressed while
+  the heartbeat is still missing clears it, and when the heartbeat comes
+  back nothing triggers it again.
+- **Loading the firmware (or restarting the Red Pitaya) trips the safety
+  board**, because the heartbeat pauses meanwhile. Reset it after every
+  load.
+- **The firmware cannot see the safety board** (the fault input DIO5 is
+  not wired). After a cut-off at current, the controller turns OUT1 up to
+  its maximum while trying to get current back. On the bench an
+  unexplained 5 A surge happened in this situation and was caught by the
+  over-current trip. Proposed: wire the safety board's output to DIO5 so
+  the firmware stops itself, and/or have the firmware stop when OUT1 is
+  at its maximum but no current flows.
 
 ### Reversing the field (rules for the control computer)
 
@@ -198,6 +241,10 @@ reversals), but these rules make reversals fastest and unambiguous:
 - To switch the field off, set IN2 to **exactly 0 V** (within about 4
   measurement steps, ≈ 0.1 A): the zero snap (firmware rev 5) then switches
   the pass transistors fully off at once. Any setpoint above that is held.
+  The zero snap does **not** act during a flip or a stop (there the board
+  brings the setpoint to zero itself); that is why the current pauses
+  near zero when the flip comes first. Whether to extend the snap to flips
+  and stops is an open decision (section 6).
 
 ## 4. What the box guarantees (built into the firmware, checked in simulation)
 
@@ -227,8 +274,13 @@ reversals), but these rules make reversals fastest and unambiguous:
 - **Setpoint ramps are limited** to 200 A/ms up and 50 A/ms down — except
   a target inside the ±0.5 A near-zero band, which is taken at once (fast
   drop, the current dying away at its natural rate).
+- **A zero setpoint switches the pass transistors fully off at once**
+  (rev 5 zero snap, within about 4 measurement steps of 0 V on IN2); small
+  non-zero setpoints are still held.
 - Losing the network or the computer changes nothing; the hardware
-  protection is the heartbeat safety board.
+  protection is the heartbeat safety board. (Checked on the bench: the
+  board's communication program was stopped for 9 s during a 1 A hold;
+  the current stayed at 1.01 A with every setting unchanged.)
 
 ## 5. Performance measured on a cable (2026-08-27 — before the MVP power stage)
 
@@ -253,31 +305,58 @@ not fix in advance (the values live in `host/config/channels.toml`).
 
 1. **Coil and cable resistance** (4-wire and LCR measurements): set the
    highest current the 5 V supply can push at 100 A and where the heat
-   goes.
+   goes. *Open.*
 2. **Pass transistors:** how strongly they respond at these currents, the
    measured response and dead zone and how they change with temperature,
    and whether OUT1 is terminated in 50 Ω — these set OUT1's upper and
-   lower limits and the controller settings.
+   lower limits and the controller settings. *Partly answered on the
+   bench: terminator fitted; current starts at ≈ 3540 steps; ≈ 8 mA per
+   step at 1–2 A; they conduct more as they warm up (the controller
+   removed ≈ 0.2 A of drift over 10 minutes). The behaviour at 100 A is
+   for Test 4.*
 3. **The OPA994 amplifier's supply voltage:** must be higher than the
-   largest gate command.
+   largest gate command. *Answered: 5.18 V, which is also the highest
+   gate voltage.*
 4. **Sensor amplifier gain** (1 or 2): full scale 200 A or 100 A.
+   *Gain 1 as built; measured full scale 224 A.*
 5. **How the current dies away at switch-off:** confirm that it circulates
    through the bridge by scoping the pass transistors' drain bar and node A
    during a fast drop from a moderate current (drain bar at ~supply +
-   0.7 V and a ~ms decay means it does).
+   0.7 V and a ~ms decay means it does). *Answered on the bench (11-12):
+   it circulates through the bridge's built-in diodes; the surge protector
+   is not reached. Switching the transistors off briefly rings the drain
+   bar up to 12.1 V at 2 A, just below the surge protector's 13.3 V — at
+   100 A the surge protector will clip it; scope this in Test 4.*
 6. **Bridge opened while current flows** (the safety board cutting off at
    current): does the SE-600-5 switch itself off for over-voltage? Is a
-   capacitor or an absorber across the supply needed?
+   capacitor or an absorber across the supply needed? *Bench preview at
+   2 A without a damper: the supply voltage jumped by 2.5–3.2 V for
+   ≈ 10 µs. With the damper fitted, the coil's energy went into the damper
+   instead. At 100 A (≈ 0.08 J) most of it will go into the supply.
+   Open until Test 4.*
 7. **IN1 offset** (~0.29 A) — calibrate before trusting the "near zero"
-   band for flips.
-8. **A capacitor across the supply** (C_hold): yes or no.
+   band for flips. *Answered: measured with the zero program and
+   subtracted in the firmware; re-zero after power-up.*
+8. **A capacitor across the supply** (C_hold): yes or no. *Open.*
 9. **How long the field takes to settle after a flip** because of currents
-   induced in the vacuum chamber → `settle_us`.
+   induced in the vacuum chamber → `settle_us`. *Open.*
 10. **On-time limit without cooling water** for the first test round.
+    *Moved to Test 4 (the bench only reaches 15 W).*
 11. **Steadiness of a held current** with the gain-8 amplifier and the
     dither, against the 0.1 % goal — decides whether a different gain and
     offset, or an extra inner current loop with its own sensor, is needed
-    (future_upgrades.md sections 7, 8d).
+    (future_upgrades.md sections 7, 8d). *Bench (2 A): average steady
+    within 0.5 mA over 10 minutes; the dither makes no difference there
+    because one step is only ≈ 8 mA. The real test is at 100 A.*
+12. **The damper for the MOT pair** (values, resistor pulse rating), and
+    whether the real coils ring at all (section 1c). *Open.*
+13. **Making the safety board visible to the firmware** (DIO5) and/or a
+    firmware stop when OUT1 is at its maximum but no current flows
+    (section 3). *Open; until then, always stop the servo before reset.*
+14. **The zero snap during flips and stops:** extend it, or rely on the
+    "change the setpoint sign first" rule (section 3). *Open.*
+15. **IN2's scale and its noise with the control computer connected**
+    (the noise sets the zero-snap threshold, now 0.1 A). *Open.*
 
 *Full technical record: [mvp_architecture.md](mvp_architecture.md) (the
 MVP power stage), [register_map.md](register_map.md) (every setting),

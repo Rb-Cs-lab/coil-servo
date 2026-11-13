@@ -325,7 +325,7 @@ Offsets: IN1 +0.256 A, IN2 +0.157 A, the same as day 1 within one measurement st
 
 **The jump of +2.5 to +3.2 V for about 10 µs** comes from the returning current flowing through the inductance of the supply's cables. This previews the open question for the big supply; the real numbers need the 100 A setup.
 
-**The 0.85 V that stays higher** is probably not stored energy but the cables' resistance: at 2 A the voltage at the bridge is about 0.85 V lower than at the supply (≈ 0.4 Ω of cables and contacts), and it comes back when the current stops. (Measured in 3i: a 0.41 V drop at 2 A.)
+**The 0.85 V that stays higher** is mostly not stored energy. About half of it is the cables' resistance: at 2 A the voltage at the bridge is 0.41 V lower than at the supply (≈ 0.2 Ω of cables and contacts, measured in 3i), and that comes back when the current stops. The other half is not explained yet (possibly the supply's own response to losing its load).
 
 ## 3i · How steady is a held current? [done, open finding]
 

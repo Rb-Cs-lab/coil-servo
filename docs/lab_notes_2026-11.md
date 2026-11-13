@@ -109,12 +109,15 @@ and the design decisions of 11-10.
   most 50 A/ms down (sudden steps overshoot or undershoot in this
   system) — except a target inside the ±0.5 A zero window, which is
   taken at once, so a step to zero turns the current off at the full
-  freewheel speed (~1.3 ms from 100 A).
+  freewheel speed (~1.3 ms from 100 A). *(Measured 11-12: in practice the
+  controller winds the current down slowly near zero; firmware rev 5's
+  zero snap fixes this, see below.)*
 - **OUT1 dither:** the firmware flicks OUT1 up and down by one step very
   fast so that the average falls between steps. This recovers resolution
   lost to the ×8 amplifier in front of the gates.
-- **DIO5 (fault input) not wired;** the Red Pitaya outputs nothing until
-  it is enabled and then armed (arm switched on after enabling).
+- **DIO5 (fault input) not wired;** the Red Pitaya drives no current
+  until it is enabled and then armed (arm switched on after enabling).
+  Only the heartbeat (DIO6) always runs.
 
 ## Repo (MVP rewrite, brief section 11)
 
@@ -440,7 +443,9 @@ four channels: CH1 IN1 tee, CH2 drain bar, CH3 point A, CH4 bridge enable
   100 A). (The scan's absolute amps were taken before the ground-loop fix
   and are ~2× low; the turn-on point and the shape are valid.)
 - The supply voltage drops by ~0.24 V at 1 A before point A (the bench
-  supply's leads).
+  supply's leads, ≈ 0.24 Ω). The more careful measurements of 11-12 give
+  ≈ 0.2 Ω (DC, 0.41 V drop at 2 A) and 0.17 Ω (fitted to the 10–20 kHz
+  ringing). All three are the same leads; use ≈ 0.2 Ω.
 - **Firmware trip confirmed in passing:** open loop at 3990 steps with
   warm transistors → TRIPPED at 2.8 A, bridge opened, acknowledged with
   `trip_ack`.
@@ -449,17 +454,13 @@ four channels: CH1 IN1 tee, CH2 drain bar, CH3 point A, CH4 bridge enable
   turn-on point, ~0 A there). Controller gains matching the measured
   slope would be kp 62.5 / ki 1885 steps/A (per ms for ki); tuning starts
   at 1/4 of that (kp 15.6, ki 471) and doubles while the step response
-  stays clean. (A quick check with the model and a hand-adjusted pass
+  stays clean. (Four times the rounded start values gives 62.4 / 1884,
+  the numbers in the 11-12 tuning table: the same setting, rounded
+  differently.) (A quick check with the model and a hand-adjusted pass
   bank was not usable — the hardware decides.)
 - Not done yet: closed-loop steps (the first attempt timed out waiting
   for arm to be switched on), trip test in closed loop, freewheel
   recording, flips, heartbeat trip, hold noise, duty cycle.
-
-**Next session:** power up; load the firmware image (`deploy mot_bench` —
-the image is lost when the Red Pitaya is powered off), `check mot_bench`,
-measure the zero offsets again, then 3d closed-loop steps from 1 A,
-reading the supply during a steady closed-loop hold to finalise
-`in1_fs_volts`.
 - **Model follow-up (open):** the model's pass bank (dead zone 3385
   steps, 0.136 A per step) does not match the bench measurement near the
   turn-on point (start ~3540, ~0.008 A per step, square-law). The
@@ -468,6 +469,12 @@ reading the supply during a steady closed-loop hold to finalise
   pass bank near turn-on to the measured scan before using it to tune
   the bench gains. [mot] gains (in normalised units) rescaled to the
   220 A IN1 scale (kp 0.09897 / ki 2984.8 = unchanged steps per amp).
+
+**Next session:** power up; load the firmware image (`deploy mot_bench` —
+the image is lost when the Red Pitaya is powered off), `check mot_bench`,
+measure the zero offsets again, then 3d closed-loop steps from 1 A,
+reading the supply during a steady closed-loop hold to finalise
+`in1_fs_volts`.
 
 ## Test 3 — bench supply, second session (11-12, profile mot_bench)
 
@@ -508,7 +515,9 @@ PC only -- logs/ is not in git; shown by the `test-log` entry in
   step tripped once (coil lifted, see ringing below); on the table it
   overshot by +2.8 %, with 28 single samples above the 2.79 A trip level
   → **bench `I_rated` lowered 2.5 → 2.2 A**.
-- **Over-current trip (3e), 2.9 A step (`I_rated` temporarily 2.9):**
+- **Over-current trip (3e), 2.9 A step (`I_rated` temporarily 2.9; the
+  trip level is set from the supply's 3 A limit, not from `I_rated`, so
+  it stayed at 2.79 A):**
   fired at ≈ 2.85 A (set to 2.79 A), both outputs to zero, the current
   freewheeled to zero in ≈ 225 µs, bridge open, TRIPPED; the supply's
   current-limit lamp stayed off. `trip_ack` + stop → IDLE.
@@ -520,9 +529,11 @@ PC only -- logs/ is not in git; shown by the `test-log` entry in
   protector (TVS) is never reached.** Slope 12 mA/µs on the table,
   8 mA/µs lifted 13–15 cm (slower in free air: eddy currents in the
   table absorb energy) → ≈ 0.37 V across the 45 µH coil. Setpoint → 0 in
-  closed loop is slower (~0.3 ms) because the controller winds OUT1 down
-  gradually — the planned "snap OUT1 to zero" change (fast turn-off
-  upgrade) addresses that. Leakage through the warm bank at the RUN
+  closed loop is slower, because the controller winds OUT1 down
+  gradually: the current falls to a few tenths of an amp in ~0.3 ms, and
+  the last part takes ~1.3 ms in all (measured later, see the 2 A pulse
+  in the next section). The "snap OUT1 to zero" change (firmware rev 5)
+  addresses that. Leakage through the warm bank at the RUN
   floor: 45–60 mA at 3450 steps.
 - **Flips and the switch-over gap (3g), ±2 A:** flips happen only inside
   the ±0.49 A zero window (current at the moment of the polarity change
@@ -759,7 +770,11 @@ bridge opened, which needs the TVS + blocking diode.
   ≈ 1.5 steps to engage, 2.5 to release. Measure again with the control
   computer driving IN2 before Test 4.
 
-## Test 3e — full field reversal, +2 A ↔ −2 A (11-13, second Claude session)
+## Test 3g, continued — full field reversal, +2 A ↔ −2 A (11-13, second Claude session)
+
+*(First written up as "Test 3e"; in the benchtop log it is part of section
+3g, flips. "3e" there is the over-current trip. The data files keep their
+`t3e_*` names.)*
 
 The control computer reverses the field by pulsing DIO3 and changing the
 sign of the IN2 setpoint while the flip is under way
