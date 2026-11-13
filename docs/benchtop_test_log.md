@@ -779,18 +779,49 @@ The 290 kHz lines are well above anything the controller reacts to (it works bel
 
 ## Open items
 
-- **Test 4, from day 4:** set the MOT's OUT1 limit from measured current (the 12 V amplifier supply no longer limits the drive); start with kp ≈ 3, ki ≈ 90 per ms and retune at the highest current used; check the switch-off spikes on the current reading at 100 A; re-zero the sensor after warm-up.
-- **MOT damper resistor:** must survive ≈ 100 V / 50–70 A for ≈ 1 µs (8–12 mJ) if the bridge ever opens at 100 A, or add a capacitor (≈ 100 µF) on the supply rail at the bridge.
-- **5 A surge:** leading explanation is a lost IN1 signal at the board; check the IN1 cable and tee for a loose contact.
-- ~~Bench model: coil 9 → 45 µH; lab notes for day 2; bench document fix.~~ Done, commit 8edac7cc.
-- Design the damper for the MOT coil pair (16 µH, near critical damping, a resistor that survives 100 A pulses); check the small 72 kHz tone it adds. Put the current sensor between the two coils, and the damper across the whole pair.
-- ~~**Zero snap during flips (3g):** make the snap act during flips and stops too, or have the control computer change the setpoint sign before the flip.~~ Done: firmware 583e877 (11-13).
-- ~~Firmware "snap OUT1 to zero".~~ Done in rev 5 (11-12). Still to do: set the snap threshold from IN2's measured noise.
-- **5 A surge / the firmware cannot see the safety board:** connect the safety board to DIO5 and stop the servo on it, and/or stop when OUT1 is at maximum but no current flows. Until then: always stop the servo before pressing reset.
-- Test 4: scope the drain bar at switch-off (surge protector level at 100 A) and the spikes when the bridge opens.
-- Optional: measure the test coil's inductance directly (probe both coil ends, or use an LCR meter).
-- **Bench ringing at 10–20 kHz (3i):** cured by the damper; its cause is still not understood.
-- 3j heating test without cooling water (at 100 A).
-- Check the bridge switches' gate voltages during a flip (needs a floating probe).
-- **Temperature and cooling-water interlock** (planned, 11-13): flow and over-temperature switches that cut the bridge through the safety board in hardware, with a status line to the Red Pitaya (DIO5) so the firmware stops cleanly; temperatures on the slow inputs (AIN0, AIN2, AIN3) for logging.
-- Test 4: re-check the 200–400 kHz pickup lines with the real supply (they grow with load current on the bench supply).
+Grouped by when they are needed. Items that have been dealt with are in the "Resolved" table at the end, with where the details are.
+
+### Next on the bench: the control computer
+
+- **Connect the control computer:** setpoint on IN2, flip request on DIO3, arm on DIO4, with the same bench coil and supply.
+- **Measure IN2:** its scale (amps per volt from the computer) and its noise; then set the zero-snap threshold (`snap_zero_amps`, now a provisional 0.1 A) from that noise.
+- *Optional:* raise the bench controller settings. Day 4 (Q1) showed a safety margin of ×8–20 at 1 A and ×2–3.3 at 2 A with the damper fitted, so the 0.5–0.7 ms rise after a reversal could be shortened.
+
+### To build or check before Test 4 (100 A)
+
+- **Damper for the MOT coil pair:** 16 µH, sized near critical damping (proposed 22 µF film + ≈ 1.6 Ω). The current sensor goes between the two coils, the damper across the whole pair. The resistor must survive a 100 A switch-off pulse: if the bridge ever opens at 100 A it takes ≈ 100 V / 50–70 A for ≈ 1 µs (8–12 mJ), unless a capacitor of ≈ 100 µF sits on the supply rail at the bridge (which also keeps the bridge transistors out of avalanche). Check the small 72 kHz tone the bench damper added.
+- **5 A surge (11-12):** the leading explanation is a lost IN1 signal at the board (Q8). Check the IN1 cable and tee for a loose contact.
+- **Temperature and cooling-water interlock** (planned 11-13): flow and over-temperature switches that cut the bridge through the safety board in hardware, with a status line to the Red Pitaya (DIO5) so the firmware stops cleanly; temperatures on the slow inputs (AIN0, AIN2, AIN3) for logging.
+
+### Safety board and firmware
+
+- **The firmware cannot see the safety board:** connect the safety board's latch to DIO5 and stop the servo on it, and/or stop when OUT1 is at its maximum but no current flows. Same wire as the interlock status above. **Until then: always stop the servo before pressing reset.**
+- **Safety-board reset during a heartbeat loss:** the latch trips only when the heartbeat monitor's output changes (an edge), so a reset pressed while the heartbeat is missing clears it with no new trip when the heartbeat returns. Review a level-sensitive trip. Until then: press reset only with the green light on.
+- **Faster switch-off with the bridge open** (waits for parts: surge protector 5KP30A and blocking diode DSS2X101-015A): would let the coil current fall much faster than through the bridge diodes.
+
+### During Test 4 (100 A, MOT coils, SE-600-5)
+
+- **Settings:** set the MOT's OUT1 limit from measured current (the 12 V amplifier supply no longer limits the drive); start the controller at kp ≈ 3, ki ≈ 90 per ms (Q7) and retune at the highest current that will be used; set the settle wait after a flip from the measured chamber eddy currents.
+- **Re-zero the current sensor** once the board has warmed up (day 4: zero at 8.5 counts, stored 9).
+- **Scope:** the drain bar at switch-off (surge protector level at 100 A); the spikes when the bridge opens; the switch-off spikes on the current reading (keep the trip at 4 samples in a row or more); the 200–400 kHz pickup lines with the real supply; ringing at low currents on the real coils.
+- **Heating without cooling water (3j)** at 100 A, to set the duty limit for the first test round.
+
+### To understand, not blocking
+
+- **Bench ringing at 10–20 kHz (3i):** cured by the damper, but its cause is still not understood.
+- Check the bridge transistors' gate voltages during a flip (needs a floating probe).
+- Measure the test coil's inductance directly (probe both coil ends, or an LCR meter).
+
+### Resolved
+
+| Item | How it was resolved | When / where |
+|---|---|---|
+| Bench ringing at 10–20 kHz | An RC damper across the coil (3.2 Ω + 10 µF) removes it; the cause is still listed above | 11-12, "Damper test" |
+| Was the current sensor reading the true coil current? | Moved inside the coil–damper loop; the loop is unaffected | 11-12, "Current sensor moved inside the coil–damper loop" |
+| Slow tail after the setpoint goes to zero (2 % only after ≈ 1.3 ms) | Zero snap, firmware rev 5: 2 % in 0.14 ms | 11-12, "Rev 5: the zero snap" |
+| Pause near 0.4 A when the flip comes before the sign change; slow stops | The zero snap also acts during flips and stops (firmware 583e877): every ordering reaches zero in ≈ 140 µs | 11-13, "New firmware: zero snap also in flips and stops" |
+| A second PC connection could restart a stopped servo | The host software now changes only the setting it is asked to change, reading the board first | 11-13, day 3 (commit 39bbf373) |
+| Amplifier supply (5.18 V) limited the gate drive | Raised to 12.01 V; settings updated | 11-13, day 4 |
+| "Twice the controller settings oscillates at 21 kHz" | That was the undamped power-stage ringing, not the controller; with the damper the margin is much larger | 11-13, day 4 Q1 |
+| Which tones in the current reading are real current? | Most are the measurement itself; the 200–400 kHz lines are pickup from the load current, not coil current | 11-13, "Zero-current noise reference" |
+| Bench model coil 9 → 45 µH; lab notes for day 2; bench document fix | Done | commit 8edac7cc |
