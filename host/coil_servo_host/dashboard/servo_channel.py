@@ -210,7 +210,7 @@ def measured_rows(m) -> list:
                      f"(out1_offset_volts; added to every OUT1 voltage shown)"))
     if getattr(m, "V_opamp_max", None) is not None:
         rows.append(("measured: gate ceiling",
-                     f"{m.V_opamp_max:.3g} V (V_opamp_max: the op-amp rail; "
+                     f"{m.V_opamp_max:.2f} V (V_opamp_max: the op-amp rail; "
                      f"gates cannot be driven higher)"))
     return rows
 

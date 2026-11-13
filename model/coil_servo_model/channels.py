@@ -60,9 +60,9 @@ class Channel:
     # = 1.168 V full scale (the Red Pitaya output runs ~17 % hot), -41.3 mV.
     out1_fs_volts: float | None = 1.168
     out1_offset_volts: float = -0.0413
-    # op-amp output ceiling [V]: rail-to-rail on its 5.184 V supply --
-    # MEASURED 2026-11-11 (gates clip at 5.17-5.18 V)
-    V_opamp_max: float = 5.18
+    # op-amp output ceiling [V]: rail-to-rail on its supply -- raised to
+    # 12.01 V on 2026-11-13 (was 5.184 V; MEASURED 11-11: gates clipped at 5.17-5.18 V)
+    V_opamp_max: float = 12.01
     # Lumped lag between OUT1 and bank current: gate RC (24.9 ohm x 23 nF
     # = 0.57 us) + op-amp + LEM response. PROVISIONAL.
     tau_inner: float = 1.4e-6

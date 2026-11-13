@@ -535,7 +535,7 @@ def test_one_device_per_board_and_cards():
     # the measured gate-stage calibration, read-only (Test 1, 2026-11-11)
     assert "1.168 V" in rows["measured: OUT1 full scale"]
     assert "-41.3 mV" in rows["measured: OUT1 offset"]
-    assert "5.18 V" in rows["measured: gate ceiling"]
+    assert "12.01 V" in rows["measured: gate ceiling"]
     assert "1.12 V on IN1" in rows["measured: IN1 full scale"]
     assert "I_FS = 224 A" in rows["measured: IN1 full scale"]
 

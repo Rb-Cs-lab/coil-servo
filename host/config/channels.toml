@@ -34,7 +34,7 @@ out1_terminated = true          # 50 ohm feed-through at the op-amp input (fitte
 out1_fs_volts = 1.168           # V at the op-amp input per full-scale OUT1:
                                 # MEASURED 11-11, 142.6 uV/count terminated
 out1_offset_volts = -0.0413     # OUT1 at DAC code 0: MEASURED 11-11
-V_opamp_max = 5.18              # gate ceiling = op-amp rail (5.184 V supply), MEASURED
+V_opamp_max = 12.01             # gate ceiling = op-amp rail, MEASURED 11-13 (raised from 5.18 V: datasheet says 100 A needs ~5.0-5.3 V at the gates)
 R_burden = 10.0                 # ohm, LEM burden
 G_inamp = 1.0                   # AD8421 gain -- PROVISIONAL (1 -> I_FS 200 A)
 in1_fs_volts = 1.12             # IN1 volts at full-scale ADC code: MEASURED
@@ -133,7 +133,7 @@ out1_terminated = true          # 50 ohm feed-through at the op-amp input (fitte
 out1_fs_volts = 1.168           # V at the op-amp input per full-scale OUT1:
                                 # MEASURED 11-11, 142.6 uV/count terminated
 out1_offset_volts = -0.0413     # OUT1 at DAC code 0: MEASURED 11-11
-V_opamp_max = 5.18              # gate ceiling = op-amp rail (5.184 V supply), MEASURED
+V_opamp_max = 12.01             # gate ceiling = op-amp rail, MEASURED 11-13 (raised from 5.18 V: datasheet says 100 A needs ~5.0-5.3 V at the gates)
 R_burden = 10.0                 # ohm, LEM burden
 lem_turns = 1                   # 4/0 lead through the LEM once
 in1_fs_volts = 1.12             # same board as [mot]: MEASURED 11-12 (2 A hold)
@@ -249,7 +249,7 @@ gain_opamp = 7.93
 out1_terminated = true
 out1_fs_volts = 1.168
 out1_offset_volts = -0.0413
-V_opamp_max = 5.18
+V_opamp_max = 12.01             # same gate stage as the MOT (rail raised 11-13)
 R_burden = 10.0
 G_inamp = 1.0
 floor_frac = 0.9
@@ -282,7 +282,7 @@ gain_opamp = 7.93
 out1_terminated = true
 out1_fs_volts = 1.168
 out1_offset_volts = -0.0413
-V_opamp_max = 5.18
+V_opamp_max = 12.01             # same gate stage as the MOT (rail raised 11-13)
 R_burden = 10.0
 G_inamp = 1.0
 floor_frac = 0.9
@@ -315,7 +315,7 @@ gain_opamp = 7.93
 out1_terminated = true
 out1_fs_volts = 1.168
 out1_offset_volts = -0.0413
-V_opamp_max = 5.18
+V_opamp_max = 12.01             # same gate stage as the MOT (rail raised 11-13)
 R_burden = 10.0
 G_inamp = 1.0
 floor_frac = 0.9
