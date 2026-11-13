@@ -37,6 +37,7 @@
 | New firmware: snap in flips and stops (11-13) | Remove the pause near 0.4 A when the flip comes first | [passed] | Every reversal ordering and every stop reaches zero in ≈ 140 µs (before: up to 380 µs); firmware 583e877 |
 | Zero-current noise reference (11-13) | Which tones are real current | [done] | Most tones are measurement; 200–400 kHz lines grow with load current but are pickup, not current |
 | Fastest full reversal (11-13) | How fast can the current go from +2 A to −2 A? | [passed] | 0.81 ms to within ±2 % (0.95 ms with the current settings); after zero, the controller's rise is the limit |
+| Day 4: bench characterization (11-13) | Everything about the bench setup that can be measured: stability, long holds, zero drift, 1000 shots, the transistors, the trip; plus simulations for 100 A | [done, open findings] | All good on the bench; the old 5.18 V gate ceiling might not have reached 100 A, so the amplifier supply was raised to 12 V; switch-offs put short spikes on the current reading |
 
 ## Test 0 · Each part on its own (11-02 to 11-11) [passed]
 
@@ -666,8 +667,121 @@ The 290 kHz lines are well above anything the controller reacts to (it works bel
 
 **What limits it now:** getting to zero takes ≈ 140 µs (the coil's own speed); the check and switch-over ≈ 10 µs (trimmed) or ≈ 170 µs (current settings, including the settle wait); then about 0.5–0.7 ms for the controller to bring the current up to the new value. That last part is set by the controller settings, not the hardware (the supply could do it in about 20 µs at 2 A). On the real coils the settle wait must be set from the measured chamber eddy currents, and the controller will be retuned for 100 A.
 
+## Test 3, day 4 · Bench characterization (11-13) [done, open findings]
+
+**Why.** Before connecting the control computer and moving to 100 A, measure everything about the bench setup once, properly: how much safety margin the controller has, how steady a long hold is, how much the zero reading wanders, whether a full shot sequence works every time, how the pass transistors behave cold and warm, and how the over-current trip behaves. Alongside, use the bench data in computer models to predict what will happen at 100 A on the MOT coils.
+
+**How (all tests).** Firmware 583e877, bench settings (`mot_bench`), the test coil with its damper, the 3 A bench supply. Everything was run from the PC and recorded with the board's own 16.8 ms current recording; the scope could not be used (another program holds its connection). Every setting changed for a test was put back afterwards. Run by the second Claude session; data in `logs/t3q*`, scripts in `logs/t3q_scripts` and `logs/t3q_offline`.
+
+### Q1 · How much safety margin does the controller have?
+
+**How.** Controller off. At 0.5, 1 and 2 A, OUT1 was stepped up and down by 10 counts, 12 times each, and the current's response averaged. A simple model (a short delay plus a damped resonance) fitted to that response describes the power stage; combined with the controller settings it gives the margins.
+
+![Response of the current to small OUT1 steps, with fits](img/benchtop/t3q1_fit.png)
+
+*The current's response to a small OUT1 step at three currents (light: measured, dark: fit). The power stage itself rings: 16 kHz at 0.5 A, 10 kHz at 1 A, 7.7 kHz at 2 A, and less damped at higher current.*
+
+![Loop gain from the fits](img/benchtop/t3q1_loop.png)
+
+*How strongly the controller corrects at each frequency (top) and how late the correction arrives (bottom). The controller works up to where the top curve crosses 1; it would oscillate if the bottom curve reached −180° while the top curve is still above 1.*
+
+| Current | Extra current per OUT1 step | Power-stage ringing | Controller works up to | Phase margin (≥ 45° is good) | Gain could rise by |
+|---|---|---|---|---|---|
+| 0.5 A | 5.1 mA | 16 kHz | 0.8 kHz | 96° | × 40 |
+| 1 A | 7.7 mA | 10 kHz | 1.2 kHz | 99° | × 20 |
+| 2 A | 13.4 mA | 7.7 kHz | 2.5 kHz | 108° | × 3.3 |
+
+**Result:** the controller is very stable. The limit is the power stage's own ringing, which gets stronger and slower as the current rises, so the margin is smallest at the highest current. The controller settings were tuned (3d) before the damper was fitted; the "×2 oscillates at 21 kHz" found then was the undamped ringing, not the controller.
+
+### Q2 · A 2 A hold for 45 minutes
+
+**How.** Controller on, 2 A, 45 minutes. Every 2 s: one recording (its average) and the OUT1 value.
+
+![45-minute hold: reading, OUT1 and Allan deviation](img/benchtop/t3q2_longhold.png)
+
+*Top: the board's reading minus the request. Middle: OUT1 falls by 48 counts as the transistors warm; the controller absorbs it. Bottom: how much the reading wanders when averaged over longer and longer times (Allan deviation); it keeps falling like pure random noise.*
+
+**Result:** steady to 0.07 mA rms (0.003 % of 2 A), no drift (−0.002 mA per hour), wander 68 µA at 2 s, 9 µA at 1 minute, under 1 µA at 15 minutes. This is the board's own reading, which the controller forces to the request: it shows the controller is steady, not that the current sensor is (Q3 and the ammeter cover that).
+
+### Q3 · The zero reading with no current, 50 minutes
+
+**How.** Servo off, no current. Every 20 s the uncorrected readings of IN1 (current sensor) and IN2 (setpoint input), each the average of 8 short recordings. Stopped at 50 of the planned 60 minutes to change the amplifier supply (below).
+
+![Zero readings over 50 minutes](img/benchtop/t3q3_idle_offsets.png)
+
+*Both zero readings minus the stored offsets, in mA of coil current.*
+
+**Result:** both zeros steady: ±5 mA (IN1) and ±4 mA (IN2) from point to point, drifting only −0.3 measurement steps per hour (≈ 8 mA/h). IN1's zero now sits at 8.5 steps but the stored offset is 9 (measured just after power-up; whole steps only), so the board reads about −13 mA with no current. This is the "−8 to −10 mA after the snap" seen in the shot tests. Re-zero once the board has warmed up.
+
+### Q4 · The shot sequence 1000 times
+
+**How.** The day-3 sequence, repeated 1000 times from a stopped servo: +2 A, +1 A, sign change + flip to −2 A, zero, stop; the starting direction alternates. Every hold is checked against the request; every 50th run is kept in full.
+
+![1000 runs of the shot sequence](img/benchtop/t3q4_shots_1000.png)
+
+*Top: every 50th run overlaid. Bottom left: the reversal time of every run. Bottom right: every held value compared with the request.*
+
+**Result:** the board did the right thing all 1000 times. In 10 runs the PC (Windows) sent a command 1–3 ms late, so the hold being checked was cut short; those runs are left out of the numbers. Holds within 0.1–0.3 mA of the request on average, varying 0.6–1.1 mA from run to run. Reversal (+1 A → 90 % of −2 A): 1.29 ms typical, 1.21–1.53 ms for 98 % of runs.
+
+### Amplifier supply raised from 5.18 V to 12 V
+
+**Why.** The amplifier that drives the pass-transistor gates ran on 5.18 V, so the gates could never go higher. The transistor datasheet (typical 73 A/V, at least 55 A/V at 60 A) puts 100 A at about 5.0–5.3 V on the gates (turn-on ≈ 3.6 V, plus 0.5 V lost in each 0.03 Ω resistor at 17 A, plus 0.9–1.2 V to carry 17 A): at or above the old limit. The amplifier (OPA994) runs on 2.7–32 V and the gates are rated ±20 V.
+
+**Done (11-13):** amplifier supply now 12.01 V; settings file, model and dashboard updated (commit e77d7916). Quick check with the controller off: zero at OUT1 = 0, and about 10 % more current than in the morning at the same OUT1 (≈ 15 counts, ≈ 15 mV at the gates), absorbed by the controller. The OUT1 limit and the over-current trip are now the only limits on the drive, so for the MOT the OUT1 limit must be set from measured data in Test 4.
+
+### Q5 · The pass transistors, cold and warm
+
+**How.** Controller off, with the new 12 V amplifier supply. OUT1 stepped by 5 counts from 3400 up to about 2.1 A and back down, cold; then OUT1 held at 3895 for 20 minutes; then the same scan warm.
+
+![Current against OUT1, gain, and drift at fixed OUT1](img/benchtop/t3q5_bank.png)
+
+*Top left: current against OUT1, up and down, cold and warm. Top right: extra current per OUT1 step. Bottom: at a fixed OUT1 the current climbs as the transistors warm.*
+
+**Result:** no difference between going up and coming down. The gain rises with current (3.6 mA per step at 0.5 A, 8.6 at 1 A, 13 at 2 A), the same cold and warm. Warm transistors need 25–35 counts less for the same current; at a fixed OUT1 the current rose 1.53 → 1.81 A (+18 %) in 20 minutes on the uncooled plate, still rising. With the controller on this is simply absorbed (Q2).
+
+### Q6 · The over-current trip
+
+**How.** (1) Noise margin: a 1 A hold with the trip level set 300 … 80 mA above it, 20 s each, with the trip needing 4 samples in a row above the level (the setting in use) or just 1. (2) Timing: trip level lowered to 1.5 A, setpoint stepped 1 A → 2 A, 5 times. (3) A follow-up comparing a trip, the same step without a trip, and a normal 2 A → 0 switch-off.
+
+![Trip noise margin, trip timing and switch-off spikes](img/benchtop/t3q6_trip.png)
+
+*Top: which trip levels were set off by noise alone. Bottom left: the current around the trip decision. Bottom right: the current reading, every sample, when the transistors switch off (red) compared with a steady 2 A (grey).*
+
+**Result:** with "4 in a row" the trip level can sit 160 mA above a steady current without false trips (at 130 mA and below, noise sets it off). With "1 sample" even 300 mA trips, because single noise samples reach 350 mA. The trip acts within about 10 µs: the current stops rising 5–10 µs after the trip decision and overshoots the level by only 0.05–0.1 A.
+
+**New finding:** whenever the pass transistors switch off abruptly (a trip or the zero snap), the current reading shows a 10 µs burst of spikes of up to ±0.9 A; at a 2 A switch-off one reached 2.81 A, above the 2.79 A trip level. They are pickup from the sudden voltage jump on the transistors, not coil current, and never last more than 2 samples, so the 4-sample trip ignores them. Keep `trip_ticks` at 4 or more, and check the spikes at 100 A.
+
+### Q7 · Computer model of the transistors, and what it says for 100 A
+
+**How.** A smooth turn-on law for the six transistors was fitted to the bench scans (bench current ≤ 0.45 A per transistor), then used to predict the gain at higher current and controller settings for the MOT.
+
+![Gain of the power stage, bench and extrapolated to 100 A](img/benchtop/t3q7_plant_gain.png)
+
+*Left: extra current per OUT1 step on the bench (fit). Right: the same law extended to 100 A (solid: reachable with the old 5.18 V supply; dashed: needed more), against the straight-line model in the settings files (dotted).*
+
+**Result:** the fit matches the bench to 14 mA; the straight-line model in the settings files is far off near turn-on (it predicts 18 A where 0.06 A flows). Extended to 100 A it gives starting controller settings for Test 4: kp ≈ 3, ki ≈ 90 per ms if the bench law holds; kp ≈ 1.6, ki ≈ 48 if the straight-line model is right. The present MOT settings (3.7 / 111) are in between. The bench cannot decide which is right (a 40-fold extrapolation), so tune in Test 4 at the highest current that will be used.
+
+### Q8 · Computer simulations: MOT damper and the 5 A surge
+
+**How.** A circuit simulation of the MOT coils (16 µH) at 100 A with no damper, 10 µF + 2.5 Ω and 22 µF + 1.6 Ω, for a normal switch-off (bridge closed) and for the bridge opening at 100 A; checked against the bench (2 A → 0 in 179 µs, measured 170 µs). And a simulation of the unexplained 5 A surge (11-12) against its scope traces.
+
+![Simulated MOT switch-off at 100 A with and without a damper](img/benchtop/t3q8_damper_mot.png)
+
+*Left: normal switch-off, bridge closed. Right: bridge opened at 100 A. The damper changes only what happens after the current reaches zero.*
+
+![The 5 A surge: measured against simulations](img/benchtop/t3q8_surge.png)
+
+*Grey: the measured surge. Red: the bridge closing with OUT1 at its limit while the firmware could not see the current. Blue: the same with the trip working; it stops at 3.2 A, unlike the measurement.*
+
+**Damper:** a normal switch-off takes ≈ 1.4 ms with or without a damper, then swings 0.2–0.3 A below zero for ≈ 50 µs. If the bridge ever opens at 100 A, most of the damper's energy arrives in the first microsecond (about 100 V, 50–70 A, 8–12 mJ in total): the damper resistor must survive that pulse, or a capacitor on the supply rail at the bridge is needed (in the model, 100 µF removes the spike).
+
+**5 A surge:** the traces fit "bridge closed with OUT1 at its limit", but with the trip working the current would have stopped at about 3.2 A. To match, the firmware must have been unable to see the current for 150–190 µs. The single cause that explains both is a lost IN1 signal at the board (e.g. a loose connection between the scope tee and the input). The start of the event was not recorded, so this is the leading explanation, not proof.
+
 ## Open items
 
+- **Test 4, from day 4:** set the MOT's OUT1 limit from measured current (the 12 V amplifier supply no longer limits the drive); start with kp ≈ 3, ki ≈ 90 per ms and retune at the highest current used; check the switch-off spikes on the current reading at 100 A; re-zero the sensor after warm-up.
+- **MOT damper resistor:** must survive ≈ 100 V / 50–70 A for ≈ 1 µs (8–12 mJ) if the bridge ever opens at 100 A, or add a capacitor (≈ 100 µF) on the supply rail at the bridge.
+- **5 A surge:** leading explanation is a lost IN1 signal at the board; check the IN1 cable and tee for a loose contact.
 - ~~Bench model: coil 9 → 45 µH; lab notes for day 2; bench document fix.~~ Done, commit 8edac7cc.
 - Design the damper for the MOT coil pair (16 µH, near critical damping, a resistor that survives 100 A pulses); check the small 72 kHz tone it adds. Put the current sensor between the two coils, and the damper across the whole pair.
 - ~~**Zero snap during flips (3g):** make the snap act during flips and stops too, or have the control computer change the setpoint sign before the flip.~~ Done: firmware 583e877 (11-13).

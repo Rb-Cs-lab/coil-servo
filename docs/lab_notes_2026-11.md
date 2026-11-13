@@ -644,7 +644,10 @@ third of the test coil's inductance (16 µH against 45 µH). Also in
   100 A (a safety-board cut-off): the bridge's built-in diodes limit the
   coil voltage to about 7–8 V, so most of the energy (≈ 0.08 J) goes into
   the supply, but the damper carries about V/R ≈ 3–5 A for ≈ 0.2 ms,
-  roughly 5 mJ per event. So: a **5–10 W, pulse-rated, non-inductive
+  roughly 5 mJ per event (**revised 11-13, day-4 simulation: most of the
+  damper's energy arrives in the first ≈ 1 µs — ≈ 100 V, 50–70 A, 8–12 mJ
+  per event in total — unless a ≈ 100 µF capacitor sits on the rail at
+  the bridge; rate the resistor for that pulse**). So: a **5–10 W, pulse-rated, non-inductive
   resistor** (thick film or metal oxide; the bench's 1/4 W resistors
   would be marginal), a **film capacitor rated ≥ 50 V** (12–13 V spikes
   were seen at switching), and **short leads** (the 72 kHz tone came from
@@ -1013,3 +1016,59 @@ restored afterwards).
 new value (0.5–0.7 ms with the bench settings), not the hardware. For the
 MOT: `settle_us` from the measured chamber eddy currents; controller
 retuned at 100 A.
+
+## Test 3, day 4 — bench characterization (11-13, second Claude session)
+
+Firmware 583e877, `mot_bench`, test coil with damper, board capture only
+(scope connection held by another program). Data `logs/t3q*`, scripts
+`logs/t3q_scripts`, offline models `logs/t3q_offline`; plain-language
+write-up and plots in the bench log (section "Test 3, day 4").
+
+- **Q1 margins** (open-loop ±10-count OUT1 steps, fitted delay + damped
+  2nd-order plant, bench PI): crossover 0.8 / 1.2 / 2.5 kHz, phase margin
+  96 / 99 / 108°, gain margin ×40 / ×20 / ×3.3 at 0.5 / 1 / 2 A. Plant
+  resonance 16.3 / 9.7 / 7.7 kHz, damping 0.48 / 0.36 / 0.22. The limit is
+  the power stage's own resonance. The 3d tuning ("×2 oscillates at
+  21 kHz") predates the damper.
+- **Q2 45-min 2 A hold**: in-loop reading 0.07 mA rms, drift
+  −0.002 mA/h; Allan deviation 68 µA (2 s) → 9 µA (1 min) → < 1 µA
+  (15 min), white. OUT1 3943 → 3895 (bank warming).
+- **Q3 idle zeros (50 min)**: IN1 8.53 counts (sd 0.19), IN2 5.80
+  (sd 0.16), drift −0.3 counts/h each. Stored IN1 offset 9 → reads
+  ≈ −13 mA at zero (whole-count offset). Re-zero after warm-up.
+- **Q4 1000 shots**: board correct 1000/1000 (10 runs had PC command
+  latency 1–3 ms; excluded). Holds 0.1–0.3 mA mean error, sd 0.6–1.1 mA;
+  reversal median 1.29 ms (1–99 %: 1.21–1.53 ms).
+- **Gate-stage rail raised 5.18 → 12.01 V** (user, 11-13): datasheet gfs
+  73 S typ / 55 S min at 60 A puts 100 A at ≈ 5.0–5.3 V gate (incl. 0.5 V
+  ballast drop at 17 A per FET). OPA994: 2.7–32 V; gates ±20 V.
+  `V_opamp_max` updated (e77d7916). Open-loop check: ≈ 15 counts more
+  drive-equivalent than before (≈ +10 % current at fixed OUT1). The OUT1
+  clamp + trip are now the only drive limits — set the MOT clamp from
+  measured current in Test 4.
+- **Q5 bank scans (12 V rail)**: no hysteresis; gain 3.6 / 8.6 / 10.7 /
+  13.2 mA per count at 0.5 / 1 / 1.5 / 2 A; warm needs 25–35 counts less
+  (2 A at 3935 cold, 3910 warm); fixed OUT1 3895: 1.53 → 1.81 A in
+  20 min, still rising (uncooled plate).
+- **Q6 trip**: with `trip_ticks` 4 no false trip at hold + 160 mA (1 A
+  hold, 20 s), trips at ≤ 130 mA; with 1 tick trips even at +300 mA
+  (single samples reach +350 mA). Current stops rising 5–10 µs after the
+  trip decision, overshoot 0.05–0.1 A. **Switch-off spikes:** any abrupt
+  bank turn-off (trip or snap) puts a ≈ 10 µs burst of ±0.9 A spikes on
+  IN1 (2 A snap-off peaked at 2.81 A, above the 2.79 A trip level); never
+  > 2 consecutive samples, so `trip_ticks` ≥ 4 rejects them. Pickup, not
+  coil current. Check at 100 A.
+- **Q7 bank model** (offline): smooth (EKV-type) per-FET law, k = 3.66 A/V²,
+  effective V_th 3.89 V cold / 3.87 V warm, fits bench to 14 mA rms; the
+  repo's linear law (g_fs 50) is far off near turn-on. Starting MOT gains:
+  kp ≈ 3, ki ≈ 90/ms (bench law extrapolated) vs kp ≈ 1.6, ki ≈ 48/ms
+  (linear model); current [mot] 3.69 / 111 is between. Not applied to
+  the model/config yet (proposed `bank_law` switch, mot_bench only).
+- **Q8 simulations** (offline): MOT switch-off with bridge closed
+  ≈ 1.42 ms, damper adds only a 0.2–0.3 A undershoot. Bridge opened at
+  100 A: rail at the bridge reaches FET avalanche (≈ 110 V) for 1–2 µs
+  without a rail capacitor; damper peak 46–71 A, 8–12 mJ; 100 µF at the
+  bridge removes the spike. 5 A surge: fits "bridge closed, OUT1 at
+  clamp, firmware blind to the current for 150–190 µs"; a lost IN1
+  signal explains both the wind-up and the missing early trip (leading
+  explanation, start of the event not recorded).
