@@ -615,6 +615,60 @@ PC only -- logs/ is not in git; shown by the `test-log` entry in
   ringing frequency for 16 µH, C large enough to pass it, resistor rated
   for the 100 A pulses) and confirm on the real coils.
 
+### Proposed damper for the MOT pair (worked out 11-13)
+
+Same layout as the bench damper (a resistor in series with a capacitor,
+across the coils), but **new values**, because the MOT pair has about a
+third of the test coil's inductance (16 µH against 45 µH). Also in
+[servo_interface_brief.md](servo_interface_brief.md) section 1c.
+
+- **How the values are chosen.** The resistor should be close to
+  *critical damping* of the coil and damper together, R ≈ 2√(L/C), so the
+  coil current does not swing back through zero after a switch-off. It
+  should also be close to the coil's own impedance at the ringing
+  frequency, R ≈ 2π·f·L, which takes the most energy out of the ringing.
+  The capacitor's impedance at that frequency should be well below R, so
+  it lets the ringing through. Check on the bench values: 45 µH with
+  10 µF needs 4.2 Ω for critical damping; the 3.2 Ω used was a little
+  low, which is why the current swung to −0.2 A after a switch-off.
+- **Values for 16 µH:** with 10 µF, R ≈ 2–2.5 Ω (critical 2.5 Ω), fine if
+  the coils ring above ~15 kHz; **proposed: 22 µF with ≈ 1.5–1.7 Ω**
+  (critical 1.7 Ω), which also works at lower frequencies. The MOT pair's
+  ringing frequency is unknown, because the cause of the ringing is not
+  understood; if it scales like a coil-and-capacitor resonance, 16 µH
+  would ring about 1.7× higher than the test coil (roughly 20–35 kHz at a
+  few amps).
+- **Ratings matter more than the values.** In normal running the damper
+  is hardly stressed (the capacitor blocks the steady current; flips
+  switch at near-zero current). The hard case is the bridge opening at
+  100 A (a safety-board cut-off): the bridge's built-in diodes limit the
+  coil voltage to about 7–8 V, so most of the energy (≈ 0.08 J) goes into
+  the supply, but the damper carries about V/R ≈ 3–5 A for ≈ 0.2 ms,
+  roughly 5 mJ per event. So: a **5–10 W, pulse-rated, non-inductive
+  resistor** (thick film or metal oxide; the bench's 1/4 W resistors
+  would be marginal), a **film capacitor rated ≥ 50 V** (12–13 V spikes
+  were seen at switching), and **short leads** (the 72 kHz tone came from
+  the damper's own wiring).
+- **Check in Test 4, before high current:** (1) measure the mounted coil
+  pair's impedance at 10–30 kHz with an LCR meter (the chamber and mounts
+  change it) and adjust R toward it; (2) at 0.5–2 A with OUT1 fixed and
+  no damper: do the coils ring, and at what frequency? (3) the same with
+  the damper; (4) check that the current does not swing back through zero
+  after a switch-off.
+- **Metal near the coils** (the steel table here; the stainless chamber
+  and mounts on the experiment) damps the ringing a little, but not
+  reliably (on the table it came back once at 13.6 kHz), so fit the
+  damper regardless. Mechanical contact is fine; the coil conductor must
+  not touch grounded metal electrically (a second path to ground, like
+  the day-1 ground loops).
+- **Follow-up 11-13, the "72 kHz" and "290 kHz" tones:** in the 50-run
+  data (sensor inside the coil–damper loop), the tones near 290 kHz and
+  the broad hump at 30–150 kHz are the same size with 2 A flowing and
+  with no current, so they are measurement, not current. No 72 kHz tone
+  stands out in the coil current any more; if it exists, it circulates in
+  the damper's own wiring. A clean zero-current reference (bridge open)
+  is queued after the firmware update.
+
 ## LEM moved inside the coil–damper loop; turn-off measurements (11-12, late)
 
 Plots and details: [benchtop_test_log.md](benchtop_test_log.md), section
