@@ -128,11 +128,61 @@ off. A **damper** — a resistor and a capacitor in series across the coil
 (3.2 Ω + 10 µF on the 45 µH test coil) — removed it completely. The
 cause of the ringing is not understood yet.
 
-- **For the MOT pair:** a damper across the whole pair, sized for 16 µH,
-  close to critical damping (R ≈ 2√(L/C), so the current does not swing
-  back through zero after a switch-off), with a resistor that survives
-  the pulses at 100 A (safety cut-off, flips). Check on the real coils
-  whether they ring at all.
+- **For the MOT pair:** a damper across the whole pair, with the same
+  layout (resistor in series with a capacitor) but **new values**,
+  because the pair has about a third of the test coil's inductance. Check
+  on the real coils whether they ring at all.
+
+**Sizing the MOT damper (proposed, to be checked in Test 4):**
+
+- **What sets the values.** The resistor should be close to *critical
+  damping* of the coil and damper together, R ≈ 2√(L/C): then the coil
+  current does not swing back through zero after a switch-off. It should
+  also be close to the coil's own impedance at the ringing frequency
+  (R ≈ 2π·f·L), which takes the most energy out of the ringing. The
+  capacitor must let the ringing through easily: its impedance at that
+  frequency should be well below R. (On the bench, 45 µH with 10 µF needs
+  4.2 Ω for critical damping; the 3.2 Ω used was a little low, which is
+  why the current swung to −0.2 A after a switch-off.)
+- **Values for 16 µH:**
+
+  | Option | Capacitor | Resistor | Notes |
+  |---|---|---|---|
+  | Keep 10 µF | 10 µF | ≈ 2–2.5 Ω (critical: 2.5 Ω) | fine if the coils ring above ~15 kHz |
+  | **Proposed** | **22 µF** | **≈ 1.5–1.7 Ω** (critical: 1.7 Ω) | also works at lower frequencies — more margin |
+
+  The MOT pair's ringing frequency is unknown, because the cause of the
+  ringing is not understood. If it scales like a coil-and-capacitor
+  resonance, 16 µH would ring about 1.7× higher than the test coil
+  (roughly 20–35 kHz at a few amps), where either option works.
+- **Ratings matter more than the values.** In normal running the damper
+  is hardly stressed: the capacitor blocks the steady current, and flips
+  switch only at near-zero current. The hard case is the **bridge opening
+  at 100 A** (a safety-board cut-off): the bridge's built-in diodes then
+  limit the coil voltage to about 7–8 V, so most of the energy (≈ 0.08 J)
+  goes into the supply, but the damper carries about V/R ≈ 3–5 A for
+  ≈ 0.2 ms — roughly 5 mJ per event.
+  - Resistor: **5–10 W, pulse-rated, non-inductive** (thick film or metal
+    oxide). The 1/4 W film resistors of the bench damper would be
+    marginal.
+  - Capacitor: **film, non-polarised, rated ≥ 50 V** (switching spikes of
+    12–13 V were seen on the bench).
+  - **Short leads:** the small 72 kHz tone on the bench came from the
+    damper's own wiring.
+- **Check in Test 4, before going to high current:**
+  1. Measure the mounted coil pair's impedance at 10–30 kHz with an LCR
+     meter (the chamber and the mounts change it) and adjust R toward it.
+  2. At 0.5–2 A with OUT1 fixed and no damper: do the coils ring, and at
+     what frequency?
+  3. The same with the damper fitted.
+  4. Check that the current does not swing back through zero after a
+     switch-off.
+- **Metal near the coils** (the steel table on the bench, the stainless
+  chamber and mounts on the experiment) damps the ringing a little, but
+  not reliably — on the table it came back once at 13.6 kHz. Fit the
+  damper regardless. Mechanical contact with metal is fine; the coil
+  conductor must not touch grounded metal electrically (a second path to
+  ground, as in the day-1 ground loops).
 - **Current sensor placement:** the sensor must sit *inside* the
   coil–damper loop (bridge → damper connection → sensor → coil),
   otherwise it cannot see current circulating between coil and damper.
@@ -354,7 +404,9 @@ not fix in advance (the values live in `host/config/channels.toml`).
     within 0.5 mA over 10 minutes; the dither makes no difference there
     because one step is only ≈ 8 mA. The real test is at 100 A.*
 12. **The damper for the MOT pair** (values, resistor pulse rating), and
-    whether the real coils ring at all (section 1c). *Open.*
+    whether the real coils ring at all (section 1c). *Proposed: 22 µF
+    film capacitor + ≈ 1.6 Ω, 5–10 W pulse-rated resistor; confirm in
+    Test 4 (section 1c).*
 13. **Making the safety board visible to the firmware** (DIO5) and/or a
     firmware stop when OUT1 is at its maximum but no current flows
     (section 3). *Open; until then, always stop the servo before reset.*
