@@ -40,6 +40,21 @@ def test_decimated_decode_and_columns(tmp_path):
     assert lines[0] == "t_s,i_amps,setpoint_amps" and len(lines) == 3
 
 
+def test_setpoint_column_uses_the_bridge_polarity():
+    """The captured error is drive-frame (servo_error.v negates it at
+    polarity 1); the current is board-frame. A -2 A setpoint with -1.9 A
+    measured at polarity 1: drive-frame error = -(sp - meas) = +0.1 A, and
+    the decoder must give back -2 A (not 2*meas - sp = -1.8 A)."""
+    lsb = 200.0 / 16384
+    meas, sp = round(-1.9 / lsb), round(-2.0 / lsb)
+    data = np.array([[meas, -(sp - meas)]])
+    assert decimated_columns(data, 200.0, polarity=1)["setpoint_amps"][0] == \
+        pytest.approx(sp * lsb)
+    data0 = np.array([[-meas, -sp + meas]])            # same at polarity 0
+    assert decimated_columns(data0, 200.0)["setpoint_amps"][0] == \
+        pytest.approx(-sp * lsb)
+
+
 def test_raw_decode_is_s14():
     words = np.array([(0x2000 << 16) | 0x1FFF], dtype=np.uint32)
     assert decode_words(words, decimated=False).tolist() == [[8191, -8192]]

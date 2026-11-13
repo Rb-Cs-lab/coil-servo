@@ -122,10 +122,12 @@ def main():
         b.warn_flags()
         b.wait_for_run()
         time.sleep(0.05)
+        polarity = b.sts()["polarity"]     # the captured error is drive-frame
         raw = capture_step(b, sp_counts)
         finish(b)
 
-    cols = decimated_columns(decode_words(raw, decimated=True), ch["i_fs"])
+    cols = decimated_columns(decode_words(raw, decimated=True), ch["i_fs"],
+                             polarity=polarity)
     write_csv(args.out, cols)
     n = len(cols["t_s"])
     print(f"wrote {args.out} ({n} samples, {n / FS_DEC * 1e3:.1f} ms)")
