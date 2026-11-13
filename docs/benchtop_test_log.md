@@ -25,6 +25,7 @@
 | Damper test | Does 3.2 Ω + 10 µF across the coil stop the ringing? | [passed] | Yes: ringing 43–124 mA → 2.5–5 mA with the coil lifted; 2 A hold 100 µs noise 6.5 mA rms |
 | LEM inside the loop: turn-offs (11-12, late) | Is current still flowing after a turn-off, hidden in the coil–damper loop? | [done, open finding] | Freewheel 2 A → 0 in ≈ 170 µs, then a −0.2 A swing for ≈ 100 µs; bridge opened at 2 A: zero in ≈ 25 µs, gone by ≈ 200 µs, energy into the damper; latch holds; an unexplained 5 A surge caught by the firmware trip; closed-loop turn-off has a ≈ 1 ms PI tail |
 | Rev 5: zero-setpoint snap (11-12, evening) | Remove the closed-loop turn-off tail | [passed] | New firmware deployed; 2 A turn-off to 2 % in 0.14 ms instead of 1.55 ms; small setpoints still held; no chatter on IN2 |
+| 3e Full reversal ±2 A (11-13) | The control computer's flip + sign-swap sequence | [passed, open finding] | 12/12 reversals OK, settled in 1.2–1.4 ms; changing the sign first is fastest; the rev 5 snap does not act during flips |
 
 ## Test 0 · Red Pitaya, logic board and power-stage pre-checks (11-02 to 11-11) [passed]
 
@@ -502,10 +503,35 @@ Coil current only; the field at the atoms also waits for chamber eddy currents (
 
 **To watch:** single status reads of IN2 swing ±5 counts (per-sample noise). Measure IN2 noise and drift with the control computer connected and set `snap_zero_amps` from that. Timing margin of this build is thin (+3 ps); check it on the next firmware change.
 
+## 3e · Full field reversal, +2 A ↔ −2 A (11-13) [passed, open finding]
+
+**Why.** The control computer will reverse the field by pulsing the flip request (DIO3) and changing the sign of its setpoint while the flip is in progress (servo_interface_brief.md). That combined sequence had never been run: earlier flip tests (3g, extra tests) flipped, waited for the loop to restart, then changed the sign.
+
+**How.** Rev 5 firmware, bench profile, closed loop, register setpoint; arm held high in software, flip = a software edge on the flip input. +2 → −2 A and −2 → +2 A, two runs each, in three orderings: **A** flip and sign swap together; **B** sign swap first, flip 0.5 ms later; **C** flip first, sign swap 0.2 ms later. Board's own 16.8 ms capture. (Run by the second Claude session.)
+
+![Field reversals in three orderings, both directions](img/benchtop/t3e_reversal.png)
+
+*Current × the sign it started with, so every run starts at +2 and ends at −2. All 12 reversals complete. In A and C the current pauses at ≈ 0.4 A for 150–250 µs (the PI tail) until the bridge opens inside the flip zero window; in B it goes straight to zero.*
+
+| Ordering | Ramp-down 90 % → 0 | Leaving 90 % → settled within ±2 % at the new sign |
+|---|---|---|
+| A: flip + swap together | 338 µs | 1.37 ms |
+| B: swap first, flip 0.5 ms later | **146 µs** | **1.22 ms** |
+| C: flip first, swap 0.2 ms later | 343 µs | 1.29 ms |
+
+**Result:** 12 of 12 reversals OK: back in RUN at the new polarity, no sign-mismatch flag, no timeout, no trip; final −2.003 / +1.989 A; overshoot 25–38 mA (noise level). The rise from 0 to 90 % of the new value takes 0.82–0.95 ms.
+
+**Why B is fastest:** a setpoint of the opposite sign doubles the loop's error (−4 A instead of −2 A), so the PI winds OUT1 down about twice as fast. It is not the zero-setpoint snap.
+
+**Open finding: the rev 5 snap does not act during a flip.** The snap looks at the requested setpoint and only works in RUN; during a flip the FSM forces the loop's setpoint to zero itself, in a different state. The flip still finishes quickly because the FSM opens the bridge as soon as the current is inside the zero window, which cuts the tail short. **Decision needed before 100 A:** extend the snap to the FSM's own ramp-downs (flips and stops), or have the control computer change the sign first (ordering B).
+
+**Also:** the first attempt ran with the safety latch still tripped from the rev 5 deploy. No current flowed, and the FSM even completed a flip at zero current. Reset the latch after every deploy.
+
 ## Open items
 
 - ~~Bench model: coil L 9 → ≈ 45 µH; lab notes for day 2; bench doc recovery fix.~~ Done, commit 8edac7cc.
 - Design the RC damper for the MOT pair (16 µH, near critical damping, pulse rating at 100 A); check the 72 kHz line it introduces. LEM between the two coils, damper across the whole pair (LEM inside the loop).
+- **Snap during flips (3e):** extend the zero-setpoint snap to the FSM's own ramp-downs (flip, stop), or have the control computer change the setpoint sign before the flip request.
 - ~~Firmware: "snap OUT1 to zero".~~ Done: register map rev 5, deployed 11-12. Still to do: set `snap_zero_amps` from the measured IN2 noise.
 - **5 A surge / latch visibility:** wire the latch output to DIO5 and stop the servo on it, and/or firmware stall detection. Until then: always stop the servo before pressing reset.
 - Test 4: scope the drain bar at turn-off (TVS clamp level at 100 A) and the node spikes when the bridge opens.

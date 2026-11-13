@@ -624,3 +624,32 @@ bridge-open fast turn-off that needs the TVS + blocking diode.
   ~0.7), max +2.45 — none of 2560 above the 4-count threshold. Margin
   ≈ 1.5 counts to engage, 2.5 to release. Re-measure with the control
   computer driving IN2 before Test 4.
+
+## Test 3e — full field reversal, +2 A ↔ −2 A (11-13, second Claude session)
+
+The control computer reverses the field by pulsing DIO3 and swapping the
+IN2 sign while the flip is in progress (servo_interface_brief.md) — never
+run as one sequence before. Rev 5, `mot_bench`, closed loop, register
+setpoint, arm held high in software, flip by a software edge; +2 → −2 and
+−2 → +2 A, two runs each, three orderings: **A** flip + swap together,
+**B** swap first then flip 0.5 ms later, **C** flip first then swap 0.2 ms
+later. Data `logs/t3e_*`.
+
+- **12/12 OK:** RUN at the new polarity, no sign mismatch, no
+  TIMEOUT_HOLD, no trip; final +1.989 / −2.003 A; overshoot 25–38 mA.
+- Ramp-down 90 % → 0: A 338 µs, **B 146 µs**, C 343 µs; 0 → 90 % of the new
+  value 0.82–0.95 ms; leaving 90 % → settled within ±2 %: A 1.37 ms,
+  **B 1.22 ms**, C 1.29 ms.
+- **B is fastest** because an opposite-sign setpoint doubles the drive-frame
+  error (servo_error.v: e = pol·(sp − meas)), so the PI winds OUT1 down
+  about twice as fast — not the snap.
+- **Open finding: the rev 5 snap does not act during a flip.** `snap_zero`
+  watches the requested setpoint (`sp_sel`) and needs RUN; the flip
+  ramp-down is the FSM's `sp_force_zero` in RAMP_DOWN. The flip still ends
+  quickly because the FSM opens the bridge once |I| < `zero_win` (0.49 A)
+  for the holdoff, cutting the PI tail (a ≈ 0.4 A shelf for 150–250 µs in
+  A/C). **Decide before 100 A:** extend the snap to `sp_force_zero`
+  (flip and stop ramp-downs), or have the control computer swap the sign
+  first (ordering B).
+- First attempt: latch still tripped from the rev 5 deploy — no current,
+  the FSM flipped at zero current. Reset the latch after every deploy.
