@@ -159,6 +159,27 @@ If the setpoint sign and bridge polarity disagree, the servo sits safely
 at zero and raises `sp_sign_mismatch` — a sequencing mistake costs field,
 never hardware. Flips are never triggered by the setpoint changing sign.
 
+**Measured on the bench (2026-11-13, ±2 A, rev 5; benchtop_test_log.md
+3g and "day 3"):** every ordering works (32/32 reversals), but these rules
+make it fastest and unambiguous:
+
+- **Change the setpoint sign first, then pulse the flip line** (up to
+  ~0.5 ms later is fine). The opposite-sign setpoint doubles the loop's
+  error, so the current reaches zero about twice as fast (146 µs vs
+  ~340 µs from 2 A; reversal settled within ±2 % in 1.2 ms vs 1.3–1.4 ms).
+  With the flip first, the current pauses near the zero window for
+  150–250 µs.
+- **Exactly one flip pulse per reversal.** A second rising edge *during* a
+  flip is ignored (not queued); one *after* the flip has finished flips
+  back — the setpoint sign then disagrees and the current sits at zero.
+  Debounce or clean up the flip line so it never double-pulses.
+- **Hold arm (DIO4) high for as long as flips may be wanted.** With arm low
+  a flip request is ignored. Dropping arm is not a stop and does nothing to
+  a running servo; a new arm edge while running does nothing either.
+- To turn the field off, step IN2 to **exactly 0 V** (within about 4 ADC
+  counts, ≈ 0.1 A): the zero-setpoint snap (register map rev 5) then shuts
+  the bank off at once. Any non-zero setpoint above that is held.
+
 ## 4. What the box guarantees (enforced in the FPGA, verified in simulation)
 
 - **Reset/load state is fully off:** OUT1 = OUT2 = 0, every DIO output low,
