@@ -666,8 +666,11 @@ third of the test coil's inductance (16 µH against 45 µH). Also in
   the broad hump at 30–150 kHz are the same size with 2 A flowing and
   with no current, so they are measurement, not current. No 72 kHz tone
   stands out in the coil current any more; if it exists, it circulates in
-  the damper's own wiring. A clean zero-current reference (bridge open)
-  is queued after the firmware update.
+  the damper's own wiring. *Refined by the clean zero-current reference
+  (bridge open) later on 11-13, see "Zero-current noise reference" below:
+  the lines near 290 kHz do grow with the load current, but they are not
+  coil current (the coil voltage stays steady); most likely pickup from
+  the bench supply's switching.*
 
 ## LEM moved inside the coil–damper loop; turn-off measurements (11-12, late)
 
