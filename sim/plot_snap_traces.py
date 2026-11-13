@@ -15,11 +15,14 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from plotfit import check_overlaps, place_legend, settle_legends   # sim/plotfit.py
+
 src = Path(sys.argv[1] if len(sys.argv) > 1 else "sim/traces")
 out = sys.argv[2] if len(sys.argv) > 2 else "snap_sim.png"
 T = 1.024                                       # us per PI tick
-plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 10})
-# constrained layout + one legend below the figure: no text on the traces
+plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 10, "legend.frameon": False,
+                     "axes.labelpad": 6})
+# constrained layout; legends inside the panels on free space only (sim/plotfit.py)
 fig, axes = plt.subplots(2, 2, figsize=(11, 7), sharex="col", layout="constrained")
 cols = {"off": "#C0504D", "on": "#1F497D"}
 for c, (name, title, xmax) in enumerate((
@@ -42,9 +45,11 @@ for c, (name, title, xmax) in enumerate((
     axes[1, c].set_xlim(-100, xmax)
     axes[0, c].grid(alpha=0.3)
     axes[1, c].grid(alpha=0.3)
-fig.legend(*axes[0, 0].get_legend_handles_labels(), loc="outside lower center", ncol=2,
-           fontsize=9, frameon=False)
 fig.suptitle("Zero-setpoint snap, HDL in the loop (cocotb + Icarus, plant model)",
              fontsize=12)
+for c in (0, 1):
+    place_legend(axes[0, c])
+settle_legends(fig)
+check_overlaps(fig, out)
 fig.savefig(out, dpi=110)
 print("wrote", out)
