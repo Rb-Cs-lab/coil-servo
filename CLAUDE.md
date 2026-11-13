@@ -44,9 +44,10 @@ dashboard" session.
 [docs/benchtop_test_log.md](docs/benchtop_test_log.md)): Tests 0–3 done
 (Test 0 = pre-checks: FET matching, logic board, loopback, hand-driven
 bridge; then gate stage, sensor zero, bench supply ≤ 3 A on a temporary 12-turn test
-coil, profile `mot_bench`). **Next: control-computer integration on the bench
+coil, profile `mot_bench`; Test 3 day 4 = bench characterization Q1–Q8,
+11-13). **Next: control-computer integration on the bench
 (IN2 setpoint, DIO3 flip, DIO4 arm), then Test 4 — 100 A on the SE-600-5
-with both MOT coils, water, `mot` profile.** Key results (11-11/12):
+with both MOT coils, water, `mot` profile.** Key results (11-11/13):
 
 - **IN1 scale measured: `in1_fs_volts` = 1.12** (full-scale ADC code at
   1.12 V, raw codes, factory calibration not applied) → **I_FS = 224 A,
@@ -66,12 +67,26 @@ with both MOT coils, water, `mot` profile.** Key results (11-11/12):
   opened at 2 A (firmware trip, `trip_timeout` 0): energy into the damper,
   current zero in ≈ 25 µs, gone by ≈ 200 µs. Size the MOT damper near
   critical damping (R ≈ 2√(L/C)).
-- **Unexplained 5 A surge (11-12):** during a 2 A hold awaiting a heartbeat
-  pull, the bridge apparently re-closed with OUT1 wound to the clamp; the
-  firmware over-current trip caught it. Latch re-checked (holds through a
-  2 s heartbeat loss). Root weakness: **the firmware cannot see the
-  latch** — proposed: latch output → DIO5 + firmware stop/integrator clear,
-  and/or stall detection. Not done.
+- **5 A surge (11-12), cause not proven:** during a 2 A hold awaiting a
+  heartbeat pull, the bridge apparently re-closed with OUT1 wound to the
+  clamp; the firmware over-current trip caught it. Latch re-checked (holds
+  through a 2 s heartbeat loss). Leading explanation (offline simulation,
+  Q8, 11-13): **a lost IN1 signal** — the firmware blind to the current for
+  150–190 µs explains both the wind-up and the late trip; check the IN1
+  cable and tee for a loose contact. Root weakness either way: **the
+  firmware cannot see the latch** — proposed: latch output → DIO5 +
+  firmware stop/integrator clear, and/or stall detection. Not done.
+- **IN1 switch-off spikes (Q6, 11-13):** any abrupt bank turn-off (trip or
+  snap) puts a ≈ 10 µs burst of ±0.9 A spikes on IN1 — pickup, not coil
+  current, never > 2 consecutive samples. **Keep `trip_ticks` ≥ 4**
+  (with 4 the trip can sit 160 mA above a hold; with 1 it false-trips).
+  Trip acts within ≈ 10 µs, overshoot 0.05–0.1 A. Check spikes at 100 A.
+- **Bench characterization (11-13):** 45 min 2 A hold 0.07 mA rms, no
+  drift; 1000-shot sequence all correct (reversal +1 → 90 % of −2 A
+  1.29 ms median); IN1/IN2 zeros steady ±5 mA, but IN1's zero sits at
+  8.5 counts vs the stored 9 (taken just after power-up) → **re-zero after
+  warm-up**. Fastest ±2 A reversal 0.81 ms to 2 % (0.95 ms with current
+  settings), limited by the PI rise, not the hardware.
 - Firmware trip fires at the set level (2.85 A for 2.79 A), flips happen
   only inside the zero window, **dead time measured 1.0 µs each side** of the
   polarity edge (at the Red Pitaya pins), heartbeat-latch trip opens the
@@ -87,7 +102,9 @@ with both MOT coils, water, `mot` profile.** Key results (11-11/12):
   damper** (sized for 16 µH, pulse-rated at 100 A) — check for ringing at
   low currents in Test 4. Mechanism not yet understood.
 - Bench PI gains tuned on hardware: kp 31.2 counts/A, ki 942 counts/(A·ms)
-  (×2 more oscillates at 21 kHz); bench `I_rated` 2.2 A. Dither makes no
+  (the "×2 oscillates at 21 kHz" of 11-12 was the undamped power-stage
+  ringing; with the damper the margin is ×8–20 at 1 A, ×2–3.3 at 2 A —
+  Q1, 11-13 — so the bench gains could be raised); bench `I_rated` 2.2 A. Dither makes no
   difference on the bench (one count ≈ 8 mA there); its real test is at
   100 A. Hold average stable within ≈ 0.5 mA over 10 min at 2 A.
 - Software arm/flip for bench tests: pulse `dio_invert` bit 1 (arm) / bit 0
@@ -231,7 +248,10 @@ Power stage as built:
   coils in series inside it, LEM on the lead between the coils.
 - **Pass bank LOW-SIDE**, after the bridge: 6 × IXTN200N10L2 in linear mode,
   0.03 Ω ballast each, gates from OUT1 through an OPA994 non-inverting
-  gain ≈ 8 stage. **No per-FET source-sense loops, no active clamp.** It is a
+  gain ≈ 8 stage (gain 7.93 measured; **op-amp rail raised 5.18 → 12.01 V**,
+  11-13 — 100 A needs ≈ 5.0–5.3 V at the gates — so the rail no longer
+  limits the drive: the OUT1 clamp and the trip are the only drive limits).
+  **No per-FET source-sense loops, no active clamp.** It is a
   voltage-controlled current source with a **dead zone** (measured
   V_th ≈ 3.53 V → OUT1 ≈ 0.44 V) and up to ~1600 A/V at OUT1. The coil L/R
   pole is not in the loop; L only appears as slew limits at the compliance
@@ -317,27 +337,36 @@ Each of these must be a named, commented-provisional parameter
   resistance → R_total, compliance at 100 A
 - Pass bank: g_fs, measured G_pass and dead zone (and their temperature
   dependence), OUT1 50 Ω termination yes/no → also sets the OUT1 clamp value
-- OPA994 supply rail (undocumented; must exceed the max gate command)
+- ~~OPA994 supply rail~~ — measured 12.01 V (raised 11-13, `V_opamp_max`);
+  set the MOT OUT1 clamp from measured current in Test 4
 - In-amp gain (1 vs 2) → I_FS 200 A vs 100 A
 - ~~Turn-down path: bridge freewheel vs bank TVS~~ — freewheel, confirmed on
   the bench 2026-11-12
 - Bridge-open-at-current energy path: SE-600-5 output-cap overvoltage / OVP
   (bench preview: +2.5–3.2 V rail spike for ~10 µs from 90 µJ; at 100 A
-  ~0.08 J — measure in Test 4)
-- Coil damper values for the MOT pair (16 µH; pulse rating at 100 A), and
-  whether the 10–20 kHz ringing appears on the real coils
+  ~0.08 J — measure in Test 4; simulation Q8: without a rail capacitor the
+  bridge reaches FET avalanche ≈ 110 V for 1–2 µs, ≈ 100 µF at the bridge
+  removes it)
+- Coil damper values for the MOT pair (16 µH; pulse rating at 100 A — if
+  the bridge opens at 100 A the damper resistor takes ≈ 100 V, 50–70 A,
+  8–12 mJ in ≈ 1 µs unless ~100 µF sits on the rail), and whether the
+  10–20 kHz ringing appears on the real coils
 - Actuator resolution and ground noise at a steady hold vs the 0.1 % spec
   (gain-8 stage: one OUT1 count ≈ 0.14–0.4 % of rated)
 - IN1 offset: Red Pitaya input offset ≈ +0.26–0.29 A (LEM offset ≈ 0),
-  calibrated with the zero tool; drifts slightly after power-up — re-zero
-  before trusting the ±0.5 A flip zero window. IN2 scale not yet measured
+  calibrated with the zero tool; drifts slightly after power-up (11-13: 8.5
+  counts warm vs 9 stored, ≈ −13 mA) — re-zero after warm-up, before
+  trusting the ±0.5 A flip zero window. IN2 scale not yet measured
 - Hold capacitor across the rail (C_hold) yes/no
 - Chamber eddy-current settling time (limits post-flip field settling; FSM
   delay constants are placeholders)
 - Uncooled duty-cycle limit for the first test round
 - PI gains for the 100 A plant (bench gains are tuned: kp 31.2 counts/A,
   ki 942 counts/(A·ms); the MOT plant has ~17× more gain per count — tune
-  from measured steps in Test 4)
+  from measured steps in Test 4). Starting points (Q7 bank model, 11-13):
+  kp ≈ 3, ki ≈ 90 per ms if the bench square law holds, kp ≈ 1.6, ki ≈ 48
+  if the linear model does; current `[mot]` 3.7 / 111 is between. Tune at
+  the highest current used
 
 If a design decision depends on one of these, flag it explicitly.
 
