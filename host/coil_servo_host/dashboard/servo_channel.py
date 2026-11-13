@@ -1188,8 +1188,11 @@ class CoilServoChannel(Device):
                 if self.board is None:
                     raise ActionError("board offline")
                 self.board.sync_shadow()
+                # the captured error is drive-frame: the setpoint column
+                # needs the bridge polarity (capture.decimated_columns)
+                polarity = self.board.sts()["polarity"]
                 data = self.board.capture(decimated=True)
-            cols = decimated_columns(data, self._i_fs())
+            cols = decimated_columns(data, self._i_fs(), polarity=polarity)
             return self._store_capture(cols, kind, {})
         finally:
             self._capture_lock.release()
@@ -1297,10 +1300,11 @@ class CoilServoChannel(Device):
         time.sleep(0.05)
         self._job_phase("capturing the step")
         with self._io:
+            polarity = self.board.sts()["polarity"]   # drive-frame error
             raw = step_tool.capture_step(self.board, counts)
             step_tool.finish(self.board)
         cols = decimated_columns(decode_words(raw, decimated=True),
-                                 ch["i_fs"])
+                                 ch["i_fs"], polarity=polarity)
         cap = self._store_capture(cols, "step", {
             "amps": amps, "open_loop": open_loop, "command_counts": counts,
             "profile": ch["name"]})
