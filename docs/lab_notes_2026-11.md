@@ -653,3 +653,42 @@ later. Data `logs/t3e_*`.
   first (ordering B).
 - First attempt: latch still tripped from the rev 5 deploy — no current,
   the FSM flipped at zero current. Reset the latch after every deploy.
+
+## Test 3, day 3 — pre-computer checks (11-13, second Claude session)
+
+Rev 5, `mot_bench`, closed loop, register setpoint, software arm (level
+held) and flip (edge); board captures only (the scope's SCPI port was held
+by another client). Data `logs/t3g_*` … `logs/t3m_*`; the flip tests are in
+the 3g section of the benchtop log. Board left IDLE, temporary settings
+restored.
+
+- **Flip edge cases:** flip at 0 A OK; flip during an up-ramp OK; a second
+  request *during* a flip is dropped (not queued); a second request *after*
+  it flips back → sign mismatch, sits at 0 (safe). **Rule: one clean pulse
+  per reversal, sign change first.** Sign-first-then-flip ASAP: 20/20,
+  0.95–1.0 ms from leaving +2 A to 90 % of −2 A.
+- **Stop/trip around a flip:** stop during a hold or during a flip → IDLE,
+  bridge open; a trip (level lowered to 1.5 A) right after a flip fires in
+  the new polarity → TRIPPED, `trip_ack` → IDLE.
+- **Arm while running:** dropping arm does nothing (by design), flips with
+  arm low are ignored, a new arm edge in RUN has no effect. **Rule: hold arm
+  high while flips are wanted.**
+- **Ramp limits:** 2.09 / 1.04 A/ms measured vs 2.08 / 1.04 A/ms set (test
+  values); zero and inside-window targets immediate. Found the capture
+  decoder's setpoint trace wrong at polarity 1 — fixed (7e4b7e84).
+- **50 shot sequences** (+2 A, +1 A, sign change + flip to −2 A, 0, stop):
+  50/50 OK; holds within 0.3 mA of command, 1–2 mA shot-to-shot. Found a
+  −½ LSB (−6.8 mA) bias from the capture's [21:6] truncation — the decoder
+  now adds +0.5 LSB (39bbf373). After the snap the current reads ≈ −10 mA
+  (zero offsets are stored in whole counts).
+- **Two programs writing CFG — safety issue, fixed:** `Board.write_cfg`
+  wrote whole words from a stale local copy, so a second connection could
+  silently set `servo_enable` and the arm bit again after another client's
+  stop, and restart the servo (reproduced at 0 A). Now a per-word
+  read-modify-write (39bbf373), with a test. The dashboard already re-synced.
+- **Register server killed 9 s during a 1 A hold:** the FPGA held RUN at
+  1.01 A, settings unchanged; the dashboard reconnected by itself.
+- **Still to test (needs a signal source):** IN2 analog setpoint (scale,
+  steps/ramps, noise vs the snap threshold, earthed-source ground loops,
+  cable unplugged) and the real DIO3/DIO4 inputs (levels, minimum pulse
+  width, glitches, latency).

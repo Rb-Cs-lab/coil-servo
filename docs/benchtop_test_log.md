@@ -25,6 +25,7 @@
 | Damper test | Does 3.2 Ω + 10 µF across the coil stop the ringing? | [passed] | Yes: ringing 43–124 mA → 2.5–5 mA with the coil lifted; 2 A hold 100 µs noise 6.5 mA rms |
 | LEM inside the loop: turn-offs (11-12, late) | Is current still flowing after a turn-off, hidden in the coil–damper loop? | [done, open finding] | Freewheel 2 A → 0 in ≈ 170 µs, then a −0.2 A swing for ≈ 100 µs; bridge opened at 2 A: zero in ≈ 25 µs, gone by ≈ 200 µs, energy into the damper; latch holds; an unexplained 5 A surge caught by the firmware trip; closed-loop turn-off has a ≈ 1 ms PI tail |
 | Rev 5: zero-setpoint snap (11-12, evening) | Remove the closed-loop turn-off tail | [passed] | New firmware deployed; 2 A turn-off to 2 % in 0.14 ms instead of 1.55 ms; small setpoints still held; no chatter on IN2 |
+| Day 3 pre-computer checks (11-13) | Everything testable without the control computer | [passed, one fix made] | Stop/trip around flips safe; arm must be held; ramps as set; 50/50 shots, holds ±0.3 mA; two-program settings bug found and fixed; loop survives a server kill |
 
 ## Test 0 · Red Pitaya, logic board and power-stage pre-checks (11-02 to 11-11) [passed]
 
@@ -519,6 +520,62 @@ Coil current only; the field at the atoms also waits for chamber eddy currents (
 **Re-test after a Red Pitaya power cycle (redeploy, re-zero):** same results (fall to 2 % in 0.14 ms with the snap, 1.31 ms without; checks pass). **IN2 noise at 0 V:** 4.1 counts rms per sample, but the 1 µs averages the snap uses have sd 0.43 counts and never exceeded +2.45 counts in 2560 ticks (threshold 4): about 1.5 counts of margin with the input terminated.
 
 **To watch:** single status reads of IN2 swing ±5 counts (per-sample noise). Measure IN2 noise and drift with the control computer connected and set `snap_zero_amps` from that. Timing margin of this build is thin (+3 ps); check it on the next firmware change.
+
+## Test 3, day 3 · Pre-computer checks (11-13) [passed, one fix made]
+
+**Why.** The control computer is being built from scratch, so anything that can be tested without it is tested now; whatever goes wrong later is then on the computer's side. Flips and reversals are in 3g; these are the remaining sequences and failure cases.
+
+**How.** Rev 5 firmware, bench profile, coil as wired today, closed loop, register setpoint, software arm (level held) and software flip (edge). Board's own 16.8 ms capture. Temporary settings restored afterwards (checked). Run by the second Claude session; data `logs/t3g_*` … `logs/t3m_*`.
+
+### D1 · Stop and trip around a flip
+
+![Stop during a hold, stop during a flip, trip right after a flip](img/benchtop/t3g_stop_trip.png)
+
+*S2: a stop during a 2 A hold ramps down and ends IDLE. S1: a stop during a flip lets the flip finish, then ramps to 0 and ends IDLE. T1: with the trip level lowered to 1.5 A for the test, a trip right after a flip fires in the new polarity and ends TRIPPED with the bridge open; trip acknowledge returns to IDLE.*
+
+**Result:** every combination ends safely, IDLE or TRIPPED with the bridge open; the trip works in either polarity. Trip level restored (102 counts).
+
+### D2 · Arm while running
+
+![Arm dropped and re-raised while running](img/benchtop/t3h_arm.png)
+
+*Dropping arm at 2 A changes nothing (by design, the current is held); a flip request with arm low is ignored (the sign change alone gives a sign mismatch and the current sits at 0); a new arm edge while running has no effect; a flip after re-arming works normally.*
+
+**Rule for the control computer:** hold arm high for as long as flips may be wanted. Dropping arm is not a stop.
+
+### D3 · Setpoint ramp limits
+
+![Measured setpoint ramps against the configured limits](img/benchtop/t3j_slew.png)
+
+*Limits set to 2 / 1 A/ms on the board for this test (production 200 / 50 A/ms): measured 2.09 / 1.04 A/ms against 2.08 / 1.04 from the register codes. A zero target, and a target inside the zero window (0.3 A), are taken at once.*
+
+**Result:** the ramp limiter does what the register map says. Codes restored (959 / 240). **Found here:** the host's capture decoder drew the wrong setpoint trace at reversed polarity (fixed, commit 7e4b7e84).
+
+### D4 · 50 repeated shot sequences
+
+![50 shots overlaid and their holds](img/benchtop/t3k_shots.png)
+
+*Each shot: +2 A for 4 ms, +1 A for 3 ms, sign change + flip to −2 A for 3 ms, zero, stop; shots alternate the starting polarity. Bottom: each hold against its commanded value.*
+
+**Result:** 50/50 OK. Holds within 0.3 mA of the commanded setpoint on average, 1–2 mA shot-to-shot (0.05–0.09 % of 2 A). The current after the snap reads about −10 mA: the stored zero offsets are whole ADC counts (27 mA each). **Found here:** the captured current read 6.8 mA low because the capture truncates its low bits (corrected in the decoder, commit 39bbf373).
+
+### D5 · Two programs writing settings at once — safety issue, fixed
+
+![Two clients writing settings from stale copies](img/benchtop/t3l_two_clients.png)
+
+*C1: program B, connected while the servo ran, wrote two unrelated settings from its out-of-date copy after program A had stopped the servo; that silently set servo_enable and the arm bit again, and the stopped servo restarted with the bridge closed (tested at 0 A). C2: with B re-reading the board first, nothing restarts. C3: a stale write 0.37 ms after a stop at 1 A does not cancel the stop but leaves servo_enable and arm set, so a single arm edge would restart it.*
+
+**Fix (commit 39bbf373):** every settings write now re-reads the words it changes from the board first, so a second program can no longer undo someone else's stop; a test reproduces C1. The dashboard was already safe. The control computer only drives IN2, DIO3 and DIO4 and never writes settings; the risk was the dashboard plus scripts together.
+
+### D6 · Register server killed during a hold
+
+![Register server stopped for 9 s during a 1 A hold](img/benchtop/t3m_server_restart.png)
+
+*The board's register server (the program the PC talks to) was killed for 9 s during a 1 A hold.*
+
+**Result:** the FPGA kept running at 1.01 A, settings unchanged, heartbeat counter advanced with wall time; the dashboard reconnected by itself. The loop never depends on the PC or the network.
+
+**Still to test, needs a signal source:** the analog setpoint input IN2 (its scale has never been measured; steps, ramps, noise against the snap threshold, ground loops from an earthed source, an unplugged IN2 cable) and the real DIO3/DIO4 inputs (voltage levels, shortest pulse, glitches, latency). The scope's control port was held by another program, so day 3 has board captures only.
 
 ## Open items
 
