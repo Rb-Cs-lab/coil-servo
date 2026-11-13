@@ -173,8 +173,6 @@ def check_overlaps(fig, name=""):
     for i in range(len(boxes)):
         for j in range(i + 1, len(boxes)):
             (a, ba), (b, bb) = boxes[i], boxes[j]
-            if a.startswith("tick") and b.startswith("tick"):
-                continue
             if ba.width > 0 and bb.width > 0 and ba.overlaps(bb):
                 problems.append(f"{name}: {a} overlaps {b}")
     for p in problems:
