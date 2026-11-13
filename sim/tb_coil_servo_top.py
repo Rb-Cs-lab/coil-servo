@@ -876,28 +876,143 @@ async def snap_only_in_closed_loop_run(dut):
     assert sts(dut)["snapped"] == 0, "snap active in open loop"
 
 
-@cocotb.test()
-async def flip_with_snap_enabled(dut):
-    """A flip at 30 A with the snap enabled: the FSM forces the loop's
-    setpoint to zero, but the requested setpoint stays at 30 A, so the snap
-    stays out of the way; the flip completes and the loop re-settles."""
-    await setup(dut, run_cfg(setpoint=0, **SNAP_ON))
+async def _forced_zero_run(dut, ch, cfg_fn, amps, snap, hold, action, tag):
+    """Hold `amps`, then either request a flip (action 'flip': the bench's
+    control computer changes the setpoint sign when the polarity output
+    changes, i.e. the flip comes FIRST -- the ordering that showed the
+    plateau on the bench) or stop (action 'stop': servo_enable 0). Records
+    per tick: current, OUT1, STS snapped, FSM state, polarity, bridge
+    enable. Returns the trace and the index of the request."""
+    extra = dict(SNAP_ON) if snap else dict(snap_enable=0, snap_thresh=0)
+    await setup(dut, cfg_fn(setpoint=0, **extra))
+    # a previous case may have left polarity 1: the reset returns it to 0
+    # (bridge open). Wait well past the dead time before arming, as any
+    # real arm would -- the pin monitor checks the bridge never closes
+    # within the dead time of a polarity edge.
+    await ClockCycles(dut.aclk, 500)
     await arm(dut)
-    world = World(dut, sp_amps=30.0, cfg_extra=SNAP_ON)
-    for _ in range(1000):
-        await world.tick()
-    dut.flip_req_i.value = 1
-    await ClockCycles(dut.aclk, 10)
-    dut.flip_req_i.value = 0
-    pol0 = int(dut.bridge_polarity_o.value)
-    for _ in range(3000):
-        await world.tick()
-        assert sts(dut)["snapped"] == 0
-        if int(dut.bridge_polarity_o.value) != pol0 and \
-                sts(dut)["fsm_state_name"] == "RUN":
+    world = World(dut, sp_amps=amps, ch=ch, cfg_fn=cfg_fn, cfg_extra=extra)
+    tr = {k: [] for k in ("i", "out1", "snapped", "state", "pol", "ben")}
+
+    async def tick():
+        o1 = await world.tick()
+        s = sts(dut)
+        tr["i"].append(world.plant.I)
+        tr["out1"].append(o1)
+        tr["snapped"].append(s["snapped"])
+        tr["state"].append(s["fsm_state_name"])
+        tr["pol"].append(int(dut.bridge_polarity_o.value))
+        tr["ben"].append(int(dut.bridge_enable_o.value))
+
+    for _ in range(hold):
+        await tick()
+    assert abs(world.plant.I - amps) < 0.05 * amps, f"{tag}: not at {amps} A"
+    k_req = len(tr["i"])
+    if action == "flip":
+        dut.flip_req_i.value = 1
+        await ClockCycles(dut.aclk, 10)
+        dut.flip_req_i.value = 0
+    else:
+        world.cfg_extra = dict(extra, servo_enable=0)
+    for _ in range(4000):
+        await tick()
+        if action == "stop" and tr["state"][-1] == "IDLE":
+            break
+        if action == "flip" and tr["pol"][-1] != tr["pol"][k_req - 1] \
+                and tr["state"][-1] == "RUN":
             break
     else:
-        raise AssertionError("flip never completed")
-    for _ in range(1300):
-        await world.tick()
-    assert abs(world.plant.I - 30.0) < 0.1
+        raise AssertionError(f"{tag}: {action} never completed "
+                             f"(state {tr['state'][-1]})")
+    k_end = len(tr["i"])
+    if action == "flip":                         # re-settle at the new sign
+        for _ in range(2600):
+            await tick()
+        i_settled = world.plant.I
+        # end with a graceful stop (bridge open), so the next case's reset
+        # does not drop the bridge and the reversed polarity on one clock --
+        # the pin monitor would (rightly) count that as an edge with no dead
+        # time; it is a bench reset, not a flip
+        world.cfg_extra = dict(extra, servo_enable=0)
+        for _ in range(4000):
+            await world.tick()
+            if sts(dut)["fsm_state_name"] == "IDLE":
+                break
+        world.plant.I = i_settled                # report the settled value
+
+    _dump_trace(f"forced_{tag}", dict(tr, k_req=k_req, k_end=k_end, amps=amps,
+                                      action=action, snap=snap))
+    return tr, k_req, k_end, world
+
+
+def _first(seq, k0, pred):
+    for k in range(k0, len(seq)):
+        if pred(seq[k]):
+            return k - k0
+    return None
+
+
+@cocotb.test()
+async def snap_also_acts_in_flip_and_stop_ramp_downs(dut):
+    """The board's own forced zero (flip / stop ramp-down) with the snap on:
+    OUT1 is exactly 0 from the 2nd tick after the request until the board
+    lets the setpoint go again (bridge closed, STS snapped set), the current
+    reaches zero at the freewheel rate, and the flip (or stop) completes no
+    later than without the snap -- on the bench model, where the controller
+    leaves a slow tail, clearly sooner. After a flip the loop re-settles at
+    the new sign; snap off reproduces the old behaviour (snapped never set).
+    Bench test 3e (2026-11-13) found the plateau this removes."""
+    cases = [("bench", BENCH, bench_cfg, 2.0, 0.05, 2600),
+             ("mot", MOT, run_cfg, 30.0, 0.01, 1000)]
+    for name, ch, cfg_fn, amps, tol, hold in cases:
+        for action in ("flip", "stop"):
+            res = {}
+            for snap in (0, 1):
+                tag = f"{name}_{action}_{'on' if snap else 'off'}"
+                res[snap] = await _forced_zero_run(dut, ch, cfg_fn, amps, snap,
+                                                   hold, action, tag)
+            off, k0, e0, _ = res[0]
+            on, k1, e1, w1 = res[1]
+            assert not any(off["snapped"]), f"{name} {action}: snapped with snap off"
+
+            # with the snap: OUT1 = 0 from the 2nd tick until the forced
+            # zero ends (polarity edge + settle for a flip, IDLE for a stop)
+            for k in range(k1 + 2, e1 - 1):
+                assert on["out1"][k] == 0, \
+                    f"{name} {action}: OUT1 {on['out1'][k]} at tick {k - k1}"
+                if on["ben"][k]:
+                    assert on["snapped"][k] == 1, \
+                        f"{name} {action}: STS snapped not set at tick {k - k1}"
+
+            # current to zero at the freewheel rate (2 % of amps)
+            t_fw = ch.L / ch.R_fw * math.log(1 + amps * ch.R_fw / ch.V_f)
+            z_on = _first(on["i"], k1, lambda i: i <= 0.02 * amps)
+            z_off = _first(off["i"], k0, lambda i: i <= 0.02 * amps)
+            done_on, done_off = (e1 - k1) * T_S, (e0 - k0) * T_S
+            cocotb.log.info(
+                f"{name} {action}: to 2 % off {z_off} / on {z_on} ticks; "
+                f"complete off {done_off * 1e6:.0f} us / on {done_on * 1e6:.0f} us; "
+                f"freewheel {t_fw * 1e6:.0f} us")
+            assert z_on is not None and z_on * T_S <= t_fw + 4 * T_S, \
+                f"{name} {action}: zero after {z_on} ticks, freewheel {t_fw:.2e} s"
+            assert done_on <= done_off + 2 * T_S, f"{name} {action}: snap slower"
+            if name == "bench":
+                # the controller's tail case: the CURRENT reaches zero much
+                # sooner. (The whole flip/stop gains less in the model: the
+                # bridge opens once the current enters the 0.49 A window,
+                # and the model's tail sits just inside it; the fixed settle
+                # and dead times are the same with or without the snap.)
+                assert z_off is None or z_on < 0.8 * z_off, \
+                    f"{name} {action}: current not faster to zero ({z_on} vs {z_off} ticks)"
+
+            if action == "flip":
+                # re-settled at the new sign, never snapped after RUN resumed
+                assert abs(w1.plant.I - amps) < tol * amps, \
+                    f"{name}: did not re-settle ({w1.plant.I:.3f} A)"
+                assert on["pol"][-1] != on["pol"][k1 - 1]
+                assert not any(on["snapped"][e1 + 2:]), \
+                    f"{name}: snap still set after the flip"
+                assert max(on["i"][e1:]) < (1 + tol) * amps, \
+                    f"{name}: overshoot after the flip"
+            else:
+                assert on["state"][-1] == "IDLE" and on["ben"][-1] == 0
