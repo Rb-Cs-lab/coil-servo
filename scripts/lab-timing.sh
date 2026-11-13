@@ -8,10 +8,7 @@ RPT=$(ls tmp/coil_servo.runs/impl_1/*timing_summary_routed.rpt | head -1)
 echo "report: $RPT"
 grep -A 6 "Design Timing Summary" "$RPT" | tail -3
 echo
-echo "=== worst setup paths ==="
-awk '/^Max Delay Paths/{on=1} on && /^Min Delay Paths/{exit}
-     on && /^Slack/ {print ""; print}
-     on && /^  Source:/ {print}
-     on && /^  Destination:/ {print}
-     on && /^  Data Path Delay:/ {print}
-     on && /^  Logic Levels:/ {print}' "$RPT" | head -60
+echo "=== failing setup paths (VIOLATED) ==="
+awk '/^Slack \(VIOLATED\)/ {on=1; print ""; print; next}
+     /^Slack/ {on=0}
+     on && /^  (Source|Destination|Data Path Delay|Logic Levels):/ {print}' "$RPT" | head -40
