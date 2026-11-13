@@ -19,7 +19,8 @@ src = Path(sys.argv[1] if len(sys.argv) > 1 else "sim/traces")
 out = sys.argv[2] if len(sys.argv) > 2 else "snap_sim.png"
 T = 1.024                                       # us per PI tick
 plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 10})
-fig, axes = plt.subplots(2, 2, figsize=(11, 7), sharex="col")
+# constrained layout + one legend below the figure: no text on the traces
+fig, axes = plt.subplots(2, 2, figsize=(11, 7), sharex="col", layout="constrained")
 cols = {"off": "#C0504D", "on": "#1F497D"}
 for c, (name, title, xmax) in enumerate((
         ("bench", "Bench model: 2 A, one 45 µH test coil", 2000),
@@ -34,16 +35,16 @@ for c, (name, title, xmax) in enumerate((
     axes[0, c].axhline(0, color="k", lw=0.6)
     axes[0, c].axvline(0, color="k", lw=0.5, ls=":")
     axes[1, c].axvline(0, color="k", lw=0.5, ls=":")
-    axes[0, c].set_title(title, fontsize=11)
+    axes[0, c].set_title(title, fontsize=11, loc="left")
     axes[0, c].set_ylabel("coil current (A)")
     axes[1, c].set_ylabel("OUT1 command (counts)")
     axes[1, c].set_xlabel("time from setpoint → 0 (µs)")
     axes[1, c].set_xlim(-100, xmax)
-    axes[0, c].legend(fontsize=8)
     axes[0, c].grid(alpha=0.3)
     axes[1, c].grid(alpha=0.3)
+fig.legend(*axes[0, 0].get_legend_handles_labels(), loc="outside lower center", ncol=2,
+           fontsize=9, frameon=False)
 fig.suptitle("Zero-setpoint snap, HDL in the loop (cocotb + Icarus, plant model)",
              fontsize=12)
-fig.tight_layout()
 fig.savefig(out, dpi=110)
 print("wrote", out)
