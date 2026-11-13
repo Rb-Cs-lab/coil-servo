@@ -485,6 +485,8 @@ With no current: −0.06 A. OUT1 at 3800 steps → +0.65 A (sign unchanged). Ste
 
 ### Current pulse with the controller on
 
+**Why.** The first full pulse of the kind the experiment will use, with the controller in charge (the tests above set the output by hand or opened the bridge). Three questions: how fast and how cleanly the current rises to the setpoint, whether it holds the right value, and how fast it switches off when the setpoint goes back to 0 (bridge closed, the normal switch-off).
+
 **How.** Setpoint 0 → 2 A → 0, with 8 ms at 2 A, recorded by the board and the scope.
 
 ![2 A pulse with zooms on both edges](img/benchtop/t3c_pulse.png)
