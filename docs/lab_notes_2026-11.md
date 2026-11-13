@@ -910,3 +910,79 @@ restored.
   (scale, steps and ramps, noise against the snap threshold, ground loops
   with an earthed source, cable unplugged) and the real DIO3/DIO4 inputs
   (voltage levels, shortest pulse, glitches, delay).
+
+
+## New firmware: zero snap also in flips and stops (11-13)
+
+**Why:** in the reversal tests (3g, flip first) the current paused near
+0.4 A for 150–250 µs before the bridge could switch. The zero snap only
+reacted when the control computer asked for zero; during a flip or a stop
+the board brings the setpoint to zero itself, and then the controller
+turned the pass transistors down slowly.
+
+**What changed:** the snap now also switches the pass transistors fully
+off whenever the board itself brings the setpoint to zero for a flip or a
+stop (bridge closed, no trip). Same on/off setting (`snap_enable`); the
+register layout is unchanged (map rev 5), so the host tools and the
+dashboard needed no change.
+
+- **Simulation:** new test of flips and stops with the snap off and on.
+  Bench model, 2 A flip: current to within 2 % of zero in 105 µs instead of
+  176 µs; stop 105 µs. MOT model (30 A): no difference — there the
+  controller already switches off at full speed; the snap makes it certain.
+  All 240 tests pass.
+- **Build:** the first laptop build (25964ff0) missed timing by 0.05 ns in
+  the dither (13 logic steps in one clock: sigma-delta adder, 15-bit adder
+  and both clip comparisons in a row). Not shipped. The dither now forms
+  its three possible outputs (u14 − 1, u14, u14 + 1, each clipped) side by
+  side and only picks one at the end — the same result on every clock tick
+  (the bit-exact dither test is unchanged). Second build (583e877): **WNS
+  +0.251 ns**, WHS +0.007 ns, 0 failing. File 867 292 bytes, SHA-256
+  `ca812771…1bd1`. Drive folder: new `coil_servo.bit.bin`, the previous one
+  kept as `coil_servo_v2.bit.bin`; repo: previous one kept as
+  `coil_servo_rev5_20261112.bit.bin`. New helper scripts on the laptop:
+  `scripts/lab-timing.sh` (failing timing paths), and
+  `lab-copy-to-drive.sh` now picks the next free version number itself.
+- **Bench, reversal test as in 3g** (+2 ↔ −2 A, three orderings, both
+  directions, two runs each), time from 90 % to within 2 % of zero:
+
+  | Ordering | Old firmware (11-13 morning) | New, snap off | New, snap on |
+  |---|---|---|---|
+  | A: flip + sign change together | 329 µs | 290 µs | **142 µs** |
+  | B: sign change first | 144 µs | 144 µs | **144 µs** |
+  | C: flip first | 335 µs | 317 µs | **143 µs** |
+
+  24/24 OK. The ~0.4 A pause is gone with the snap on.
+- **Bench, stop during a 2 A hold** (3 each): 90 % → 2 % in 139–140 µs
+  with the snap on, 296–381 µs with it off; all end with the bridge open.
+- **Whole-reversal time** was longer today (A/C ≈ 2.1 ms instead of
+  1.4 ms) with the snap off too — the PC, not the firmware: since the
+  morning's safety fix each settings write first reads the board, so the
+  PC's flip and sign-change commands arrive twice as far apart (0.76 ms
+  instead of 0.38 ms). Does not apply to the control computer (flip line
+  and IN2 act within microseconds).
+
+## Zero-current noise reference (11-13)
+
+Which tones in the current reading are real current? Ten 16.8 ms
+recordings each with (1) servo off, bridge open, no current; (2) servo
+running at setpoint 0 (snap on, bridge closed); (3) 2 A hold; plus (4) the
+2 A hold with the dither off. Data `logs/t3o_*`.
+
+| Band (current in that band) | No current | Setpoint 0 | 2 A | 2 A, dither off |
+|---|---|---|---|---|
+| 7.7 kHz bump | 8.1 mA | 8.4 | 9.6 | 10.2 |
+| 10–20 kHz | 4.3 | 4.3 | 7.2 | 7.5 |
+| 30–150 kHz hump | 45.1 | 45.1 | 43.6 | — |
+| 260–320 kHz lines | 32.3 | 32.8 | 52.3 | 52.2 |
+
+- The 30–150 kHz hump and the 72 kHz region are the same with no current:
+  measurement.
+- The extra 200–400 kHz lines with 2 A are **not** coil current: 30 mA at
+  290 kHz would need ≈ 2.5 V across the 45 µH coil, and the coil voltage
+  was steady to ±0.05 V on the scope (≤ 0.6 mA possible). They grow with
+  load current and are unchanged with the dither off: pickup from
+  something carrying the load current, most likely the bench supply's
+  switching. Re-check with the SE-600-5 in Test 4.
+- Possibly real and small: +5 mA at 7.7 kHz (near the coil + damper
+  resonance, ≈ 7.5 kHz) and in 10–20 kHz (≈ 0.25 % of 2 A).

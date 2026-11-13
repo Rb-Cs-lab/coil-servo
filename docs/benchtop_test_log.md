@@ -34,6 +34,8 @@
 | Sensor moved inside the coil loop (11-12, late) | Is current still flowing after a switch-off that the sensor could not see? | [done, open finding] | 2 A → 0 in ≈ 170 µs; an unexplained 5 A surge, caught by the over-current trip; switch-off has a slow ≈ 1 ms tail |
 | Rev 5: zero snap (11-12, evening) | Remove the slow switch-off tail | [passed] | New firmware: 2 A falls to 2 % in 0.14 ms instead of 1.55 ms |
 | Day 3: checks before the control computer (11-13) | Everything that can be tested without the control computer | [passed, one fix made] | All cases end safely; 50 of 50 repeated sequences; a settings bug in the PC software found and fixed |
+| New firmware: snap in flips and stops (11-13) | Remove the pause near 0.4 A when the flip comes first | [passed] | Every reversal ordering and every stop reaches zero in ≈ 140 µs (before: up to 380 µs); firmware 583e877 |
+| Zero-current noise reference (11-13) | Which tones are real current | [done] | Most tones are measurement; 200–400 kHz lines grow with load current but are pickup, not current |
 
 ## Test 0 · Each part on its own (11-02 to 11-11) [passed]
 
@@ -590,11 +592,61 @@ This is the coil current only; the field at the atoms also has to wait for curre
 
 **Still to test, needs a signal generator:** the analog setpoint input IN2 (its scale has never been measured; steps, ramps, noise against the snap threshold, an earthed source, an unplugged IN2 cable) and the real flip and arm wires DIO3 and DIO4 (voltage levels, shortest pulse, glitches, delay). The scope was busy with another program on day 3, so day 3 has board recordings only.
 
+## New firmware: zero snap also in flips and stops (11-13) [passed]
+
+**Why.** The reversal test (3g) showed that when the flip request came before the setpoint sign change, the current paused near 0.4 A for 150–250 µs before the bridge could switch. Reason: the zero snap only reacted when the control computer asked for zero; during a flip or a stop the board brings the setpoint to zero itself, and then the controller turned the pass transistors down slowly, as before the snap existed.
+
+**What changed.** The zero snap now also switches the pass transistors fully off whenever the board itself brings the setpoint to zero for a flip or a stop (bridge closed, no trip). Same on/off setting as before; nothing changes for the control computer. Checked first in simulation (a new test runs flips and stops with the snap off and on), then built on the lab laptop. The first build missed its timing check by 0.05 ns in an unrelated, already marginal part (the dither); that part was rearranged so its slow steps run side by side, with exactly the same result on every clock tick, and the second build passed with a comfortable margin (+0.25 ns). Loaded on the board: firmware 583e877.
+
+**How.** The same reversal test as in 3g (+2 A ↔ −2 A, the three orderings, both directions, two runs each), run with the snap off and on, and compared with yesterday's run on the old firmware. Then a stop during a 2 A hold, three times each with the snap off and on. The board's own current recording; the scope was not available.
+
+![Reversals: old firmware, new firmware with the snap off, and with the snap on](img/benchtop/t3n_reversal_snap.png)
+
+*Grey: yesterday, old firmware. Orange: today, new firmware with the snap off (same as before). Blue: snap on: in every ordering the current goes straight through zero at the coil's own speed; the pause near 0.4 A in orderings A and C is gone. (The small dip below zero is the damper capacitor giving back its charge.)*
+
+![Stops with the snap off and on](img/benchtop/t3n_stop_snap.png)
+
+*Stopping the servo during a 2 A hold. Snap on: 90 % → 2 % in 139–140 µs every time. Snap off: 296–381 µs.*
+
+| 2 A → 0, time from 90 % to within 2 % of zero | Old firmware (yesterday) | New firmware, snap off | New firmware, snap on |
+|---|---|---|---|
+| Reversal A: flip and sign change together | 329 µs | 290 µs | **142 µs** |
+| Reversal B: sign change first | 144 µs | 144 µs | **144 µs** |
+| Reversal C: flip first | 335 µs | 317 µs | **143 µs** |
+| Stop during a hold | — | 296–381 µs | **139–140 µs** |
+
+**Result:** 24 of 24 reversals and 6 of 6 stops OK (new polarity, no trip, no sign mismatch; stops end with the bridge open). With the snap on, every switch-off now reaches zero in about 140 µs, the coil's own speed, whichever order the flip and the sign change come in.
+
+**Note on the total reversal time:** today's full reversals took longer than yesterday's (about 2.1 ms instead of 1.4 ms for A and C) with the snap off as well. That is the PC, not the firmware: since the safety fix of the morning, each settings write from the PC first reads the board, so the PC's flip and sign-change commands now arrive about twice as far apart (0.76 ms instead of 0.38 ms), and the new current can only rise once both have arrived. The control computer uses the flip line and IN2, which act within microseconds, so this does not apply to it.
+
+## Zero-current noise reference (11-13) [done]
+
+**Why.** To tell which tones in the board's current reading are real current and which come from the measurement itself.
+
+**How.** Three conditions, ten 16.8 ms recordings each, frequency content averaged: (1) servo off, bridge open, no current at all; (2) servo running at setpoint 0 (zero snap on, bridge closed); (3) a 2 A hold. A fourth check: the 2 A hold again with the dither switched off.
+
+![Frequency content of the current reading with and without current](img/benchtop/t3o_noise_ref.png)
+
+*Grey and orange (no current) lie on top of each other and under most of the blue (2 A): the broad hump around 30–150 kHz and most sharp lines are there with no current at all, so they come from the measurement. With 2 A flowing, extra sharp lines appear between about 200 and 400 kHz (strongest near 290 kHz).*
+
+| Band (current in that band) | No current | Setpoint 0, snap on | 2 A hold | 2 A hold, dither off |
+|---|---|---|---|---|
+| 7.7 kHz bump | 8.1 mA | 8.4 mA | 9.6 mA | 10.2 mA |
+| 10–20 kHz | 4.3 mA | 4.3 mA | 7.2 mA | 7.5 mA |
+| 30–150 kHz hump | 45.1 mA | 45.1 mA | 43.6 mA | — |
+| 260–320 kHz lines | 32.3 mA | 32.8 mA | 52.3 mA | 52.2 mA |
+
+**Measurement, not current:** the 30–150 kHz hump and the 72 kHz region are the same with no current at all. The extra 200–400 kHz lines that appear with 2 A cannot be real coil current either: a real 30 mA at 290 kHz would need about 2.5 V across the 45 µH coil, and the scope showed the coil voltage steady to about ±0.05 V during holds (at most ≈ 0.6 mA at 290 kHz). They grow with the load current and are the same with the dither off, so they are pickup from something that carries the load current; the bench supply's own switching is the most likely source. The real supply (SE-600-5) will behave differently, so check again in Test 4.
+
+**Possibly real, and small:** with current flowing, the 7.7 kHz bump (close to the coil + damper resonance, ≈ 7.5 kHz) and the 10–20 kHz band each grow by about 5 mA (≈ 0.25 % of 2 A).
+
+The 290 kHz lines are well above anything the controller reacts to (it works below about 10 kHz), so they do not disturb the current; they only make single readings look noisier.
+
 ## Open items
 
 - ~~Bench model: coil 9 → 45 µH; lab notes for day 2; bench document fix.~~ Done, commit 8edac7cc.
 - Design the damper for the MOT coil pair (16 µH, near critical damping, a resistor that survives 100 A pulses); check the small 72 kHz tone it adds. Put the current sensor between the two coils, and the damper across the whole pair.
-- **Zero snap during flips (3g):** make the snap act during flips and stops too, or have the control computer change the setpoint sign before the flip.
+- ~~**Zero snap during flips (3g):** make the snap act during flips and stops too, or have the control computer change the setpoint sign before the flip.~~ Done: firmware 583e877 (11-13).
 - ~~Firmware "snap OUT1 to zero".~~ Done in rev 5 (11-12). Still to do: set the snap threshold from IN2's measured noise.
 - **5 A surge / the firmware cannot see the safety board:** connect the safety board to DIO5 and stop the servo on it, and/or stop when OUT1 is at maximum but no current flows. Until then: always stop the servo before pressing reset.
 - Test 4: scope the drain bar at switch-off (surge protector level at 100 A) and the spikes when the bridge opens.
@@ -602,3 +654,5 @@ This is the coil current only; the field at the atoms also has to wait for curre
 - **Bench ringing at 10–20 kHz (3i):** cured by the damper; its cause is still not understood.
 - 3j heating test without cooling water (at 100 A).
 - Check the bridge switches' gate voltages during a flip (needs a floating probe).
+- **Temperature and cooling-water interlock** (planned, 11-13): flow and over-temperature switches that cut the bridge through the safety board in hardware, with a status line to the Red Pitaya (DIO5) so the firmware stops cleanly; temperatures on the slow inputs (AIN0, AIN2, AIN3) for logging.
+- Test 4: re-check the 200–400 kHz pickup lines with the real supply (they grow with load current on the bench supply).

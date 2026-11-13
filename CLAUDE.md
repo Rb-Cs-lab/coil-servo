@@ -14,10 +14,13 @@ rest of the repo in line is [docs/mvp_rewrite_brief.md](docs/mvp_rewrite_brief.m
 §11 — work it in order, one step per session. This file is the
 quick-reference facts; if they conflict, flag it — don't silently pick one.
 
-**Status (2026-11-12).** Rewrite steps 1–6 done: model, fixed-point
+**Status (2026-11-13).** Rewrite steps 1–6 done: model, fixed-point
 mirror, HDL, cocotb benches, host tools and docs describe the MVP. **Register
 map rev 5 is on main and deployed** (`bitstreams/coil_servo.bit.bin`, build
-ID commit `275081b`, 2026-11-12, timing met but thin: WNS +0.003 ns). Rev 5
+ID commit `583e877`, 2026-11-13, timing met: WNS +0.251 ns; the snap now
+also acts while the FSM forces the setpoint to zero for a flip or stop —
+bench: every flip ordering and every stop reaches zero in ≈ 140 µs; the
+dither was restructured for timing, same function). Rev 5
 = rev 4 plus the **zero-setpoint snap**: ctrl b21 `snap_enable`, CFG W23
 `snap_thresh`, STS b14 `snapped` — on a (tick-averaged) zero setpoint OUT1
 goes to 0 at once and the integrator is held cleared, so turn-offs run at
@@ -95,7 +98,10 @@ Firmware decisions in force: **snap to zero** (decided 2026-11-10) — a
 setpoint target inside the zero window (`zero_win`) bypasses the slew limit.
 By itself that does not force OUT1 to 0 (the PI winds it down, leaving a
 slow tail near zero, measured 11-12); the rev 5 **zero-setpoint snap**
-does, on a zero setpoint only (decided and deployed 2026-11-12). **Ramps enforced
+does, on a zero requested setpoint only (decided and deployed 2026-11-12) and
+— since build 583e877 (2026-11-13) — also during the FSM's own forced zero
+(flip/stop ramp-down, dead time, settle, timeout hold; bridge closed, no
+trip). **Ramps enforced
 in fabric** (decided 2026-11-10; model: raw steps undershoot going down and
 overshoot up to ~20 % on compliance-limited up-steps): ≤ 200 A/ms away from
 zero, ≤ 50 A/ms toward zero (`servo_slew.v`, CFG W15/W20); the control
@@ -115,7 +121,16 @@ Still queued: shot-synchronous capture (proposal in docs/dashboard.md);
 measured IN2 noise once the control computer drives IN2); bridge-open fast turn-off (needs the
 TVS + blocking diode, waits for parts); latch visibility (latch → DIO5,
 stall detection); level-sensitive latch trip review; dashboard "hold arm"
-mode for software flips.
+mode for software flips; **temperature + cooling-water interlock** (user,
+2026-11-13 — remind them): flow / over-temperature switches tripping the
+bridge through the logic board in hardware, status to the Pitaya on DIO5
+(same wire as latch visibility), temperatures on AIN0/AIN2/AIN3 for
+logging; MOT damper (proposed 22 µF film + ≈ 1.6 Ω pulse-rated,
+servo_interface_brief.md §1c).
+**Host safety fix (2026-11-13):** `Board.write_cfg` is a per-word
+read-modify-write (a second connection's stale copy restarted a stopped
+servo, bench test 3l); the capture decoder takes the bridge polarity and
+adds +0.5 LSB (floor bias of [21:6]).
 **GUI rule (user, 2026-11-11):** anything like this — a new setting, status
 or calibration — also goes into the dashboard (separate dashboard session);
 ask if unsure.

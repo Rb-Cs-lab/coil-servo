@@ -235,9 +235,9 @@ boost_mode = 0
 #     python -m coil_servo_host.zero <channel> --write
 # Amps of the sensor scale; the FPGA subtracts them from every IN1/IN2
 # sample. Re-measure after changing the LEM, burden, in-amp gain or cable.
-in1_offset_amps = 0.2368        # measured 2026-11-12 (coil_servo_host.zero)
+in1_offset_amps = 0.2355        # measured 2026-11-13 (coil_servo_host.zero)
                                 # (zero tool had read ~0.21 A)
-in2_offset_amps = 0.1495        # measured 2026-11-12 (coil_servo_host.zero)
+in2_offset_amps = 0.1627        # measured 2026-11-13 (coil_servo_host.zero)
 
 [z_shim]
 board_host = "rp-zshim.local"   # PLACEHOLDER
