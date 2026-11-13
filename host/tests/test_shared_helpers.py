@@ -32,8 +32,9 @@ def test_decimated_decode_and_columns(tmp_path):
     assert data.tolist() == [[100, -20], [-3, 5]]
     cols = decimated_columns(data, 200.0)
     lsb = 200.0 / 16384
-    assert cols["i_amps"].tolist() == pytest.approx([100 * lsb, -3 * lsb])
-    assert cols["setpoint_amps"].tolist() == pytest.approx([80 * lsb, 2 * lsb])
+    # each column gets +0.5 LSB: the [21:6] truncation is a floor
+    assert cols["i_amps"].tolist() == pytest.approx([100.5 * lsb, -2.5 * lsb])
+    assert cols["setpoint_amps"].tolist() == pytest.approx([81 * lsb, 3 * lsb])
     assert cols["t_s"][1] == pytest.approx(1 / FS_DEC)
     write_csv(tmp_path / "c.csv", cols)
     lines = (tmp_path / "c.csv").read_text().splitlines()
@@ -47,12 +48,16 @@ def test_setpoint_column_uses_the_bridge_polarity():
     the decoder must give back -2 A (not 2*meas - sp = -1.8 A)."""
     lsb = 200.0 / 16384
     meas, sp = round(-1.9 / lsb), round(-2.0 / lsb)
+    # the decoder adds +0.5 LSB to each column (floor bias of [21:6]):
+    # setpoint = (meas + 0.5) + sign * (err + 0.5)
     data = np.array([[meas, -(sp - meas)]])
     assert decimated_columns(data, 200.0, polarity=1)["setpoint_amps"][0] == \
-        pytest.approx(sp * lsb)
+        pytest.approx(sp * lsb)                          # the halves cancel
     data0 = np.array([[-meas, -sp + meas]])            # same at polarity 0
     assert decimated_columns(data0, 200.0)["setpoint_amps"][0] == \
-        pytest.approx(-sp * lsb)
+        pytest.approx((-sp + 1) * lsb)
+
+
 
 
 def test_raw_decode_is_s14():

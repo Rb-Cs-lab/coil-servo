@@ -711,8 +711,9 @@ def test_capture_via_real_board(mock_server, tmp_path):
         dev.perform("capture", {}, "127.0.0.1")
         cap = dev.latest_capture()
         lsb = load_channel("mot")["i_fs"] / 16384
-        assert cap["i_amps"][0] == pytest.approx(200 * lsb, abs=1e-4)
-        assert cap["sp_amps"][0] == pytest.approx(190 * lsb, abs=1e-4)
+        # +0.5 LSB per column: the decoder undoes the [21:6] floor bias
+        assert cap["i_amps"][0] == pytest.approx(200.5 * lsb, abs=1e-4)
+        assert cap["sp_amps"][0] == pytest.approx(191 * lsb, abs=1e-4)
         assert Path(cap["file"]).exists()
     finally:
         dev.close()

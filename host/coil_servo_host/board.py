@@ -125,9 +125,24 @@ class Board:
         word, lsb, width, _ = CFG_FIELDS[name]
         return (self._cfg >> (32 * word + lsb)) & ((1 << width) - 1)
 
+    def _refresh_words(self, words) -> None:
+        """Re-read these CFG words from the hardware into the local shadow."""
+        for w in sorted(words):
+            (value,) = self.read_words(CFG_BASE + 4 * w, 1)
+            self._cfg &= ~(0xFFFFFFFF << (32 * w))
+            self._cfg |= value << (32 * w)
+
     def write_cfg(self, **fields) -> None:
-        """Update named CFG fields, preserving everything else via the local
-        shadow, and write only the words that changed.
+        """Update named CFG fields and write only the words that hold them,
+        as a per-word read-modify-write: each word is re-read from the
+        hardware first, so the other fields in it keep what the board holds
+        NOW, not what this connection last saw. (Bench test 3l, 2026-11-13:
+        with the shadow alone, a second connection's stale word 0 put
+        servo_enable back to 1 after another client's stop, and its stale
+        word 13 then gave an arm edge -- the stopped servo restarted.) Costs
+        one extra read per word (~0.3 ms); a write landing in the gap
+        between that read and this write can still be lost -- don't drive
+        one board from two tools at the same moment.
 
         Leaving open loop (open_loop 1 -> 0) is only applied while the FSM
         is IDLE or TRIPPED: the firmware's PI keeps integrating in open loop
@@ -139,6 +154,10 @@ class Board:
           is cleared by Board.stop() or the next enable from IDLE;
         - otherwise: refused with RuntimeError."""
         self._check_map()
+        for name in fields:
+            if name not in CFG_FIELDS:
+                raise KeyError(f"unknown CFG field {name!r}")
+        self._refresh_words({CFG_FIELDS[n][0] for n in fields})
         if (fields.get("open_loop") == 0 and self._field("open_loop") == 1):
             state = self.sts()["fsm_state_name"]
             if state not in ("IDLE", "TRIPPED"):
@@ -184,6 +203,7 @@ class Board:
             time.sleep(0.02)
             state = self.sts()["fsm_state_name"]
         if state == "IDLE":
+            self._refresh_words({0})
             if self._field("open_loop"):
                 self.write_cfg(open_loop=0)
             self.pulse("int_clear")

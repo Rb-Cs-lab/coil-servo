@@ -54,11 +54,16 @@ def decimated_columns(data: np.ndarray, i_fs: float, polarity: int = 0) -> dict:
     16.8 ms window makes the setpoint column wrong after the flip. In open
     loop the setpoint column is the OUT1 command in sensor-scale amps, not
     a current. (Bench 2026-11-13: without the sign, polarity-1 records
-    showed 2*measured - setpoint.)"""
+    showed 2*measured - setpoint.)
+
+    Both columns are the 22-bit decimated sums with the low 6 bits cut off
+    ([21:6], a floor), which biases each by -1/2 LSB on average
+    (-I_FS/32768 = -6.8 mA at I_FS 224 A); +0.5 LSB undoes that (bench test
+    3k: holds then agree with the commanded setpoint within 0.3 mA)."""
     scale = lsb_amps(i_fs)
     sign = -1.0 if polarity else 1.0
-    i16 = data[:, 0].astype(float)
-    e16 = data[:, 1].astype(float)
+    i16 = data[:, 0].astype(float) + 0.5
+    e16 = data[:, 1].astype(float) + 0.5
     return {"t_s": np.arange(len(i16)) / FS_DEC,
             "i_amps": i16 * scale,
             "setpoint_amps": (i16 + sign * e16) * scale}

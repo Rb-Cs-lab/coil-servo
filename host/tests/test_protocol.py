@@ -205,6 +205,26 @@ def test_sync_shadow_picks_up_another_clients_write(server):
         assert old.read_cfg()["servo_enable"] == 1
 
 
+def test_stale_connection_cannot_undo_a_stop(server):
+    """Bench test 3l (2026-11-13): connection B was opened while the servo
+    ran; A then stopped it and released the software arm. B, WITHOUT
+    re-syncing, writes another word-0 field and pulses the software flip
+    (word 13). Each write re-reads its word first, so servo_enable stays 0
+    and the arm bit stays released -- before the fix, B's stale words put
+    servo_enable back to 1 and gave an arm edge that restarted the servo."""
+    with Board("127.0.0.1", port=server) as a:
+        a.write_cfg(servo_enable=1, dio_invert=0b010)      # running, armed
+        with Board("127.0.0.1", port=server) as b:         # B sees that
+            a.write_cfg(servo_enable=0, dio_invert=0)      # A stops
+            b.write_cfg(led=5)                             # stale word 0
+            b.write_cfg(dio_invert=0b001)                  # stale word 13
+            b.write_cfg(dio_invert=0)
+            cfg = a.read_cfg()
+            assert cfg["servo_enable"] == 0, "stale write re-enabled the servo"
+            assert cfg["led"] == 5
+            assert cfg["dio_invert"] == 0, "stale write re-raised the arm bit"
+
+
 def test_leaving_open_loop_only_from_idle(server):
     """Open-loop wind-up guard (found on the loopback, 2026-11-11): while
     the FSM runs, open_loop 1 -> 0 is refused, or deferred when it comes
