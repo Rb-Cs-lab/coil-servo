@@ -2,590 +2,603 @@
 
 # Benchtop Test Log — MOT coil servo
 
-2026-11-02 to 2026-11-12 · Tests 0–3 of the bring-up campaign (docs/test_campaign.md), all at low power on the bench · Test 3 on a 3 A current-limited bench supply at 5 V (profile `mot_bench`) with one temporary test coil (12 turns, ≈ 45 µH) · firmware register map rev 4, commit 103a127
+2026-11-02 to 2026-11-13 · Tests 0–3 of the bring-up (docs/test_campaign.md), all at low power on the bench · Test 3 uses a small bench power supply (5 V, at most 3 A) instead of the big 100 A supply, settings profile `mot_bench`, and one temporary test coil (12 turns) · firmware rev 4 (commit 103a127) until the evening of 11-12, then rev 5 (commit 275081b)
+
+## Words used in this log
+
+- **Setpoint:** the current we ask for. **Controller:** the part of the firmware that compares the measured current with the setpoint and adjusts the output until they match ("closed loop"). "Open loop" means the output is set by hand and the controller is off.
+- **OUT1:** the Red Pitaya output that drives the pass transistors, set in steps ("counts"). **IN1:** the measured coil current, from the current sensor (LEM). **IN2:** the setpoint from the control computer.
+- **Pass transistors** (pass bank): six transistors that set how much current flows. **Bridge** (H-bridge): four switches that set which way the current flows through the coil. **Flip:** reversing that direction.
+- **Arm:** the "you may run" signal. **Trip:** the automatic switch-off when the current is too high. **Safety board:** cuts the bridge off if the Red Pitaya's heartbeat signal stops, and stays cut off until its reset button is pressed.
+- **Red Pitaya pins:** DIO0 = bridge direction, DIO1 = bridge on/off, DIO3 = flip signal, DIO4 = arm signal, DIO6 = heartbeat. **Firmware:** the program in the Red Pitaya's chip that runs the controller.
 
 ## Status
 
-| Test | Why | Status | Result in one line |
+| Test | What we checked | Status | Result in one line |
 |---|---|---|---|
-| 0 Pre-checks (11-02 to 11-11) | FETs matched; Red Pitaya, safety logic board, loop and H-bridge each work on their own | [passed] | Latch clock wire missing → added; monostable 7.6 ms; loopback 2.026; open-loop wind-up fixed in rev 4; bridge switches cleanly by hand |
-| 1 Gate stage (11-11) | OUT1 → op-amp → FET gates works, no oscillation, fails safe | [passed] | Op-amp supply wiring fixed; gain 7.93; 50 Ω terminator fitted on OUT1 (1.168 V full scale) |
-| 2 Sensor chain and zero (11-11) | LEM → in-amp → IN1 reads zero correctly | [passed] | Three wiring faults on the in-amp board fixed; LEM offset ≈ 0; Red Pitaya offset calibrated |
-| 3 day 1: first current (11-11) | Sign, grounding, bank behaviour near threshold | [done] | LEM sign fixed; bench supplies must float; IN1 reads ≈ 10 % low; bank onset ≈ 3540 counts |
-| 3 day 2 bring-up (11-12) | Load firmware and bench settings, re-zero | [done] | Clean; deploying trips the safety latch (reset after every deploy) |
-| 3c IN1 current scale | Board must read amps correctly | [done] | `in1_fs_volts` = 1.12 V → 224 A full scale |
-| 3d PI gain tuning | Fast, stable closed loop | [done] | kp 31.2 counts/A, ki 942 counts/(A·ms); ×2 more oscillates at 21 kHz; 2.5 A step +2.8 %; bench limit lowered to 2.2 A because of the ringing |
-| 3e Over-current trip | The current limit of the MVP | [passed] | Fires at ≈ 2.85 A (set 2.79 A), before the 3 A supply limit |
-| 3f Turn-off path | Freewheel vs TVS, turn-off time | [done] | Freewheel through the bridge body diode; slope set by the coil's L |
-| 3g Flips, reversal + dead time | Polarity change at zero current, no shoot-through; the computer's flip + sign-change sequence | [passed, open finding] |
-| 3h Heartbeat-latch trip | Hardware safety path at current | [passed] | Bridge opens at 2 A, current gone in ≈ 10 µs; rail spikes +2.5–3.2 V for ≈ 10 µs |
-| 3i Hold noise, dither on/off | Steady-hold stability vs 0.1 % spec | [done, open finding] | Average stable to 0.01 %; dither makes no difference on the bench; hold noise dominated by a 10–20 kHz ringing of the pass bank with the coil (±0.15 A), not from the loop |
-| Extra: range, long hold, flips | Gains over 0.5–2.2 A, drift, flip reliability | [passed] | No trips; 10 min hold stable within 0.5 mA after warm-up; 20/20 flips |
-| 3j Uncooled duty test | Heating limit without water | [moved] | Moved to the 100 A build (≤ 15 W on the bench) |
-| Damper test | Does 3.2 Ω + 10 µF across the coil stop the ringing? | [passed] | Yes: ringing 43–124 mA → 2.5–5 mA with the coil lifted; 2 A hold 100 µs noise 6.5 mA rms |
-| LEM inside the loop: turn-offs (11-12, late) | Is current still flowing after a turn-off, hidden in the coil–damper loop? | [done, open finding] | Freewheel 2 A → 0 in ≈ 170 µs, then a −0.2 A swing for ≈ 100 µs; bridge opened at 2 A: zero in ≈ 25 µs, gone by ≈ 200 µs, energy into the damper; latch holds; an unexplained 5 A surge caught by the firmware trip; closed-loop turn-off has a ≈ 1 ms PI tail |
-| Rev 5: zero-setpoint snap (11-12, evening) | Remove the closed-loop turn-off tail | [passed] | New firmware deployed; 2 A turn-off to 2 % in 0.14 ms instead of 1.55 ms; small setpoints still held; no chatter on IN2 |
-| Day 3 pre-computer checks (11-13) | Everything testable without the control computer | [passed, one fix made] | Stop/trip around flips safe; arm must be held; ramps as set; 50/50 shots, holds ±0.3 mA; two-program settings bug found and fixed; loop survives a server kill |
+| 0 Pre-checks (11-02 to 11-11) | Each part works on its own before any current flows | [passed] | A missing wire on the safety board found and added; one firmware problem (output jump when switching modes) fixed |
+| 1 Gate stage (11-11) | OUT1 drives the six pass transistors correctly, without oscillating, and switches them off if power is lost | [passed] | Amplifier supply wiring fixed; amplifier gain 7.93; a 50 Ω terminator added on OUT1 |
+| 2 Current sensor and zero (11-11) | The current reading is zero when no current flows | [passed] | Three wiring faults on the sensor's amplifier board fixed; the small remaining offset is calibrated out |
+| 3 day 1: first current (11-11) | Sign of the reading, grounding, how the transistors behave at small currents | [done] | Sensor turned round; bench supplies must not be connected to earth; reading about 10 % low (calibrated on day 2) |
+| 3 day 2 start (11-12) | Load the firmware and bench settings, zero the sensor | [done] | Loading firmware trips the safety board: press its reset after every load |
+| 3c Current scale | The board reads amps correctly | [done] | Calibrated against the supply's ammeter: full scale 224 A, 27.3 mA per measurement step |
+| 3d Controller settings | Fast and stable current control | [done] | Set at half the strength where it starts to oscillate; bench limit lowered to 2.2 A |
+| 3e Over-current trip | The current limit | [passed] | Trips at 2.85 A (set 2.79 A), before the supply's own 3 A limit |
+| 3f Switch-off | Where the coil's current goes when the transistors switch off, and how fast it dies away | [done] | It circulates through the bridge's built-in diodes and dies away by itself, as designed |
+| 3g Flips and reversals | Reversing the current safely and quickly, the way the control computer will | [passed, open finding] | All 32 reversals worked, 1–1.4 ms each; change the setpoint sign first, then flip |
+| 3h Safety-board cut-off | The hardware cut-off while current flows | [passed] | Bridge opens at once, current gone in ≈ 10 µs; supply voltage jumps 2.5–3.2 V for ≈ 10 µs |
+| 3i Steadiness of a held current | Is the current steady enough (goal 0.1 %)? | [done, open finding] | Average steady to 0.01 %; a 10–20 kHz ringing (±0.15 A) found, not caused by the controller |
+| Extra checks | Settings over the whole bench range, a 10-minute hold, 20 flips | [passed] | No trips; 10-minute hold steady within 0.5 mA; 20 of 20 flips |
+| 3j Heating without cooling water | How long it may run without water | [moved] | Moved to the 100 A test (the bench only reaches 15 W) |
+| Damper | Does a resistor + capacitor across the coil stop the ringing? | [passed] | Yes: ringing 43–124 mA → 2.5–5 mA |
+| Sensor moved inside the coil loop (11-12, late) | Is current still flowing after a switch-off that the sensor could not see? | [done, open finding] | 2 A → 0 in ≈ 170 µs; an unexplained 5 A surge, caught by the over-current trip; switch-off has a slow ≈ 1 ms tail |
+| Rev 5: zero snap (11-12, evening) | Remove the slow switch-off tail | [passed] | New firmware: 2 A falls to 2 % in 0.14 ms instead of 1.55 ms |
+| Day 3: checks before the control computer (11-13) | Everything that can be tested without the control computer | [passed, one fix made] | All cases end safely; 50 of 50 repeated sequences; a settings bug in the PC software found and fixed |
 
-## Test 0 · Red Pitaya, logic board and power-stage pre-checks (11-02 to 11-11) [passed]
+## Test 0 · Each part on its own (11-02 to 11-11) [passed]
 
-**Why.** Before any current flows, every piece is checked on its own: the FETs are matched, the Red Pitaya runs the firmware and talks to the lab PC, the safety logic board (heartbeat watchdog → latch → bridge-driver disable) trips and stays tripped, the control loop works on a cable, and the H-bridge switches correctly when driven by hand.
+**Why.** Before any current flows, every part is checked by itself: the transistors are matched, the Red Pitaya runs the firmware and talks to the lab PC, the safety board cuts the bridge off when it should and stays cut off, the controller works on a plain cable, and the bridge switches correctly when driven by hand.
 
-### 0a · MOSFET thresholds (11-02)
+### 0a · Transistor thresholds (11-02)
 
-**How.** Each FET with gate tied to drain, fed through a series resistor from a bench supply; DMM across gate–source gives the threshold V<sub>GS(th)</sub> (pass bank IXTN200N10L2 at 3 mA, bridge IXFN420N10T at 8 mA), 10 of each.
+**How.** For each transistor we measured with a meter the gate voltage at which it starts to conduct (its threshold), 10 of each type.
 
-**Result:** pass bank 3.35–3.56 V → installed the six at 3.50–3.56 V (0.06 V spread → ≤ 12 % current-sharing spread at 100 A). Bridge 3.51–3.59 V → installed four within 0.01 V.
+**Result:** pass transistors 3.35–3.56 V; the six installed are within 0.06 V of each other, so they share the current to within about 12 % at 100 A. Bridge transistors 3.51–3.59 V; the four installed are within 0.01 V.
 
-### 0b · Logic board on the Red Pitaya, first firmware (11-03)
+### 0b · Safety board on the Red Pitaya, old firmware (11-03)
 
-**How.** Logic board wired to E1, power stage off; the August firmware; `check mot` from the lab PC, then the LED acceptance sequence (green = heartbeat OK, amber = bridge enabled, red = latch tripped).
+**How.** Safety board wired to the Red Pitaya's connector E1, power stage switched off, the August firmware. The check program run from the lab PC, then the light test: green = heartbeat OK, amber = bridge allowed on, red = cut off.
 
-**Finding:** after a reboot the board had neither the bitstream nor the register server running, so `check` failed. Loaded both by hand over ssh; the host tools now detect this and print the `deploy` command.
+**Finding:** after a restart the Red Pitaya had neither the firmware nor its communication program running, so the check failed. Both were loaded by hand; the PC tools now notice this and print the command that fixes it.
 
-**Result:** heartbeat advancing, LED walk, state IDLE, nothing armed or enabled; LED sequence passed. Zero reading +0.18 A (the Red Pitaya's own input offset).
+**Result:** heartbeat running, lights correct, servo idle, nothing switched on. With no current it read +0.18 A (the Red Pitaya's own input offset).
 
-**Monostable timing:** with 68 kΩ the watchdog timed out after ≈ 1.1 ms, about one heartbeat period, so a lost heartbeat could recover on an edge. Changed to 220 kΩ / 100 nF: drop ≈ 7.6 ms after the last heartbeat edge, consistent.
+**Timer:** the timer that decides "the heartbeat has stopped" ran out after only 1.1 ms, about one heartbeat period, which is too short. With a 220 kΩ resistor and 100 nF capacitor it now cuts off ≈ 7.6 ms after the last heartbeat.
 
-**Noted:** the old firmware started on the arm *level*; the MVP firmware needs an arm *edge* after `servo_enable`, so the recipe is now enable first, then arm.
+**Noted:** the old firmware started as soon as the arm signal was on. The new firmware needs arm to switch on *after* the servo is enabled, so the order is: enable, then arm.
 
-### 0c · First deploy of the MVP firmware (11-11)
+### 0c · First load of the new firmware (11-11)
 
-**How.** Board only, arm low, nothing on the inputs; `deploy mot` then `check mot`.
+**How.** Red Pitaya only, arm off, nothing on the inputs. Loaded the firmware, then ran the check program.
 
-**Result:** image loaded in 69 ms; safe state confirmed (IDLE, OUT1 = 0, bridge disabled, not armed); all 32 configuration words written and read back correctly; zero reading +0.19 A (Red Pitaya input offset).
+**Result:** loaded in 69 ms; safe state confirmed (idle, output 0, bridge off, not armed); all 32 settings written and read back correctly; reads +0.19 A with no current (the input offset).
 
-### 0d · Logic-board acceptance test with the MVP firmware (11-11)
+### 0d · Safety-board test with the new firmware (11-11)
 
-**How.** Power stage off. Arm jumper on E1 pin 11, heartbeat wire DIO6 pulled and re-plugged by hand, LEDs and the `watch` display read at each step (bringup.md 3a).
+**How.** Power stage off. Arm jumper on E1 pin 11; the heartbeat wire (DIO6) pulled out and plugged back by hand; lights and the status display read at every step.
 
-| Step | Action | Expected | Seen |
+| Step | What we did | Expected | Seen |
 |---|---|---|---|
-| 1 | Arm jumper in *before* `servo_enable` | stays IDLE, amber off (no arm edge) | ✓ |
-| 2 | Unplug and re-plug arm | RUN, amber on | ✓ |
-| 3 | Pull heartbeat (DIO6) | green off, amber off, **red on** | red stayed off ✗ → fixed, then ✓ |
-| 4 | Re-plug heartbeat | green on, red stays on, amber stays off | ✓ after fix |
-| 5 | Stop the servo (IDLE), then press reset | red off, amber stays off | ✓ |
-| 6 | Enable, arm edge; then stop | RUN, then IDLE | ✓ |
+| 1 | Arm jumper in *before* enabling the servo | stays idle, amber off (arm must switch on after enabling) | ✓ |
+| 2 | Unplug and re-plug arm | running, amber on | ✓ |
+| 3 | Pull the heartbeat wire (DIO6) | green off, amber off, **red on** | red stayed off ✗ → fixed, then ✓ |
+| 4 | Plug the heartbeat back in | green on, red stays on, amber stays off | ✓ after the fix |
+| 5 | Stop the servo, then press reset | red off, amber stays off | ✓ |
+| 6 | Enable and arm; then stop | running, then idle | ✓ |
 
-**Fault found: the latch did not latch.** Pulling the heartbeat turned the bridge off, but re-plugging it turned the bridge back on by itself. By meter: the monostable's output (CD74HC123 pin 4) was correct, but the latch's clock input (74HC74 pin 3) had **no wire at all** (floating at 0.4–0.6 V; probably came loose after 11-03). Wire added; test passed.
+**Fault found: the cut-off did not stay cut off.** Pulling the heartbeat switched the bridge off, but plugging it back switched the bridge on again by itself. A meter showed the timer chip's output (CD74HC123 pin 4) was fine, but the wire to the latch chip (74HC74 pin 3) was missing altogether, probably loose since 11-03. Wire added; test passed.
 
-**Design weakness (open):** the latch trips on the *edge* of heartbeat loss. Pressing reset while the heartbeat is still missing clears it, and when the heartbeat returns there is no new edge, so the bridge enables without another reset. Until a level-sensitive trip is fitted: **press reset only with green on, and only after stopping the servo** (dropping arm alone does not stop a running servo).
+**Weak point (open):** the cut-off is triggered by the *moment* the heartbeat stops, not by its absence. If reset is pressed while the heartbeat is still missing, the cut-off clears and does not trigger again when the heartbeat returns. Until this is changed: **press reset only with the green light on, and only after stopping the servo** (taking arm away does not stop a running servo).
 
-### 0e · Loopback test with the MVP firmware (11-11)
+### 0e · Controller test on a cable (11-11)
 
-**Why.** Check the control loop, scaling and trip on a cable before connecting real hardware.
+**Why.** Check the controller, the scaling and the over-current trip on a plain cable before connecting real hardware.
 
-**How.** OUT1 cabled straight to IN1 (the "plant" is just a wire); logic board connected; no power stage. Open-loop OUT1 values, closed-loop setpoints, then a setpoint above the trip level.
+**How.** OUT1 connected straight back to IN1 with a cable, so the "coil" is just a wire; safety board connected; no power stage. Fixed output values first, then held setpoints, then a setpoint above the trip level.
 
-**Results:** loopback factor 2.026 (August: 2.03); closed loop holds the setpoint to ±1–2 counts at "20 A" and "50 A"; a "110 A" setpoint trips the board, bridge enable drops, `trip_ack` + stop returns to IDLE.
+**Results:** output-to-input ratio 2.026 (August: 2.03); the controller holds the setpoint to within 1–2 steps at "20 A" and "50 A"; a "110 A" setpoint trips the board, the bridge signal drops, and acknowledging + stopping returns it to idle.
 
-**Finding — open-loop wind-up:** in open loop the integrator kept integrating and wound up to ≈ 4400 counts, so switching to closed loop jumped OUT1 and tripped the board (on the real coil, a jump towards ~100 A). Fixed in the host tools the same day and in firmware rev 4 (integrator held cleared in open loop).
+**Finding — a jump when switching modes:** while the output was set by hand (open loop), the controller kept adding up its error in the background, so switching back to automatic control made the output jump and tripped the board. On the real coil that would be a jump toward 100 A. Fixed the same day in the PC tools and in firmware rev 4 (the controller is held at zero while the output is set by hand).
 
-### 0f · H-bridge and current sensor driven by hand (colleague, reported 11-11)
+### 0f · Bridge and current sensor driven by hand (colleague, reported 11-11)
 
-**How.** Bridge alone, logic board not connected: UCC5350 gate drivers on isolated supplies, logic inputs set by hand; 5 V bench supply; first a resistive load, then the coil with the LEM sensor.
+**How.** Bridge alone, safety board not connected; the bridge's switch drivers on their own isolated supplies, switched by hand; 5 V bench supply. First a resistor as the load, then the coil with the current sensor.
 
-**Results:** no shoot-through; one loose gate connection found and fixed (Q4); resistive load gives +5 V / −5 V / 0 V for the two diagonals and all-off; 1.12 A through the coil each way, reversal correct.
+**Results:** no short-circuit through the bridge; one loose gate connection found and fixed (Q4); with the resistor the output is +5 V, −5 V or 0 V as expected; 1.12 A through the coil in each direction, reversal correct.
 
-**Finding:** an apparent LEM offset of −5.8 A (primary equivalent). Test 2 later showed it was wiring on the in-amp board, not the sensor; it also prompted the zero-offset registers in firmware rev 4.
+**Finding:** the sensor seemed to read −5.8 A with no current. Test 2 showed this was wiring on the sensor's amplifier board, not the sensor. It also led to the zero-offset correction added in firmware rev 4.
 
 ## Test 1 · Gate stage (11-11) [passed]
 
-**Why.** Before any high current: check that the OUT1 command reaches the six pass-FET gates through the OPA994 gain stage as designed, that the stage does not oscillate, and that the gates fall safely when the op-amp loses power.
+**Why.** OUT1 goes through an amplifier (OPA994, gain ≈ 8) to the gates of the six pass transistors; the gate voltage sets how much current flows. Before any high current we check that the amplifier works as designed, does not oscillate, and switches the transistors off if it loses power.
 
-**How.** OPA994 board on its own 5.184 V bench supply; OUT1 teed to scope CH1; ×10 probes on the gates of pass FETs #4, #1 and #10; high-current side open. Open loop, OUT1 swept 0–4474 counts.
+**How.** Amplifier board on its own 5.18 V bench supply; OUT1 also to scope CH1; probes on the gates of pass transistors #4, #1 and #10; no power on the high-current side. OUT1 stepped from 0 to 4474 steps by hand.
 
-![Op-amp input and gate voltage versus OUT1 command, with and without the terminator](img/benchtop/t1_gate_sweep.png)
+![Amplifier input and gate voltage versus OUT1 setting, with and without the terminator](img/benchtop/t1_gate_sweep.png)
 
-*Without a terminator OUT1 swings 2.34× its nominal range and the gates hit the op-amp rail at ≈ 2550 counts. With the 50 Ω terminator the full command range stays below the rail.*
+*Without a terminator OUT1 swings 2.34× more than specified, and the gates reach the amplifier's maximum (its supply voltage) at about 2550 steps. With the 50 Ω terminator the whole range stays below it.*
 
-![Gate voltages after the op-amp supply is switched off](img/benchtop/t1_gate_decay.png)
+![Gate voltages after the amplifier's supply is switched off](img/benchtop/t1_gate_decay.png)
 
-*All gates follow the op-amp's own supply down together, below 0.5 V within ≈ 8.5 ms.*
+*When the amplifier's supply is switched off, all gates fall together, below 0.5 V within ≈ 8.5 ms: the transistors switch off safely.*
 
-**Wiring fault found first:** the gates stayed at ≈ 0 V. The op-amp's supply minus was not tied to the pass-bank source bar (its plus sat at ground). Fixed: supply minus → source bar, supply floating from earth.
+**Wiring fault found first:** the gates stayed at 0 V because the amplifier's supply was not connected to the transistors' common reference point (the source bar). Fixed; the amplifier's supply is not connected to earth.
 
-**Results:** op-amp gain 7.93 (design 7.98); gate ceiling 5.18 V (the op-amp rail); no oscillation (gates 4–6 mV rms at full bandwidth, only the Red Pitaya's 125 MHz clock lines); fail-safe on power loss.
+**Results:** amplifier gain 7.93 (design 7.98); highest possible gate voltage 5.18 V (the amplifier's supply); no oscillation (only 4–6 mV of pickup from the Red Pitaya's clock); safe when power is lost.
 
-**Test 1b, 50 Ω terminator on OUT1:** 142.6 µV per count (1.168 V full scale, 17 % above nominal), −41.3 mV at code 0. Into channels.toml: `out1_fs_volts` 1.168, `out1_offset_volts` −0.0413, `gain_opamp` 7.93, `V_opamp_max` 5.18. The terminator stays fitted.
+**Test 1b, 50 Ω terminator on OUT1:** 142.6 µV per step (1.168 V at full scale, 17 % above the nominal 1 V), −41.3 mV at zero. These values are now in the settings file (`out1_fs_volts` 1.168, `out1_offset_volts` −0.0413, `gain_opamp` 7.93, `V_opamp_max` 5.18). The terminator stays fitted.
 
-## Test 2 · Sensor chain and zero (11-11) [passed]
+## Test 2 · Current sensor and zero (11-11) [passed]
 
-**Why.** The current reading (LEM → 10 Ω burden → AD8421 in-amp → IN1) must read zero with no current, with a known offset, before it is trusted for trips and the ±0.5 A flip window.
+**Why.** The current is measured by a sensor around the coil lead (LEM). Its small signal goes through a 10 Ω resistor and an amplifier (AD8421) into IN1. Before this reading is trusted for the over-current trip, and for deciding when the current is close enough to zero to flip, it must read zero when no current flows.
 
-**How.** LEM on its ±15 V supply, no current anywhere, in-amp output teed to the scope; IN2 on a 50 Ω terminator. Then `zero mot --write --apply`.
+**How.** Sensor powered, no current anywhere, the amplifier output also on the scope; IN2 closed with a 50 Ω terminator. Then the zero program measured and stored the offsets.
 
-| Fault found | Symptom | Fix |
+| Fault found | What it did | Fix |
 |---|---|---|
-| In-amp REF (pin 6) floating: reached ground only through capacitors | IN1 pinned at full scale, REF at +4.6 V | Wire REF straight to GND |
-| Gain pins 2–3 bridged by solder | Output stuck at a supply limit or oscillating | Bridge removed |
-| Output resistor 47 kΩ instead of 49.9 Ω | Would read 4.5–9 % low and filter the signal | Replaced with 49.9 Ω |
+| The amplifier's reference pin (pin 6) not connected to ground | IN1 stuck at full scale | Connected straight to ground |
+| Solder bridge between pins 2 and 3 | Output stuck or oscillating | Removed |
+| A 47 kΩ resistor where 49.9 Ω was meant | Would read 4.5–9 % low and slow the signal down | Replaced |
 
-**Result:** the "−5.8 A LEM offset" of earlier days was the wiring, not the sensor: with the chain repaired the in-amp reads −0.2 mV (≈ −0.04 A). Zero calibration: IN1 +8.6 counts (≈ +0.21 A, mostly the Red Pitaya's own input offset), IN2 +6.3 counts; after loading, the board reads −0.06 A with no current.
+**Result:** the "−5.8 A offset" seen earlier was these wiring faults, not the sensor. Repaired, the amplifier reads −0.2 mV (≈ −0.04 A). Calibration: IN1 +8.6 steps (≈ +0.21 A, mostly the Red Pitaya's own input), IN2 +6.3 steps. Afterwards the board reads −0.06 A with no current.
 
-**Noted:** the in-amp inputs are swapped relative to the drawing, which only flips the sign (fixed in Test 3 by turning the LEM round). Drawing correction for the in-amp board: REF wired straight to GND, capacitors from the supply pins to GND.
+**Noted:** the amplifier's two inputs are swapped compared with the drawing, which only flips the sign (fixed in Test 3 by turning the sensor round). Drawing to correct: reference pin straight to ground; capacitors from the supply pins to ground.
 
 ## Test 3, day 1 · First current (11-11) [done]
 
-**Why.** First current through the coil on a current-limited bench supply: check the sign of the reading, the grounding, the current scale, and how the pass bank behaves at bench currents.
+**Why.** First current through the coil, from a bench supply that cannot give more than 3 A. We check the sign of the reading, the grounding, the current scale, and how the pass transistors behave at these small currents.
 
-**How.** Bench supply 5.0 V / 3.0 A limit in place of the SE-600-5; open-loop scans of OUT1 across the turn-on region; holds read against the supply ammeter and the scope.
+**How.** Bench supply at 5.0 V with a 3 A limit instead of the big supply. OUT1 stepped by hand across the range where the transistors start to conduct; held values compared with the supply's ammeter and the scope.
 
-![Open-loop current versus OUT1 command near threshold](img/benchtop/t3_day1_scan.png)
+![Current versus OUT1 setting near the point where the transistors start to conduct](img/benchtop/t3_day1_scan.png)
 
-*The bank starts conducting at ≈ 3540 counts (gate ≈ 3.65 V) and rises roughly as a square law. The absolute amps of this scan were taken before the grounding fix and read ≈ 2× low; onset and shape are valid.*
+*The transistors start to conduct at about 3540 steps (gate ≈ 3.65 V), and the current grows roughly with the square. The amps in this plot were measured before the grounding fix and read about 2× low; where it starts and its shape are right.*
 
-**Sign reversed:** the first scan read a growing negative current and stopped itself. Fixed by turning the LEM round.
+**Wrong sign:** the first scan read a growing negative current and stopped itself. Fixed by turning the sensor round.
 
-**Ground loops: the bench supplies must float.** With the supplies earthed, part of the coil current returned through earth and the scope's BNC shields: IN1 read ≈ 2× low with the wrong sign on the scope, and the bridge dropped out. With all supplies floating (earthed only through the scope) the board, scope and supply ammeter agree.
+**The bench supplies must not be connected to earth.** With their earth links in, part of the coil current flowed back through earth and the scope cables: IN1 read about half the real value with the wrong sign on the scope, and the bridge dropped out. With all supplies floating (the only earth connection through the scope) the board, the scope and the supply's ammeter agree.
 
-**IN1 reads ≈ 10 % low:** the firmware uses raw ADC codes. Provisional `in1_fs_volts` 1.10, refined on day 2 to 1.12.
+**IN1 reads about 10 % low,** because the firmware uses the raw measurement without the Red Pitaya's factory calibration. Provisional correction 1.10, refined to 1.12 on day 2.
 
-**Pass bank near threshold:** ≈ 0.008 A per OUT1 count at 1–2 A, against 0.136 A per count in the 100 A model; the current rises as the FETs warm (3990 counts tripped at 2.8 A once warm, which also showed the firmware trip working). Bench floor 3450 and clamp 4100 counts set from this.
+**The transistors are weak at small currents:** about 8 mA per OUT1 step at 1–2 A, against 136 mA per step expected at 100 A. They also conduct more as they warm up (3990 steps tripped at 2.8 A once warm, which also showed the trip working). The bench lower limit (3450 steps) and upper limit (4100 steps) were set from this.
 
 ## Setup for Test 3, day 2 (11-12)
 
 ### Power and wiring
 
-- Bench supply 5 V, 3 A limit, **floating** (no earth links; system earthed only through the scope).
-- One test coil, 12 turns of 4 × 2 mm hollow Cu, racetrack 70 × 210 mm, lifted 13–15 cm off the optical table (from 3f on).
-- OUT1 → 50 Ω terminator → OPA994 gate stage (gain 7.93) → 6-FET pass bank.
-- Arm and flip requests from software (pulses of the `dio_invert` setting); arm jumper out.
+- Bench supply 5 V, 3 A limit, **not connected to earth** (the only earth is through the scope).
+- One temporary test coil: 12 turns of 4 × 2 mm hollow copper, a 70 × 210 mm racetrack, lifted 13–15 cm off the optical table from 3f on.
+- OUT1 → 50 Ω terminator → amplifier (gain 7.93) → six pass transistors.
+- The arm and flip signals sent from the PC software instead of wires (arm jumper out).
 
-### Scope (Rigol DHO914 "test", all ×1 BNC)
+### Scope (Rigol DHO914 "test", plain BNC cables)
 
-- CH1: IN1 tee (5 mV per amp: LEM 2000:1 into 10 Ω).
-- CH2: drain bar (3f) → DIO1 bridge enable (3g dead time).
-- CH3: bridge node A.
-- CH4: DIO1 → pass-bank gate (3f) → DIO0 polarity (3g).
+- CH1: IN1 (5 mV per amp).
+- CH2: the drain bar (where the pass transistors join the bridge) in 3f; DIO1 (bridge on/off) in 3g.
+- CH3: bridge node A (one end of the coil).
+- CH4: DIO1, then a pass-transistor gate (3f), then DIO0 (bridge direction, 3g).
 
-## Test 3, day 2 · Bring-up [done]
+## Test 3, day 2 · Start-up [done]
 
-**How.** `deploy mot_bench` loads the bitstream (the FPGA configuration) and the bench settings, `check mot_bench` verifies them (LED 7 lit), `zero mot_bench --write --apply` measures the input offsets with no current flowing.
+**How.** Loaded the firmware and the bench settings, checked them (LED 7 lit), and measured the zero offsets with no current.
 
-Offsets: IN1 +0.256 A, IN2 +0.157 A, within one ADC count of day 1.
+Offsets: IN1 +0.256 A, IN2 +0.157 A, the same as day 1 within one measurement step.
 
-**Finding:** the first closed-loop step gave no current and no amber light. Loading the FPGA pauses the heartbeat, so the logic-board latch trips. **Reset the latch after every deploy** (servo stopped, heartbeat green).
+**Finding:** the first test gave no current and no amber light. Loading the firmware pauses the heartbeat for a moment, so the safety board cuts off. **Press the safety board's reset after every firmware load** (servo stopped, green light on).
 
-## 3c · IN1 current scale [done]
+## 3c · Current scale [done]
 
-**Why.** The firmware works in raw ADC counts; the Red Pitaya's own input calibration is not applied, so each board reads slightly off. Day 1 found IN1 reading ≈ 10 % low (provisional, ±3 %).
+**Why.** The board must read amps correctly. Day 1 showed IN1 reading about 10 % low.
 
-**How.** Closed-loop hold at 2 A for 60 s; compare the board's reading with the bench supply's ammeter (reference) and with the scope on the IN1 tee.
+**How.** Held 2 A for 60 s and compared the board's reading with the bench supply's ammeter (taken as the reference) and with the scope on IN1.
 
-| Board (FPGA) | Bench supply ammeter | Scope, IN1 tee | OUT1 command |
+| Board | Supply's ammeter | Scope on IN1 | OUT1 setting |
 |---|---|---|---|
-| 1.988 A | 2.02–2.03 A | 2.086 A (reads ≈ 3 % high) | 3942 counts, steady |
+| 1.988 A | 2.02–2.03 A | 2.086 A (about 3 % high) | 3942 steps, steady |
 
-**Result:** `in1_fs_volts` 1.10 → **1.12 V** (IN1 volts at the full-scale ADC code; nominal 1.0). Full scale I<sub>FS</sub> = 224 A, 27.3 mA per count. Agrees with day 1's first ammeter estimate (1.118). Committed d70a45d6.
+**Result:** the scale setting (`in1_fs_volts`, the IN1 voltage at the top of the range) changed from 1.10 to **1.12 V** (nominal 1.0). So full scale is 224 A and one measurement step is 27.3 mA. This agrees with day 1's first ammeter estimate (1.118).
 
-## 3d · PI gain tuning [done]
+## 3d · Controller settings [done]
 
-**Why.** The loopback gains do not fit the real plant. Near threshold the pass bank gives only ≈ 0.008 A per OUT1 count (day 1 scan), versus 0.136 A/count in the 100 A model.
+**Why.** The controller compares the measured current with the setpoint and adjusts OUT1. Two settings decide how strongly it reacts: kp (to the present difference) and ki (to the difference added up over time). Too weak and it is slow; too strong and it oscillates. The values from the cable test don't suit the real transistors, which give only 8 mA per step at these currents.
 
-**How.** Closed-loop 1 A steps (`step mot_bench --amps 1`, 16.8 ms capture at 1 µs per sample), starting at ¼ of the gains computed from the measured slope and doubling kp and ki together while the step stays clean.
+**How.** Repeated steps from 0 to 1 A, recorded by the board (one sample per µs for 16.8 ms). We started at a quarter of the calculated settings and doubled both while the step stayed clean.
 
-| kp (counts/A) | ki (counts/(A·ms)) | 90 % rise | 98 % settle | Hold noise (rms) | Verdict |
+| kp (steps per A) | ki (steps per A per ms) | Time to 90 % | Time to 98 % | Noise while holding | Verdict |
 |---|---|---|---|---|---|
 | 15.6 | 471 | 1.41 ms | 1.85 ms | 40 mA | clean, slow |
 | **31.2** | **942** | 0.73 ms | 1.04 ms | 40 mA | **chosen** |
 | 62.4 | 1884 | 0.38 ms | 0.53 ms | 86 mA | oscillates at 21 kHz |
-| 31.2 (2 A step) | 942 | 0.45 ms | 0.65 ms | 54 mA | clean, +1 % overshoot |
+| 31.2 (step to 2 A) | 942 | 0.45 ms | 0.65 ms | 54 mA | clean, 1 % overshoot |
 
-![Closed-loop 1 A step responses at three gain settings](img/benchtop/gain_steps.png)
+![1 A steps at three controller settings](img/benchtop/gain_steps.png)
 
-*Rise speeds up with each doubling; the highest setting rings during the hold.*
+*Each doubling makes the rise faster; the strongest setting oscillates while holding.*
 
-![Noise spectra of the hold at two gain settings](img/benchtop/gain_spectra.png)
+![Frequency content of the held current at two settings](img/benchtop/gain_spectra.png)
 
-*At ×4 a sharp 21 kHz line appears: the loop is at its stability limit. The ≈ 290 kHz floor is ADC noise.*
+*Which frequencies are in the held current. At ×4 a sharp tone at 21 kHz appears: the controller is at the edge of oscillating. The band near 290 kHz is measurement noise.*
 
-![2 A step at the chosen gains](img/benchtop/step_2A.png)
+![Step to 2 A at the chosen settings](img/benchtop/step_2A.png)
 
-*The bank's gain rises with current, so the margin is smallest at the top of the range: still clean at 2 A. Re-check at 2.5 A.*
+*The transistors get stronger as the current rises, so the safety margin is smallest at the top of the range. Still clean at 2 A.*
 
-**Result:** gains set at half the oscillation limit (gain margin ≈ 2). These are bench values; the 100 A plant has ~17× more gain per count and needs its own tuning.
+**Result:** the settings are at half the strength where it oscillates (a safety factor of 2). They are for the bench only: at 100 A the transistors give about 17× more current per step, so the real coils need their own tuning.
 
-**Open point (found in 3h):** a single jump from 0 to 2.5 A overshoots past the 2.79 A trip level, and the trip ends the run. The tuning was done at 1 A and checked at 2 A, where it was clean. Two effects can push 2.5 A over the edge, and the second was found only later (3i):
+**Open point (found in 3h):** a single jump from 0 to 2.5 A went past the 2.79 A trip level. Two possible causes:
 
-1. The pass bank's gain (amps per OUT1 count) grows with current, so the same PI gains act harder at 2.5 A and damp less; 2.5 A leaves only 0.29 A of margin to the trip.
-2. The 2.5 A step was taken with the coil lifted off the table, where the coil rings at ≈ 12 kHz by itself with ≈ ±0.12 A (3i). That ripple alone uses up much of the 0.29 A margin.
+1. The transistors are stronger at 2.5 A, so the same settings push harder; 2.5 A is only 0.29 A below the trip.
+2. The coil was lifted off the table then, and it was ringing by itself at about 12 kHz with ±0.12 A (see 3i). That alone uses up much of the 0.29 A margin.
 
-**Closed:** repeated with the coil on the table, the 2.5 A step did not trip: overshoot +2.8 %, 98 % in 0.59 ms. The ringing was there too (11.5 kHz, 128 mA rms), and 28 single samples exceeded 2.79 A (a trip needs 4 in a row). So the gains are fine; the near-trips come from the ringing on top of a 0.29 A margin. **Bench `I_rated` lowered 2.5 → 2.2 A** (peaks then ≈ 0.45 A below the trip).
+**Closed:** repeated with the coil on the table, the 2.5 A step did not trip: 2.8 % overshoot, 98 % reached in 0.59 ms. The ringing was there too, and 28 single samples went above 2.79 A (a trip needs 4 in a row). So the settings are fine, and the near-trips come from the ringing on top of a small margin. **The bench limit was lowered from 2.5 to 2.2 A.**
 
-![2 A and 2.5 A steps at the same gains](img/benchtop/step_2p5A_trip.png)
+![Steps to 2 A and 2.5 A at the same settings](img/benchtop/step_2p5A_trip.png)
 
-*At 2 A the current approaches the setpoint from below; at 2.5 A it keeps rising toward the trip level, and the trip ends the run at ≈ 0.6 ms.*
+*At 2 A the current approaches its target from below; at 2.5 A it keeps rising toward the trip level, and the trip ends the run at about 0.6 ms.*
 
 ## 3e · Over-current trip [passed]
 
-**Why.** In the MVP the firmware trip is the current limit: |IN1| above `trip_level` for 4 samples sets both DACs to zero, lets the coil freewheel, opens the bridge and latches TRIPPED.
+**Why.** In this first version, the firmware's over-current trip is the current limit. If IN1 reads above the trip level for 4 samples in a row, the outputs go to zero, the coil's current dies away, the bridge opens, and the board stays tripped until someone acknowledges it.
 
-**How.** Temporarily `I_rated` = 2.9 A (the step tool refuses targets above it), closed-loop step to 2.9 A. Trip set to 2.79 A, 0.21 A below the supply's 3 A limit so it fires first. Then `trip_ack`, stop, restore 2.5 A.
+**How.** Asked for 2.9 A (the bench limit was raised to 2.9 A for this test only). The trip was set to 2.79 A, 0.21 A below the supply's 3 A limit, so the trip should act first. Then acknowledged, stopped, and the limit put back.
 
 ![Current during the trip test](img/benchtop/trip.png)
 
-*The current rises toward 2.9 A, trips at ≈ 2.85 A (1 µs samples), and freewheels to zero in ≈ 225 µs. The spikes at the trip are switching pickup, not current.*
+*The current rises toward 2.9 A, trips at about 2.85 A and dies away in about 225 µs. The spikes at the trip are electrical pickup, not real current.*
 
-**Result:** state TRIPPED, bridge open, supply CC lamp stayed off. Acknowledged and back to IDLE without a power cycle.
+**Result:** tripped, bridge open, and the supply never reached its own limit (its current-limit light stayed off). Acknowledged and back to idle without switching anything off.
 
-## 3f · Turn-off path [done]
+## 3f · Switch-off: where the current goes [done]
 
-**Why.** With the bridge kept closed, the coil current should freewheel through the bridge body diodes (drain bar ≈ rail + one diode drop). The alternative is the bank's TVS (drain ≈ 13 V). The trip's 225 µs decay was ≈ 7× slower than the model's 30 µs.
+**Why.** When the transistors switch off with the bridge still closed, the coil keeps its current flowing round inside the bridge, through the transistors' built-in diodes, and the current dies away by itself. The drain bar should then sit at about the supply voltage plus one diode drop (≈ 0.6 V). The alternative is that the current goes into the surge protector (a TVS diode), which would show about 13 V. In 3e the current took 225 µs to reach zero, about 7× slower than expected (30 µs).
 
-**How.** Hold ≈ 1.5 A in open loop (OUT1 = 3900 counts), then OUT1 → 0 at once. Scope triggered on the falling current; the gate on CH4 shows whether the bank itself switches off slowly.
+**How.** Held about 1.5 A with OUT1 fixed (3900 steps), then set OUT1 to 0 at once. Scope CH4 on a transistor gate, to see whether the transistors themselves switch off slowly.
 
-![Gate, drain bar and current at turn-off](img/benchtop/turnoff_gate.png)
+![Gate, drain bar and current at switch-off](img/benchtop/turnoff_gate.png)
 
-*The gate falls in ≈ 4 µs. The drain bar jumps to ≈ 5.9 V (with brief ringing to 7.4 V) and stays there exactly as long as current flows, then drops. The current ramps down linearly.*
+*The gate falls in about 4 µs, so the transistors switch off fast. The drain bar jumps to about 5.9 V (briefly ringing up to 7.4 V) and stays there exactly as long as current flows. The current falls in a straight line.*
 
-![Freewheel decay on the table and lifted](img/benchtop/turnoff_lifted.png)
+![Current dying away with the coil on the table and lifted](img/benchtop/turnoff_lifted.png)
 
-*Lifting the coil off the steel table made the decay slower, not faster: the table's eddy currents had been absorbing part of the energy.*
+*Lifting the coil off the steel table made the current die away more slowly, not faster: currents induced in the table had been taking away part of the energy.*
 
-**Result:** freewheel through the bridge body diode, confirmed; the TVS is never reached. The gate stage is not the cause of the slow turn-off.
+**Result:** the current dies away through the bridge's built-in diodes, as designed; the surge protector is never reached; the transistors are not why it is slow.
 
-**Why it is slow:** the test coil has 12 turns. From its geometry (Neumann integral, scaled N2) L ≈ 45 µH, not the 9 µH in the bench model. Slope = V<sub>coil</sub>/L: 8.1 mA/µs × 45 µH ≈ 0.37 V, a plausible diode drop at ≈ 1 A. Bench model to be updated. The MOT pair's 16 µH (Radia) is unaffected.
+**Why it is slow:** the test coil has 12 turns, so its inductance is about 45 µH (calculated from its shape), not the 9 µH assumed. The current falls at (voltage across the coil) ÷ (inductance): 8.1 mA/µs × 45 µH ≈ 0.37 V, a normal diode voltage at 1 A. The MOT coils' 16 µH is not affected.
 
-**Side finding:** leakage of the warm bank at the RUN floor is small: 45–60 mA at 3450 counts, 66–76 mA at 3500, 98–117 mA at 3550.
+**Side finding:** warm transistors at the bench lower limit let through only a little current: 45–60 mA at 3450 steps, 66–76 mA at 3500, 98–117 mA at 3550.
 
-**Not measured:** the voltage across the coil (node B is not probed), so 45 µH is calculated, not yet measured.
+**Not measured:** the voltage directly across the coil (the other coil end was not probed then), so 45 µH is calculated, not measured.
 
-## 3g · Flips, field reversal and dead time (11-12, 11-13) [passed, open finding]
+## 3g · Flips and reversals (11-12, 11-13) [passed, open finding]
 
-**Why.** A flip must bring the current into the zero window, drop bridge enable, change polarity and re-enable; the enable-low window is the only shoot-through protection (the logic board adds no dead time). The control computer will reverse the field by pulsing the flip request (DIO3) and changing the sign of its setpoint while the flip is in progress (servo_interface_brief.md), so the whole reversal has to work as one sequence.
+**Why.** In the experiment the control computer reverses the coil current by sending a flip signal (DIO3) and changing its setpoint from +I to −I. The board then has to bring the current to zero, switch the bridge off, change the bridge's direction, and switch it back on. While the direction changes, all four bridge switches must be off for a moment; otherwise the supply would be short-circuited. This test checks that the whole reversal works as one sequence.
 
-**How.** Closed loop at ±2 A, bench profile; arm held high in software (flips need the arm *level*), flip request = a software edge on the flip input. 11-12: the scope at the Red Pitaya pins for the dead time. 11-13 (rev 5 firmware, run by the second Claude session): the board's own 16.8 ms capture of complete reversals +2 ↔ −2 A in three orderings (A flip and sign change together; B sign change first, flip 0.5 ms later; C flip first, sign change 0.2 ms later), sign-first-then-flip with different delays, and edge cases.
+**How.** The current was made to reverse from +2 A to −2 A and back. The control computer isn't connected yet, so the arm signal ("you may run") and the flip signal were sent from software instead. Arm had to stay on the whole time, because the board ignores flip signals when arm is off.
 
-![Field reversals in three orderings, both directions](img/benchtop/t3e_reversal.png)
+- **On 11-12, with the scope:** the short gap during which all four bridge switches are off, measured at the Red Pitaya pins (CH2 = DIO1, bridge on/off; CH4 = DIO0, bridge direction).
+- **On 11-13, with the board's own recording** (one sample per µs for 16.8 ms): complete reversals. A reversal needs two things, the flip signal and the new setpoint, so we tried them in three orders: **A** both at the same moment; **B** setpoint changed first, flip 0.5 ms later; **C** flip first, setpoint changed 0.2 ms later. Also "setpoint first, then flip" at several delays, and some awkward cases (flipping with no current, flipping while the current is still rising, two flip signals close together).
 
-*Current × the sign it started with, so every run starts at +2 and ends at −2. All 12 reversals complete. In A and C the current pauses at ≈ 0.4 A for 150–250 µs (the PI tail) until the bridge opens inside the flip zero window; in B it goes straight to zero.*
+![Reversals in three orders, both directions](img/benchtop/t3e_reversal.png)
 
-![Sign change first, then the flip request, at five delays](img/benchtop/t3e2_swap_then_flip.png)
+*The current multiplied by its starting sign, so every run starts at +2 and ends at −2. All 12 reversals complete. In A and C the current pauses at about 0.4 A for 150–250 µs until the bridge opens; in B it goes straight to zero.*
 
-*The ordering the control computer should use: change the setpoint sign, then send the flip request. 20 of 20 reversals OK at every delay; the current goes straight to zero (no plateau) and the new current rises once the flip reaches the board.*
+![Setpoint changed first, then the flip, at five delays](img/benchtop/t3e2_swap_then_flip.png)
 
-![Flip edge cases](img/benchtop/t3f_flip_edges.png)
+*The order the control computer should use: change the setpoint sign, then send the flip. 20 of 20 good at every delay; the current goes straight to zero, and the new current rises as soon as the flip reaches the board.*
 
-*Edge cases. F1: a flip at 0 A just changes polarity. F2: a flip during the up-ramp works. F3/F4: a second flip request after the first flip has finished flips back again, leaving the setpoint sign wrong for the polarity (sign-mismatch flag, current held at 0). F3b: a second request during a flip is ignored, not queued.*
+![Unusual flip cases](img/benchtop/t3f_flip_edges.png)
 
-![Bridge enable and polarity around the flip](img/benchtop/deadtime.png)
+*Unusual cases. F1: a flip with no current just changes direction. F2: a flip while the current is still rising works. F3/F4: a second flip signal after the first flip has finished flips back again; the setpoint sign is then wrong for the direction, so the board holds zero current (safe). F3b: a second flip signal during a flip is ignored, not saved for later.*
 
-*Enable drops 1.02–1.04 µs before the polarity edge and returns 0.98–1.02 µs after it: the 125 × 8 ns setting.*
+![Bridge on/off and direction signals around a flip](img/benchtop/deadtime.png)
 
-| Reversal ordering (±2 A) | Ramp-down 90 % → 0 | Leaving 90 % → settled within ±2 % at the new sign |
+*DIO1 (bridge on/off) goes off 1.02–1.04 µs before DIO0 (direction) changes, and comes back on 0.98–1.02 µs after: the safety gap, as set.*
+
+| Order (±2 A) | Fall from 90 % to zero | From leaving 2 A to steady at the new value (within ±2 %) |
 |---|---|---|
-| A: flip + sign change together | 338 µs | 1.37 ms |
-| B: sign change first, flip 0.5 ms later | **146 µs** | **1.22 ms** |
-| C: flip first, sign change 0.2 ms later | 343 µs | 1.29 ms |
+| A: flip and setpoint together | 338 µs | 1.37 ms |
+| B: setpoint first, flip 0.5 ms later | **146 µs** | **1.22 ms** |
+| C: flip first, setpoint 0.2 ms later | 343 µs | 1.29 ms |
 
-**Dead time (11-12):** enable drops 1.02–1.04 µs before the polarity edge and returns 0.98–1.02 µs after it (the 125 × 8 ns setting). Still open: the bridge FETs' gate voltages during a flip (floating probe), to see it at the FETs.
+**Safety gap (11-12):** the bridge is switched off 1.02–1.04 µs before the direction changes and back on 0.98–1.02 µs after, as set. Still to check: the same gap at the bridge switches themselves (needs a special floating probe).
 
-**Reversals (11-13):** 12 of 12 in the three orderings and 20 of 20 sign-first: back in RUN at the new polarity, no sign mismatch, no timeout, no trip, overshoot 25–38 mA (noise). The new current reaches 90 % 0.8–0.95 ms after the old one starts to fall.
+**Reversals (11-13):** all 12 in the three orders and all 20 "setpoint first" worked: every one ended at the new current with the bridge in the right direction, no faults, overshoot only 25–38 mA (noise level). The new current reaches 90 % 0.8–0.95 ms after the old one starts to fall.
 
-**Sign change first is fastest:** an opposite-sign setpoint doubles the loop's error (−4 A instead of −2 A), so the PI turns the bank off about twice as fast. **Rules for the control computer:** change the sign, then send **one** flip request per reversal; a second request during a flip is ignored, and one after it flips back.
+**Why "setpoint first" is fastest:** a setpoint of the opposite sign makes the controller's error twice as big (−4 A instead of −2 A), so it switches the transistors off about twice as fast.
 
-**Open finding: the rev 5 zero-setpoint snap does not act during a flip.** During a flip the FSM forces the loop's setpoint to zero itself, which the snap does not see; the flip still ends quickly because the bridge opens once the current is inside the zero window, but in orderings A and C a ≈ 0.4 A plateau of 150–250 µs remains. **Decide before 100 A:** extend the snap to the FSM's ramp-downs (flips, stops), or rely on the sign-first rule.
+**Rules for the control computer:** change the setpoint sign first, then send **one** flip signal per reversal. A second signal during a flip is ignored; a second signal after it flips back again.
 
-**Side findings:** with the safety latch still tripped after a deploy the FSM completes a flip at zero current (nothing flows) — reset the latch after every deploy. The dashboard's software-arm button gives only an edge, so flips after it are ignored; it needs a "hold arm" mode for bench flip tests.
+**Open finding:** the rev 5 "zero snap" (switch the transistors fully off when the setpoint is zero; see Rev 5 below) does not act during a flip, because the board brings the setpoint to zero by itself there. The flip still finishes quickly, because the bridge opens once the current is within ±0.49 A, but orders A and C show a short pause at about 0.4 A for 150–250 µs. **Decide before 100 A:** make the snap act during flips and stops too, or rely on the "setpoint first" rule.
 
-## 3h · Heartbeat-latch trip at current [passed]
+**Side findings:** if the safety board is still cut off after a firmware load, the board goes through a flip with no current flowing (another reason to reset after every load). The dashboard's software arm button gives only a short arm pulse, so flips after it are ignored; it needs a "hold arm" option for bench tests.
 
-**Why.** The logic board's heartbeat latch is the only automatic hardware trip. Opening the bridge at current pushes the coil's energy back into the supply (here ½LI2 ≈ 90 µJ at 2 A); on the SE-600-5 the same event (≈ 0.08 J) is the open over-voltage question.
+## 3h · Safety-board cut-off while current flows [passed]
 
-**How.** Hold 2 A in closed loop (2.5 A tripped the firmware first, see 3d), scope armed on the drain bar falling, pull the DIO6 heartbeat wire (E1 pin 15). The script stops the servo as soon as it sees the current collapse. Recovery: servo stopped (IDLE), re-plug DIO6, wait for green, press the latch reset.
+**Why.** The safety board is the only automatic hardware cut-off. When it opens the bridge while current flows, the coil's stored energy (≈ 90 µJ at 2 A here) has to go somewhere: back into the power supply. With the big 100 A supply the same event returns about 0.08 J, and whether that over-voltages the supply is an open question.
 
-![Drain bar, node A, rail and current when the latch opens the bridge](img/benchtop/hb_trip_2A.png)
+**How.** Held 2 A (2.5 A tripped first, see 3d), the scope set to trigger when the drain bar falls, then pulled the heartbeat wire DIO6 (E1 pin 15). The test program stopped the servo as soon as it saw the current collapse. Recovery: servo stopped, heartbeat wire back in, wait for green, press reset.
 
-*With all four bridge FETs off, the coil current returns to the supply through three diodes: up from ground through the pass-bank body diodes (drain bar ≈ −0.5 V), through Q4 and Q1's body diodes into the rail. Afterwards node A rings at ≈ 170 kHz. The rail trace (AC-coupled, 0.2 V/div) clips at +0.87 V.*
+![Drain bar, node A, supply voltage and current when the safety board opens the bridge](img/benchtop/hb_trip_2A.png)
 
-**Result:** bridge opened the moment DIO6 was pulled; 2 A → 0 in ≈ 10–13 µs, as expected for ≈ 6.7 V across 45 µH.
+*With all four bridge switches off, the coil pushes its current back into the supply through three of the built-in diodes (the drain bar goes to about −0.5 V). Afterwards one end of the coil (node A) rings at about 170 kHz. The supply-voltage trace (CH4, showing only changes) is cut off at +0.87 V by the scope's range.*
 
-**As predicted:** with the bridge open the PI saw zero current and drove OUT1 to the clamp (4100 counts) until the script stopped it. This is why the servo must be stopped before pressing the latch reset.
+**Result:** the bridge opened the moment the wire was pulled; 2 A → 0 in about 10–13 µs, as expected for about 6.7 V across 45 µH.
 
-**Rail, first capture:** clipped at +0.87 V (0.2 V/div), so repeated at 0.5 V/div over 200 µs:
+**As predicted:** with the bridge open the controller saw zero current and turned OUT1 up to its maximum (4100 steps) until the program stopped it. That is why the servo must be stopped before pressing the reset.
 
-![Repeat capture with the rail on a coarser scale](img/benchtop/hb_trip_2A_20us.png)
+**Supply voltage, first recording:** off the scope's range at +0.87 V, so repeated with a coarser range over 200 µs:
 
-*Repeat at 2 A. The rail spikes by +2.5 V (1 µs average; +3.2 V peak samples) for ≈ 10 µs while the coil current is pushed back into the supply, then sits ≈ 0.85 V higher.*
+![Repeat with the supply voltage on a coarser range](img/benchtop/hb_trip_2A_20us.png)
 
-**Spike, +2.5 to +3.2 V for ≈ 10 µs:** the returned current through the bench supply leads' inductance. This is the bench preview of the SE-600-5 question; the real numbers need the 100 A setup with 4/0 cable.
+*Repeat at 2 A. The supply voltage jumps by +2.5 V (up to +3.2 V in single samples) for about 10 µs while the coil pushes current back into the supply, then stays about 0.85 V higher.*
 
-**Plateau, ≈ +0.85 V, slow:** most likely not stored energy (that would need an output capacitor of only ≈ 20 µF) but the lead resistance. At 2 A the rail bar sits ≈ 0.85 V below the supply's setting (≈ 0.4 Ω of leads and contacts) and returns when the load vanishes. To confirm: DC rail reading at 2 A and at 0 A.
+**The jump of +2.5 to +3.2 V for about 10 µs** comes from the returning current flowing through the inductance of the supply's cables. This previews the open question for the big supply; the real numbers need the 100 A setup.
 
-## 3i · Hold noise, dither on/off [done, open finding]
+**The 0.85 V that stays higher** is probably not stored energy but the cables' resistance: at 2 A the voltage at the bridge is about 0.85 V lower than at the supply (≈ 0.4 Ω of cables and contacts), and it comes back when the current stops. (Measured in 3i: a 0.41 V drop at 2 A.)
 
-**Why.** The spec is a steady hold within 0.1 %. One OUT1 count moves the bench current by ≈ 0.008–0.14 A, so the firmware dithers OUT1 (switches it ±1 count very fast so the average falls between counts). This test compares the hold with dither on and off.
+## 3i · How steady is a held current? [done, open finding]
 
-**How.** Closed-loop 2 A hold; four 16.8 ms current records (1 µs per sample) plus 4 s of slow readings, dither on, then off. DC readings of the rail at the hold and at zero current.
+**Why.** The goal is a current steady to 0.1 %. One OUT1 step changes the current by 8–140 mA, so the firmware has an option ("dither") that flicks the output up and down by one step very fast, so that the average falls between steps. This test compares holding 2 A with dither on and off.
 
-| Run (coil lifted) | Current noise, 1 µs samples | 100 µs averages | Spectrum |
+**How.** Held 2 A; took four recordings of 16.8 ms (one sample per µs) and 4 s of slower readings, with dither on, then off. Also read the supply voltage at 2 A and at zero.
+
+| Run (coil lifted) | Noise in single samples | Noise in 0.1 ms averages | Frequencies present |
 |---|---|---|---|
-| Dither on, chosen gains | 165 mA rms | 15 mA rms | strong line at 11 kHz |
-| Dither off, chosen gains | 164 mA rms | 15 mA rms | same line |
-| Dither on, half gains | 162 mA rms | 11 mA rms | same line, same height |
+| Dither on, chosen settings | 165 mA | 15 mA | a strong tone at 11 kHz |
+| Dither off, chosen settings | 164 mA | 15 mA | the same tone |
+| Dither on, half-strength settings | 162 mA | 11 mA | the same tone, same size |
 
-The noise was 4× this morning's (40–54 mA rms), so the source was tracked down instead:
+The noise was 4× higher than in the morning (40–54 mA), so its cause was tracked down:
 
-| Open loop, OUT1 fixed at 3935 (≈ 1.93 A) | Current at 10–12 kHz | Drain bar at 12 kHz | Gate at 12 kHz |
+| OUT1 fixed at 3935 steps (≈ 1.93 A) | Current at 10–12 kHz | Drain bar at 12 kHz | Gate at 12 kHz |
 |---|---|---|---|
 | Coil lifted | ±116 mA | ±467 mV | ±0.1 mV |
 | Coil on the table | ±31 mA | ±67 mV | ±0.1 mV |
 | Coil lifted, varistor removed | ±165 mA | ±494 mV | — |
 
-**Finding:** the ringing is not the control loop (it stays with half the gains and in open loop) and not the gate stage (the gate does not move at 12 kHz). With the bank's gate fixed, its current is fixed, so the 12 kHz current must circulate in a loop that bypasses the bank: the coil with a capacitance of ≈ 4 µF across it (45 µH and 12 kHz). In free air the coil loses little energy per cycle (Q ≈ 100) and noise keeps it ringing; on the table the eddy currents absorb the energy.
+**Finding:** the ringing does not come from the controller (it is the same at half strength and with the controller off) and not from the amplifier (the gate does not move at 12 kHz).
 
-**Checked and ruled out:** there is no capacitor on the H-bridge; the only part across the coil was a varistor (Digi-Key 495-6502-ND). With it removed and the coil still lifted, the 12 kHz ringing is unchanged (current ±0.17 A, drain ±0.49 V). So it is not a passive resonance with a capacitor: the bank's current must be responding to its own drain voltage, which makes the stage an oscillator together with the coil's inductance.
+**Ruled out — a capacitor across the coil:** there is none on the bridge. The only part across the coil was a varistor (a surge protector, Digi-Key 495-6502-ND), and removing it changed nothing.
 
-**Also ruled out:** the drain swing coupling back onto the gates (Miller effect). CH4 was on a pass-FET gate pin, and that gate is steady to ±0.1 mV during the ringing.
+**Ruled out — the drain voltage reaching back to the gates:** CH4 on a transistor gate stays steady to ±0.1 mV during the ringing.
 
-**Nothing bypasses the bank:** the ballast resistors could not be probed, but the rail ripple measures the supply current. Rail ±0.059 V vs current ±0.207 A, lagging by 233°, is exactly the supply leads (0.17 Ω, matching the 0.2 Ω measured at DC, plus ≈ 3.6 µH). So supply, bank and coil carry the same oscillating current, while the bank's gate stays fixed: the bank changes its current by itself, through its drain voltage and/or die temperature.
+**Nothing goes around the transistors:** the wobble of the supply voltage matches the cables' resistance and inductance (0.17 Ω, 3.6 µH) times the oscillating current. So the supply, the transistors and the coil all carry the same oscillating current while the gate stays fixed: the transistors change their current by themselves, probably because of their drain voltage or their temperature.
 
-| Open loop, coil lifted | Current | Frequency | Current swing | Drain swing (p-p) |
+| OUT1 fixed, coil lifted | Current | Ringing frequency | Current swing | Drain swing (peak to peak) |
 |---|---|---|---|---|
-| OUT1 3800 | 0.71 A | 20 kHz | ±0.08 A | 1.64 V |
-| OUT1 3870 | 1.23 A | 15 kHz | ±0.11 A | 1.64 V |
-| OUT1 3935 | 1.93 A | 11.5 kHz | ±0.15 A | ≈ 1.6 V |
+| 3800 steps | 0.71 A | 20 kHz | ±0.08 A | 1.64 V |
+| 3870 steps | 1.23 A | 15 kHz | ±0.11 A | 1.64 V |
+| 3935 steps | 1.93 A | 11.5 kHz | ±0.15 A | ≈ 1.6 V |
 
-![Current spectra at three operating points, lifted and on the table](img/benchtop/ringing_vs_current.png)
+![Frequencies in the current at three currents, coil lifted and on the table](img/benchtop/ringing_vs_current.png)
 
-*Lifted: one sharp line that moves down as the current rises. On the table at 1.93 A: no line in open loop.*
+*Coil lifted: one sharp tone that moves lower as the current rises. On the table at 1.93 A: no tone.*
 
-**Pattern:** frequency ∝ 1/√I (f·√I ≈ 16–17), and the drain swing is always ≈ 1.6 V p-p: the oscillation grows until the drain reaches rail + one diode drop, where the bridge freewheel diode clamps it.
+**Pattern:** the frequency falls as the current rises (frequency × √current ≈ 16–17), and the drain always swings about 1.6 V peak to peak: the ringing grows until the bridge's diode stops it.
 
-**Coil on the table, closed loop at 2 A (later):** the line is back at 13.6 kHz, 110 mA rms, so the table only damps it marginally (position, current and temperature decide).
+**Coil on the table, controller on, 2 A (later):** the tone came back at 13.6 kHz, 110 mA, so the table only just stops it.
 
-**Dither:** on vs off makes no difference (110 / 110 mA rms; 100 µs averages 20.6 / 19.9 mA). Expected on the bench: near 2 A one OUT1 count is only ≈ 8 mA. The dither test belongs to the 100 A plant (≈ 0.14 A per count).
+**Dither:** no difference (110 / 110 mA; 0.1 ms averages 20.6 / 19.9 mA). That is expected on the bench, where one step is only 8 mA; the real test of dither is at 100 A (≈ 140 mA per step).
 
-**Average current:** the means of four 16.8 ms records agree to ±0.2 mA (0.01 %), well inside the 0.1 % spec.
+**Average current:** the averages of the four recordings agree within ±0.2 mA (0.01 %), well inside the 0.1 % goal.
 
-**Why it matters:** a similar ringing on the MOT would put a few-percent field ripple at 10–20 kHz, far above the loop's bandwidth. Needs understanding before the 100 A build (FET data near threshold; try an RC damper across the coil or a drain-bar snubber).
+**Why it matters:** a similar ringing on the MOT coils would put a field ripple of a few percent at 10–20 kHz, far too fast for the controller to correct. It was fixed on the bench with a damper (below); its cause is still not understood.
 
-**DC rail:** 5.06 V at zero current, 4.65 V at 2 A: the supply leads and contacts drop 0.41 V (≈ 0.2 Ω), about half of the 0.85 V plateau seen in 3h.
+**Supply voltage:** 5.06 V with no current, 4.65 V at 2 A: the cables and contacts lose 0.41 V (≈ 0.2 Ω), about half of the 0.85 V seen in 3h.
 
-## Extra bench tests (second session) [done]
+## Extra checks (second session) [done]
 
-**Why.** While the damper was being soldered: check the chosen gains over the whole bench range, the long-term stability of a hold, and flip reliability. Coil flat on the table, kp 31.2 / ki 942, limit 2.2 A. Run by a second Claude session that held the board meanwhile.
+**Why.** While the damper was being soldered: check the controller settings over the whole bench range, how steady a long hold is, and how reliable flips are. Coil flat on the table, limit 2.2 A. Run by a second Claude session.
 
-| Step | 10 / 90 / 98 % | Overshoot (64 µs avg) | Hold noise (1 µs) |
+| Step | Time to 10 / 90 / 98 % | Overshoot (0.064 ms averages) | Noise while holding (single samples) |
 |---|---|---|---|
-| 0 → 0.5 A | 0.18 / 1.08 / 1.36 ms | +37 mA | 69 mA rms |
-| 0 → 1.0 A | 0.08 / 0.72 / 0.95 ms | +25 mA | 64 mA rms |
-| 0 → 1.5 A | 0.12 / 0.55 / 0.70 ms | +30 mA | 74 mA rms |
-| 0 → 2.0 A | 0.10 / 0.46 / 0.62 ms | +28 mA | 85 mA rms, faint 13.8 kHz line |
-| 0 → 2.2 A | 0.08 / 0.44 / 0.63 ms | +41 mA | 83 mA rms, no sample above the trip |
-| 2.2 → 1.0 A | 0.01 / 0.24 / 0.34 ms | 27 mA past | 63 mA rms |
-| 1.0 → 0 A | 0.01 / 0.68 / 1.22 ms | 32 mA past | ends at 18 mA (floor leakage) |
-| 2.0 → 0 A | 0.02 / 0.47 / 1.49 ms | 40 mA past | ends at 14 mA |
+| 0 → 0.5 A | 0.18 / 1.08 / 1.36 ms | +37 mA | 69 mA |
+| 0 → 1.0 A | 0.08 / 0.72 / 0.95 ms | +25 mA | 64 mA |
+| 0 → 1.5 A | 0.12 / 0.55 / 0.70 ms | +30 mA | 74 mA |
+| 0 → 2.0 A | 0.10 / 0.46 / 0.62 ms | +28 mA | 85 mA, a faint 13.8 kHz tone |
+| 0 → 2.2 A | 0.08 / 0.44 / 0.63 ms | +41 mA | 83 mA, no sample above the trip level |
+| 2.2 → 1.0 A | 0.01 / 0.24 / 0.34 ms | 27 mA past the target | 63 mA |
+| 1.0 → 0 A | 0.01 / 0.68 / 1.22 ms | 32 mA past the target | ends at 18 mA (transistor leakage) |
+| 2.0 → 0 A | 0.02 / 0.47 / 1.49 ms | 40 mA past the target | ends at 14 mA |
 
-![Normalised up- and down-steps across the bench range](img/benchtop/steps_range.png)
+![Steps up and down across the bench range](img/benchtop/steps_range.png)
 
-*Up-steps get faster with current (the bank's gain rises with current); the 0.5 A step is the slowest. Down-steps drop fast at first, then approach the target as the integrator unwinds.*
+*Steps up get faster at higher current (the transistors get stronger); the 0.5 A step is the slowest. Steps down fall fast at first, then approach the target as the controller winds down.*
 
-![Mean current and OUT1 over a 10 minute hold](img/benchtop/longhold.png)
+![Average current and OUT1 over a 10-minute hold](img/benchtop/longhold.png)
 
-*The point-to-point scatter (6.1 mA) equals the statistical error of each point, so no drift is visible above it; window means after the first minute agree within 0.5 mA. Over the same 10 min OUT1 fell by 21 counts: at fixed gate the warming bank would have drifted by ≈ 0.2 A, and the loop removed it.*
+*Each point scatters by 6.1 mA, which is just its measurement uncertainty, so no drift is visible; after the first minute the averages agree within 0.5 mA. Over the same 10 minutes the controller lowered OUT1 by 21 steps: the transistors warm up and conduct more, and the controller compensated (about 0.2 A of drift removed).*
 
-**Steps:** overshoot is at the noise level everywhere (25–41 mA, against 56–77 mA p-p hold noise in 64 µs averages); no trips. The gains hold across 0.5–2.2 A.
+**Steps:** overshoot is at the noise level everywhere (25–41 mA); no trips. The settings work from 0.5 to 2.2 A.
 
-**Long hold, 2.0 A for 10 min:** mean 1.9958 A; fitted drift +0.19 mA/min; window means 1.9925 (first minute, warming up), 1.9959, 1.9964, 1.9962 A, i.e. stable within ≈ 0.5 mA (0.025 %) after the first minute. Each point resolves only ±5.8 mA, so a per-point 0.1 % check needs longer averages.
+**10-minute hold at 2.0 A:** average 1.9958 A; drift +0.19 mA per minute. Averages over parts of the run: 1.9925 A (first minute, warming up), then 1.9959, 1.9964, 1.9962 A, so steady within about 0.5 mA (0.025 %) after the first minute. Each single point is only good to ±5.8 mA, so checking 0.1 % point by point needs longer averages.
 
-**Flips, 20 at ±1 A:** 20 of 20 good, no TIMEOUT_HOLD, no trip; current after re-signing ±1.003–1.025 A; request → RUN in the new polarity ≈ 1.1 ms (host-timed, includes polling).
+**20 flips at ±1 A:** all 20 good, no faults; current afterwards ±1.003–1.025 A; about 1.1 ms from the flip signal to running again in the new direction.
 
 ## Damper test [passed]
 
-**Why.** If the 10–20 kHz ringing (3i) is a weakly damped oscillation of the bank together with the coil, a resistor across the coil at those frequencies should remove its energy each cycle. A capacitor in series keeps the resistor out of the DC path.
+**Why.** If the 10–20 kHz ringing (3i) is an oscillation of the transistors together with the coil that is only weakly damped, a resistor across the coil at those frequencies should soak up its energy every cycle. A capacitor in series stops the resistor from carrying the steady current.
 
-**How.** 1 Ω + 2.2 Ω (1/4 W metal film) in series with 10 µF (non-polarized) across the coil terminals, next to the varistor; sized so the damper's ≈ 3.2 Ω matches the coil's impedance at 12 kHz (≈ 3.4 Ω). Coil lifted onto the box (the condition where it rang reliably). The same open-loop captures at three currents, then a closed-loop 2 A hold.
+**How.** 1 Ω + 2.2 Ω resistors (1/4 W) in series with a 10 µF capacitor, across the coil terminals next to the varistor. The 3.2 Ω roughly matches the coil's own impedance at 12 kHz (≈ 3.4 Ω), which gives the strongest damping. Coil lifted (where it rang reliably). The same fixed-output recordings at three currents, then a 2 A hold.
 
-| Open loop, coil lifted | Strongest line 5–30 kHz, no damper | With damper | Drain ripple, no damper → damper |
+| OUT1 fixed, coil lifted | Strongest tone 5–30 kHz, no damper | With damper | Drain ripple, without → with |
 |---|---|---|---|
-| OUT1 3800 (≈ 0.7 A) | 43 mA at 20 kHz | 2.5 mA (noise) | 328 → 107 mV rms |
-| OUT1 3870 (≈ 1.2 A) | 76 mA at 15 kHz | 2.8 mA (noise) | 326 → 71 mV rms |
-| OUT1 3935 (≈ 1.9 A) | 124 mA at 11.5 kHz | 4.9 mA (noise) | 366 → 63 mV rms |
+| 3800 steps (≈ 0.7 A) | 43 mA at 20 kHz | 2.5 mA (noise) | 328 → 107 mV |
+| 3870 steps (≈ 1.2 A) | 76 mA at 15 kHz | 2.8 mA (noise) | 326 → 71 mV |
+| 3935 steps (≈ 1.9 A) | 124 mA at 11.5 kHz | 4.9 mA (noise) | 366 → 63 mV |
 
-![Current spectra with and without the damper at three currents](img/benchtop/damper.png)
+![Frequencies in the current with and without the damper at three currents](img/benchtop/damper.png)
 
-*The sharp ringing line disappears at every current. What remains is the ADC noise near 290 kHz and a small new line at ≈ 72 kHz (≈ 10–14 mA), probably the damper's capacitor with its wiring.*
+*The sharp tone disappears at every current. Left over: the measurement noise near 290 kHz, and a small new tone at about 72 kHz (10–14 mA), probably the capacitor with its wiring.*
 
-**Result:** the damper removes the ringing completely in free air. Closed-loop 2 A hold, coil lifted: 75 mA rms in 1 µs samples (ADC noise), **6.5 mA rms in 100 µs averages** (15–21 mA before), record means identical to 0.1 mA.
+**Result:** the damper removes the ringing completely. 2 A hold with the coil lifted: 75 mA in single samples (measurement noise), **6.5 mA in 0.1 ms averages** (15–21 mA before).
 
-**For the MOT build:** plan an RC damper across the coil pair, sized for the pair (16 µH): R ≈ ωL at the expected ringing frequency, C large enough to pass it, and the resistor rated for the pulses at 100 A (heartbeat trip, flips). Confirm on the real coils.
+**For the MOT:** plan a damper across the coil pair, sized for 16 µH, with a resistor that can take the pulses at 100 A. Check on the real coils.
 
-## LEM inside the coil–damper loop: turn-off measurements (11-12, late) [done, open finding]
+## Current sensor moved inside the coil–damper loop: switch-off measurements (11-12, late) [done, open finding]
 
-**Why.** With the damper and varistor across the coil terminals and the LEM on the lead between the bridge and that connection point, the LEM read coil + damper + varistor current. Current circulating only round coil → damper → coil (for example after the bridge opens) never passed through it, so a turn-off could look finished while the coil still carried current.
+**Why.** The sensor sat on the lead before the point where the damper and varistor connect, so it measured coil current and damper current together. Current going round only coil → damper → coil (for example after the bridge opens) never passed through the sensor, so a switch-off could look finished while the coil still carried current.
 
-**How.** LEM moved so that the order along the lead is: bridge → damper/varistor connection → LEM → coil. Scope: CH1 IN1 tee (now true coil current), CH2 pass-bank drain bar, CH3 bridge node A, CH4 bridge node B (coil voltage = CH3 − CH4); all probe grounds on the source bar. Coil lifted, damper (3.2 Ω + 10 µF) and varistor fitted.
+**How.** The sensor was moved so that along the lead the order is: bridge → damper and varistor → sensor → coil. Scope: CH1 = IN1 (now the true coil current), CH2 = drain bar, CH3 = node A and CH4 = node B (the two coil ends, so CH3 − CH4 is the coil voltage); all scope grounds on the source bar. Coil lifted, damper and varistor fitted.
 
-### Sign and loop check
+### Sign and controller check
 
-Zero reading −0.06 A; open loop OUT1 3800 counts → +0.65 A (sign unchanged). Closed-loop 1 A step: 90 % in 0.61 ms, 98 % in 0.81 ms, +2.4 % overshoot (before: 0.54 / 0.73 ms, +2.0 % at 1.5 A). Measuring through the coil–damper resonance does not hurt the loop.
+With no current: −0.06 A. OUT1 at 3800 steps → +0.65 A (sign unchanged). Step to 1 A: 90 % in 0.61 ms, 98 % in 0.81 ms, 2.4 % overshoot (before: 0.54 / 0.73 ms, 2.0 % at 1.5 A). Measuring inside the coil–damper loop does not upset the controller.
 
-### Turn-off with the bridge closed (OUT1 snapped to 0)
+### Switch-off with the bridge closed (OUT1 set to 0)
 
-![Turn-off from 2 A with the LEM inside the loop: coil current and bridge voltages](img/benchtop/t3c_turnoff_repeat.png)
+![Switch-off from 2 A: coil current and bridge voltages](img/benchtop/t3c_turnoff_repeat.png)
 
-*OUT1 → 0 at about −80 µs. The drain bar goes to rail + one diode drop (freewheel); the coil voltage holds ≈ 0.5 V and the current falls linearly. The bank turn-off rings the drain bar up to 12.1 V for a few µs (≈ 500 kHz), just under the bank TVS (5KP12CA, ≈ 13.3 V).*
+*OUT1 goes to 0 at about −80 µs. The drain bar rises to supply + one diode drop (the current circulates in the bridge); the coil voltage stays at about 0.5 V and the current falls in a straight line. The transistors switching off make the drain bar ring up to 12.1 V for a few µs, just below the surge protector's 13.3 V.*
 
-![The same turn-off measured by the scope and by the board](img/benchtop/t3c_turnoff_board.png)
+![The same switch-off measured by the scope and by the board](img/benchtop/t3c_turnoff_board.png)
 
-*Scope (raw and 10 µs average) and the board's own capture (1 µs samples, each the mean of 128 ADC samples) agree. After the current first reaches zero it swings to ≈ −0.2 A for ≈ 100 µs: the coil ringing once into the damper capacitor.*
+*The scope (raw and 10 µs averages) and the board's own recording (each sample the average of 128 measurements) agree. After reaching zero the current swings to about −0.2 A for about 100 µs: the coil rings once into the damper's capacitor.*
 
-![Turn-offs before and after moving the LEM, overlaid](img/benchtop/t3c_turnoff_lem_before_after.png)
+![Switch-offs before and after moving the sensor](img/benchtop/t3c_turnoff_lem_before_after.png)
 
-*Before (LEM outside, no damper, morning) and after (LEM inside, damper). The freewheel slope is similar; only the "after" runs show the small negative swing, which an LEM outside the loop cannot see. In closed loop both show the same slow tail. There is no run with the damper fitted and the LEM outside, so before/after also differ in damper and coil position.*
+*Before (sensor outside, no damper, morning) and after (sensor inside, damper). The fall rate is similar; only the "after" runs show the small negative swing, which a sensor outside the loop cannot see. With the controller on, both show the same slow tail. Before and after also differ in damper and coil position.*
 
-**Result:** 2 A → 0 in ≈ 170 µs (90 → 10 % in ≈ 130 µs), coil voltage ≈ 0.5 V, i.e. ≈ 12–13 mA/µs = V/L for 45 µH, then a ≈ −0.2 A swing that is gone by ≈ 200 µs. Two runs agree.
+**Result:** 2 A → 0 in about 170 µs (90 → 10 % in 130 µs), coil voltage about 0.5 V, i.e. 12–13 mA/µs, as expected for 45 µH; then a −0.2 A swing, gone by about 200 µs. Two runs agree.
 
-**Why the raw current trace looks so noisy:** the LEM chain gives only 5 mV per amp, and about 3 mV rms of pickup (mostly the Red Pitaya's clock) sits on the IN1 line even with the scope's 20 MHz limit on. With the current truly zero the raw scope trace shows 575 mA rms, 232 mA in 2 µs averages, 91 mA in 10 µs, 36 mA in 50 µs: white noise, not current (a 1 A change in 1 µs would need ≈ 45 V across the coil). The real steadiness comes from the board's averaged measurement: 6.5 mA rms in 100 µs at a closed-loop 2 A hold, mean stable to 0.5 mA over 10 min.
+**Why the raw scope trace looks so noisy:** the sensor gives only 5 mV per amp, and about 3 mV of electrical pickup (mostly the Red Pitaya's clock) sits on IN1 even with the scope's 20 MHz filter on. With no current the raw trace scatters by 575 mA, by 232 mA in 2 µs averages, 91 mA in 10 µs, 36 mA in 50 µs: random noise, not current (a 1 A change in 1 µs would need about 45 V across the coil). The real steadiness comes from the board's own averaged measurement: 6.5 mA in 0.1 ms averages at a 2 A hold, and the average steady to 0.5 mA over 10 minutes.
 
-### Bridge opened at current
+### Bridge opened while current flows
 
-**How.** Instead of pulling the heartbeat wire, the firmware opened the bridge: during a closed-loop 2 A hold, `trip_timeout` was set to 0 ("open the bridge at once") and `trip_level` to 1 A, so the over-current trip fired and dropped OUT1 and bridge enable on the same clock. Same electrical event as the heartbeat-latch trip, but the firmware knows about it (no integrator wind-up). Settings restored afterwards (2.79 A, 3 ms).
+**How.** Instead of pulling the heartbeat wire, we let the firmware open the bridge. During a 2 A hold the trip level was lowered to 1 A and the trip set to open the bridge at once, so the over-current trip switched off the output and the bridge in the same instant. This is the same electrical event as the safety-board cut-off, but the firmware knows about it, so the controller does not wind up. Settings put back afterwards.
 
 ![Bridge opened at 2 A: coil current and bridge voltages](img/benchtop/t3c_bridge_open.png)
 
-*The coil voltage jumps to ≈ 6 V = 2 A × 3.2 Ω (the damper resistor carries the coil current) and decays; the current reaches zero in ≈ 25 µs, swings to ≈ −0.3 A and is gone by ≈ 150–200 µs. A 12.7 V, 0.4 µs spike on node A at the switching instant (wiring inductance).*
+*The coil voltage jumps to about 6 V = 2 A × 3.2 Ω (the damper's resistor takes the coil current) and decays; the current reaches zero in about 25 µs, swings to about −0.3 A and is gone after 150–200 µs. A short 12.7 V spike (0.4 µs) on node A at the moment of switching comes from the wiring's inductance.*
 
-**Result:** with the damper fitted, the coil energy goes into the damper, not back into the supply (6 V stays below rail + two diode drops). The morning's "current gone in ≈ 10 µs" (3h) was measured without the damper and with the LEM outside; it does not describe the coil now.
+**Result:** with the damper fitted, the coil's energy goes into the damper, not back into the supply (6 V stays below supply + two diodes). The "current gone in 10 µs" of 3h was measured without the damper and with the sensor outside; it no longer describes this setup.
 
-**For the MOT (100 A, 16 µH):** the damper cannot carry 100 A at a few volts, so the bridge body diodes will clamp the coil voltage at ≈ rail + 1.5 V and most of the energy (≈ 0.08 J) goes into the supply; the damper's share sets its pulse rating. Size the MOT damper near critical damping (R ≈ 2√(L/C)) so the coil current does not ring back through zero after a turn-off.
+**For the MOT (100 A, 16 µH):** the damper cannot carry 100 A at a few volts, so the bridge's diodes will limit the coil voltage to about supply + 1.5 V and most of the energy (≈ 0.08 J) goes into the supply; the damper's share sets how robust its resistor must be. Size the MOT damper so the current does not swing back through zero after a switch-off (critical damping, R ≈ 2√(L/C)).
 
-### Heartbeat-pull attempt: unexplained 5 A surge
+### Heartbeat test attempt: unexplained 5 A surge
 
-**What happened.** The script held 2 A closed loop and waited for DIO6 to be pulled. Instead of the expected current collapse, the firmware over-current trip fired. The scope (triggered on the drain bar falling) caught the current at ≈ 4.7–5 A with the bridge closed and the rail sagging from ≈ 4.3 to 1.9 V; the trip then turned the bank off and the coil freewheeled down. The latch reset was pressed before the LEDs could be read.
+**What happened.** The program held 2 A and waited for the heartbeat wire to be pulled. Instead of the expected drop, the firmware's over-current trip fired. The scope caught the current at about 4.7–5 A with the bridge closed and the supply voltage sagging from 4.3 to 1.9 V; the trip then switched the transistors off and the current died away normally. The reset button was pressed before the lights could be read.
 
-![Current near 5 A, rail collapsing, firmware trip at about +25 µs](img/benchtop/t3c_surge.png)
+![Current near 5 A, supply voltage collapsing, trip at about +25 µs](img/benchtop/t3c_surge.png)
 
-*Current already ≈ 4.7 A at the start of the window, the 3 A bench supply in current limit (its output capacitors supply the rest), firmware trip at ≈ +25 µs, then the normal freewheel slope.*
+*The current is already about 4.7 A at the start, the 3 A bench supply is at its limit (its capacitors supply the rest), the firmware trips at about +25 µs, then the current falls normally.*
 
-**Latch check afterwards (supply output off, servo in RUN at setpoint 0, OUT1 wound up to the clamp):** DIO6 pulled for ≈ 2 s → red on, amber off; re-plugged → green on, red stays on, amber stays off. ✓ The latch holds through a full heartbeat loss. (A quick-flick test was not done.)
+**Safety-board check afterwards** (supply output off, servo running at 0 A with OUT1 at its maximum): heartbeat wire pulled for about 2 s → red on, amber off; plugged back in → green on, red stays on, amber stays off. ✓ The cut-off holds through a full heartbeat loss. (A very short flick of the wire was not tested.)
 
-**Cause not determined.** Candidates: (1) the latch reset pressed while the servo was still in RUN with the integrator wound up (the hazard behind "stop the servo before reset"); (2) a heartbeat loss too short to show in a 2 s pull test; (3) a disturbance on the current reading while handling wiring. The firmware trip caught it (backup layer worked).
+**Cause not found.** Possibilities: (1) reset pressed while the servo was still running with OUT1 at its maximum (the hazard behind "stop the servo before reset"); (2) a heartbeat loss too short to show in a 2 s test; (3) a disturbance on the current reading while handling the wiring. The firmware trip caught it, so the backup worked.
 
-**Underlying weakness:** the firmware cannot see the latch. When the latch opens the bridge, the PI winds OUT1 up to the clamp, and any reset or glitch re-closes the bridge at full drive (at 100 A: a hard surge). Proposed fixes (not done): wire the latch output to DIO5 (spare fault input) and have the firmware stop and clear the integrator on it; and/or stall detection in firmware (OUT1 at the clamp while the current is far below the setpoint for > ~1 ms → stop).
+**Underlying weak point:** the firmware cannot see the safety board. When the safety board opens the bridge, the controller turns OUT1 to its maximum, and any reset or glitch re-closes the bridge at full drive (at 100 A, a hard surge). Proposed (not done): connect the safety board's output to the spare input DIO5 so the firmware stops itself, and/or have the firmware stop if OUT1 sits at maximum while the current stays far below the setpoint for more than about 1 ms.
 
-### Closed-loop square pulse
+### Current pulse with the controller on
 
-**How.** Setpoint 0 → 2 A → 0 with an 8 ms flat top, recorded by the board's own capture (16.8 ms window) and the scope.
+**How.** Setpoint 0 → 2 A → 0, with 8 ms at 2 A, recorded by the board and the scope.
 
-![Closed-loop 2 A square pulse with zooms on both edges](img/benchtop/t3c_pulse.png)
+![2 A pulse with zooms on both edges](img/benchtop/t3c_pulse.png)
 
-*Top: the whole pulse. Bottom: both edges overlaid on their 50 % crossings (16 µs averages).*
+*Top: the whole pulse. Bottom: both edges overlaid at their halfway points (16 µs averages).*
 
-**Rise:** 10 → 90 % in 360 µs, 98 % ≈ 0.56 ms after the start, +2 % overshoot. Set by the PI gains; the 5 V rail could do it in ≈ 20 µs at 2 A. **Flat top:** 1.989 A. **Fall:** 2 A → 0.35 A in ≈ 130 µs (freewheel rate), then a slow tail: 10 % at ≈ 0.43 ms, 2 % at ≈ 1.3 ms.
+**Rise:** 10 → 90 % in 360 µs, 98 % about 0.56 ms after the start, 2 % overshoot. This is set by the controller settings; the 5 V supply could do it in about 20 µs at 2 A. **Flat top:** 1.989 A. **Fall:** 2 A → 0.35 A in about 130 µs (as fast as the coil allows), then a slow tail: 10 % at 0.43 ms, 2 % at 1.3 ms.
 
-**The tail is the controller:** after the setpoint goes to 0 the error is small once the current is below ≈ 0.35 A, so the integrator only unwinds at ≈ 280 counts/ms through the bank's turn-on region (3540–3700 counts). The open-loop turn-off (OUT1 straight to 0) has no tail. **Fix (proposed, not done):** a firmware option "snap OUT1 to zero": when the setpoint enters the zero window, OUT1 → 0 at once and the integrator → floor; the coil then freewheels at its natural rate. Works with the present hardware (bridge stays closed, same as the over-current trip); the TVS + blocking diode are only needed for the separate bridge-open fast turn-off.
+**The tail comes from the controller:** once the setpoint is 0 and the current is below about 0.35 A, the remaining error is small, so the controller turns the transistors down only slowly through the range where they start to conduct. Setting OUT1 straight to 0 has no tail. Fixed the same evening in firmware rev 5 (next section).
 
-### What this predicts for 100 A on the MOT pair (16 µH)
+### What this predicts for 100 A on the MOT coils (16 µH)
 
-| Edge | Model | Estimate |
+| Event | How it is estimated | Estimate |
 |---|---|---|
-| Turn-off, bridge closed (freewheel) | L dI/dt = −(V<sub>f</sub> + I·R<sub>fw</sub>), V<sub>f</sub> ≈ 0.6–1.0 V, R<sub>fw</sub> ≈ 8–12 mΩ → t = (L/R)·ln(1 + I₀R/V<sub>f</sub>) | ≈ 1.3 ms (1.0–1.7 ms); bench check: 45 µH × 2 A / 0.55 V ≈ 165 µs vs 170 µs measured |
-| Bridge opened at current | coil clamped at ≈ rail + diodes ≈ 7–8 V | ≈ 0.2 ms, energy into the supply |
-| Future fast turn-off (blocking diode + 30 V TVS) | ≈ 30 V across the coil | ≈ 50 µs |
-| Rise 0 → 100 A | V<sub>coil</sub> = V<sub>rail</sub> − I·R<sub>series</sub> − V<sub>bank</sub>: ≈ 0.3 A/µs at 0 A, ≈ 0.17 A/µs at 100 A | ≈ 0.4 ms hardware limit; ≥ 0.5 ms with the 200 A/ms firmware ramp; depends on how hard the bank turns on at 100 A with the 5.18 V gate ceiling (Test 4) |
+| Switch-off with the bridge closed (current circulates in the bridge) | From the diode voltage (0.6–1.0 V) and the resistance of the loop (8–12 mΩ) | About 1.3 ms (1.0–1.7 ms). Bench check: 45 µH × 2 A ÷ 0.55 V ≈ 165 µs, measured 170 µs |
+| Bridge opened while current flows | Coil voltage limited to about supply + diodes ≈ 7–8 V | About 0.2 ms, energy into the supply |
+| Future fast switch-off (extra diode + 30 V surge protector) | About 30 V across the coil | About 50 µs |
+| Rise 0 → 100 A | Supply voltage minus the losses in cables and transistors: about 0.3 A/µs at 0 A, 0.17 A/µs at 100 A | About 0.4 ms at best; at least 0.5 ms with the firmware's 200 A/ms ramp limit; depends on how hard the transistors can be turned on at 100 A (Test 4) |
 
-Coil current only; the field at the atoms also waits for chamber eddy currents (unknown).
+This is the coil current only; the field at the atoms also has to wait for currents induced in the vacuum chamber (unknown).
 
-## Rev 5: zero-setpoint snap, built and tested (11-12, evening) [passed]
+## Rev 5: the zero snap (11-12, evening) [passed]
 
-**Why.** The closed-loop square pulse showed a slow tail at turn-off: the PI winds OUT1 down through the bank's turn-on region, so the last ~0.35 A took ~1.3 ms. The open-loop turn-off (OUT1 straight to 0) has no tail.
+**Why.** The current pulse showed a slow tail at switch-off: the controller turned the transistors down slowly, so the last 0.35 A took about 1.3 ms. Setting OUT1 straight to 0 has no tail.
 
-**What changed (register map rev 5).** In RUN, closed loop, when the requested setpoint averaged over one 1 µs loop tick is within `snap_thresh` of zero, the firmware forces OUT1 to exactly 0 and holds the integrator cleared: the bank shuts off at once and the coil freewheels with the bridge closed. Only a zero setpoint triggers it (decided 11-12), so small currents can still be held. One count of hysteresis; status flag `snapped`. Settings in channels.toml: `snap_zero_enable = 1`, `snap_zero_amps = 0.1` (4 counts, provisional). Switching it off restores the rev 4 behaviour.
+**What changed (firmware rev 5).** When the controller is running and the setpoint is zero (within a small margin, `snap_zero_amps` = 0.1 A), the firmware sets OUT1 to exactly 0 and resets the controller: the transistors switch off at once and the coil's current dies away at its natural rate, with the bridge still closed. Only a zero setpoint does this, so small currents can still be held. It can be switched off (`snap_zero_enable` = 0), which gives back the old behaviour. A status flag ("snapped") shows when it is active.
 
-**How it was tested.** First in simulation: the real Verilog (cocotb + Icarus) closed around the plant model, five new tests. Then built on the lab laptop (Vivado; timing met, WNS +0.003 ns), deployed to the MOT board with the bench profile, and the 2 A closed-loop pulse repeated with the snap off and on (board capture; the scope refused connections this time).
+**How it was tested.** First in simulation: the real firmware code simulated together with a model of the coil and transistors, with five new tests. Then built on the lab laptop, loaded onto the MOT board with the bench settings, and the 2 A pulse repeated with the snap off and on (board recording; the scope was not available).
 
-![Simulated turn-off with and without the snap, bench and MOT models](img/benchtop/snap_sim.png)
+![Simulated switch-off with and without the snap, bench and MOT models](img/benchtop/snap_sim.png)
 
-*Simulation, HDL in the loop. Bench model (2 A): 0.1 % in 108 µs with the snap, 1.74 ms without. MOT model (80 A): identical either way; there the PI already gets the bank off, and the snap guarantees it.*
+*Simulation of the firmware. Bench model (2 A): the current reaches 0.1 % in 108 µs with the snap, 1.74 ms without. MOT model (80 A): the same either way; there the controller already switches the transistors off quickly, and the snap guarantees it.*
 
 ![Hardware 2 A pulse with the snap off and on](img/benchtop/t3d_snap_hw.png)
 
-*Hardware. With the snap on the fall runs at the freewheel rate all the way to zero; the −0.17 A dip is the damper capacitor ringing back once (as predicted). The rise is unchanged.*
+*On the hardware. With the snap on, the current falls at the coil's natural rate all the way to zero; the −0.17 A dip is the damper's capacitor ringing back once, as expected. The rise is unchanged.*
 
-![2 A pulse: rev 4 versus rev 5 with the snap off and on, and their difference](img/benchtop/t3d_pulse_old_vs_new.png)
+![2 A pulse: old firmware versus new, snap off and on, and their difference](img/benchtop/t3d_pulse_old_vs_new.png)
 
-*The same 2 A pulse with this afternoon's rev 4 firmware and tonight's rev 5 (snap off and on). Rise and flat top are identical; rev 4 and rev 5 with the snap off overlap on the fall, so switching the snap off reproduces the old behaviour exactly. Bottom right: rev 4 minus rev 5 with the snap on, the current the old firmware was still pushing through the coil after the setpoint went to zero (~0.35 A just after the fast part, still ~0.1 A at 1.5 ms; the peak near 120 µs includes the new run's damper dip). Times from each fall's 50 % point: fall to 2 % at 1220 µs (rev 4), 1241 µs (rev 5 off), 77 µs (rev 5 on).*
+*The same 2 A pulse with the old firmware (rev 4, afternoon) and the new one (rev 5) with the snap off and on. Rise and flat top are identical; with the snap off, rev 5 matches rev 4 exactly. Bottom right: old minus new, i.e. the current the old firmware was still pushing through the coil after the setpoint went to zero (about 0.35 A at first, still 0.1 A at 1.5 ms). Time from the halfway point of the fall to 2 %: 1220 µs (rev 4), 1241 µs (rev 5, snap off), 77 µs (rev 5, snap on).*
 
-| 2 A pulse (hardware) | Rise to 98 % | Fall to 10 % | Fall to 2 % | Undershoot |
+| 2 A pulse (hardware) | Rise to 98 % | Fall to 10 % | Fall to 2 % | Dip below zero |
 |---|---|---|---|---|
 | Snap off | 0.55 ms | 0.48 ms | **1.55 ms** | −0.03 A |
 | Snap on (4 runs) | 0.55–0.60 ms | 0.13 ms | **0.14 ms** | −0.16 to −0.20 A |
 
-**Other checks on the hardware:** setpoint 0 and 2 counts (55 mA) → snapped on every read; 10 counts (0.27 A) → not snapped, the loop holds 0.275 A; analog IN2 path at 0 V → snapped on 3000/3000 reads (no chatter); snap switched off → OUT1 back on the PI floor.
+**Other checks:** setpoint 0 and 2 steps (55 mA) → snapped on every reading; 10 steps (0.27 A) → not snapped, the controller holds 0.275 A; setpoint coming from IN2 at 0 V → snapped on 3000 of 3000 readings, no flickering on and off; snap switched off → OUT1 goes back to the controller's lower limit.
 
-**Re-test after a Red Pitaya power cycle (redeploy, re-zero):** same results (fall to 2 % in 0.14 ms with the snap, 1.31 ms without; checks pass). **IN2 noise at 0 V:** 4.1 counts rms per sample, but the 1 µs averages the snap uses have sd 0.43 counts and never exceeded +2.45 counts in 2560 ticks (threshold 4): about 1.5 counts of margin with the input terminated.
+**Re-test after the Red Pitaya was switched off and on:** same results (2 % in 0.14 ms with the snap, 1.31 ms without). **IN2 noise at 0 V:** single samples scatter by 4.1 steps, but the averages the snap uses scatter by only 0.43 steps and never went above 2.45 steps in 2560 tries (the snap threshold is 4): a margin of about 1.5 steps with IN2 terminated.
 
-**To watch:** single status reads of IN2 swing ±5 counts (per-sample noise). Measure IN2 noise and drift with the control computer connected and set `snap_zero_amps` from that. Timing margin of this build is thin (+3 ps); check it on the next firmware change.
+**To watch:** measure IN2's noise with the control computer connected, and set the snap threshold from that. This firmware build only just met its timing requirement (by 3 ps); check that again on the next firmware change.
 
-## Test 3, day 3 · Pre-computer checks (11-13) [passed, one fix made]
+## Test 3, day 3 · Checks before the control computer (11-13) [passed, one fix made]
 
-**Why.** The control computer is being built from scratch, so anything that can be tested without it is tested now; whatever goes wrong later is then on the computer's side. Flips and reversals are in 3g; these are the remaining sequences and failure cases.
+**Why.** The control computer's software is being written from scratch, so everything that can be tested without it is tested now. Then, if something goes wrong later, we know the problem is on the computer's side. Flips and reversals are in 3g; these are the other sequences and failure cases.
 
-**How.** Rev 5 firmware, bench profile, coil as wired today, closed loop, register setpoint, software arm (level held) and software flip (edge). Board's own 16.8 ms capture. Temporary settings restored afterwards (checked). Run by the second Claude session; data `logs/t3g_*` … `logs/t3m_*`.
+**How.** Firmware rev 5, bench settings. The setpoint was set from the PC, and the arm and flip signals were sent from software instead of the computer's wires (arm kept on). The board's own 16.8 ms recording. Any setting changed for a test was put back afterwards (checked). Run by the second Claude session; data in `logs/t3g_*` … `logs/t3m_*`.
 
-### D1 · Stop and trip around a flip
+### D1 · Stopping and tripping around a flip
 
 ![Stop during a hold, stop during a flip, trip right after a flip](img/benchtop/t3g_stop_trip.png)
 
-*S2: a stop during a 2 A hold ramps down and ends IDLE. S1: a stop during a flip lets the flip finish, then ramps to 0 and ends IDLE. T1: with the trip level lowered to 1.5 A for the test, a trip right after a flip fires in the new polarity and ends TRIPPED with the bridge open; trip acknowledge returns to IDLE.*
+*S2: stopping during a 2 A hold ramps the current down and ends idle. S1: stopping during a flip lets the flip finish, then ramps to 0 and ends idle. T1: with the trip level lowered to 1.5 A for this test, a trip right after a flip works in the new direction and ends tripped with the bridge open; acknowledging returns to idle.*
 
-**Result:** every combination ends safely, IDLE or TRIPPED with the bridge open; the trip works in either polarity. Trip level restored (102 counts).
+**Result:** every combination ends safely, idle or tripped with the bridge open; the trip works in both current directions. Trip level put back (2.79 A).
 
-### D2 · Arm while running
+### D2 · The arm signal while running
 
-![Arm dropped and re-raised while running](img/benchtop/t3h_arm.png)
+![Arm taken away and given back while running](img/benchtop/t3h_arm.png)
 
-*Dropping arm at 2 A changes nothing (by design, the current is held); a flip request with arm low is ignored (the sign change alone gives a sign mismatch and the current sits at 0); a new arm edge while running has no effect; a flip after re-arming works normally.*
+*Taking arm away at 2 A changes nothing (by design, the current is kept). A flip with arm off is ignored (the sign change alone then leaves the board holding zero current). Switching arm back on while running has no effect. A flip after arm is back works normally.*
 
-**Rule for the control computer:** hold arm high for as long as flips may be wanted. Dropping arm is not a stop.
+**Rule for the control computer:** keep arm on for as long as flips may be needed. Taking arm away does not stop the servo.
 
-### D3 · Setpoint ramp limits
+### D3 · Limits on how fast the setpoint may change
 
-![Measured setpoint ramps against the configured limits](img/benchtop/t3j_slew.png)
+![Measured setpoint ramps against the set limits](img/benchtop/t3j_slew.png)
 
-*Limits set to 2 / 1 A/ms on the board for this test (production 200 / 50 A/ms): measured 2.09 / 1.04 A/ms against 2.08 / 1.04 from the register codes. A zero target, and a target inside the zero window (0.3 A), are taken at once.*
+*The firmware limits how fast the setpoint may change. For this test the limits were slowed to 2 A/ms going up and 1 A/ms going down (normally 200 and 50 A/ms). Measured: 2.09 and 1.04 A/ms. A zero setpoint, and a small one inside ±0.49 A (0.3 A), are taken at once.*
 
-**Result:** the ramp limiter does what the register map says. Codes restored (959 / 240). **Found here:** the host's capture decoder drew the wrong setpoint trace at reversed polarity (fixed, commit 7e4b7e84).
+**Result:** the limits work exactly as set; normal values put back. **Found here:** the PC software drew the wrong setpoint curve when the current flows the other way (fixed, commit 7e4b7e84).
 
-### D4 · 50 repeated shot sequences
+### D4 · The same sequence 50 times
 
-![50 shots overlaid and their holds](img/benchtop/t3k_shots.png)
+![50 runs overlaid and their held values](img/benchtop/t3k_shots.png)
 
-*Each shot: +2 A for 4 ms, +1 A for 3 ms, sign change + flip to −2 A for 3 ms, zero, stop; shots alternate the starting polarity. Bottom: each hold against its commanded value.*
+*Each run: +2 A for 4 ms, +1 A for 3 ms, setpoint sign change + flip to −2 A for 3 ms, zero, stop; the runs alternate the starting direction. Bottom: each held value compared with what was asked for.*
 
-**Result:** 50/50 OK. Holds within 0.3 mA of the commanded setpoint on average, 1–2 mA shot-to-shot (0.05–0.09 % of 2 A). The current after the snap reads about −10 mA: the stored zero offsets are whole ADC counts (27 mA each). **Found here:** the captured current read 6.8 mA low because the capture truncates its low bits (corrected in the decoder, commit 39bbf373).
+**Result:** 50 of 50 good. Held values within 0.3 mA of the request on average, varying by 1–2 mA from run to run (0.05–0.09 % of 2 A). After the snap the current reads about −10 mA, because the stored zero offset is a whole number of measurement steps (27 mA each). **Found here:** the board's recordings read 6.8 mA low because of how the board packs the data (corrected in the PC software, commit 39bbf373).
 
-### D5 · Two programs writing settings at once — safety issue, fixed
+### D5 · Two programs changing settings at once — safety issue, fixed
 
-![Two clients writing settings from stale copies](img/benchtop/t3l_two_clients.png)
+![Two programs writing settings from out-of-date copies](img/benchtop/t3l_two_clients.png)
 
-*C1: program B, connected while the servo ran, wrote two unrelated settings from its out-of-date copy after program A had stopped the servo; that silently set servo_enable and the arm bit again, and the stopped servo restarted with the bridge closed (tested at 0 A). C2: with B re-reading the board first, nothing restarts. C3: a stale write 0.37 ms after a stop at 1 A does not cancel the stop but leaves servo_enable and arm set, so a single arm edge would restart it.*
+*C1: program B connected while the servo was running; program A then stopped the servo. When B later changed two unrelated settings, it used its out-of-date copy of the settings, which switched "servo enable" and "arm" back on, and the stopped servo started again with the bridge closed (tested at 0 A). C2: when B reads the board's settings first, nothing restarts. C3: an out-of-date change 0.37 ms after a stop at 1 A does not cancel the stop, but leaves "enable" and "arm" on, so a single arm signal would restart it.*
 
-**Fix (commit 39bbf373):** every settings write now re-reads the words it changes from the board first, so a second program can no longer undo someone else's stop; a test reproduces C1. The dashboard was already safe. The control computer only drives IN2, DIO3 and DIO4 and never writes settings; the risk was the dashboard plus scripts together.
+**Fix (commit 39bbf373):** every settings change now reads the current settings from the board first, so one program can no longer undo another's stop; a test reproduces C1. The dashboard was already safe. The control computer never changes settings (it only drives IN2, DIO3 and DIO4); the risk was the dashboard and scripts together.
 
-### D6 · Register server killed during a hold
+### D6 · Connection to the PC lost during a hold
 
-![Register server stopped for 9 s during a 1 A hold](img/benchtop/t3m_server_restart.png)
+![The board's communication program stopped for 9 s during a 1 A hold](img/benchtop/t3m_server_restart.png)
 
-*The board's register server (the program the PC talks to) was killed for 9 s during a 1 A hold.*
+*The program on the Red Pitaya that the PC talks to was stopped for 9 s during a 1 A hold.*
 
-**Result:** the FPGA kept running at 1.01 A, settings unchanged, heartbeat counter advanced with wall time; the dashboard reconnected by itself. The loop never depends on the PC or the network.
+**Result:** the current stayed at 1.01 A with all settings unchanged; the board's clock kept counting; the dashboard reconnected by itself. The current control never depends on the PC or the network.
 
-**Still to test, needs a signal source:** the analog setpoint input IN2 (its scale has never been measured; steps, ramps, noise against the snap threshold, ground loops from an earthed source, an unplugged IN2 cable) and the real DIO3/DIO4 inputs (voltage levels, shortest pulse, glitches, latency). The scope's control port was held by another program, so day 3 has board captures only.
+**Still to test, needs a signal generator:** the analog setpoint input IN2 (its scale has never been measured; steps, ramps, noise against the snap threshold, an earthed source, an unplugged IN2 cable) and the real flip and arm wires DIO3 and DIO4 (voltage levels, shortest pulse, glitches, delay). The scope was busy with another program on day 3, so day 3 has board recordings only.
 
 ## Open items
 
-- ~~Bench model: coil L 9 → ≈ 45 µH; lab notes for day 2; bench doc recovery fix.~~ Done, commit 8edac7cc.
-- Design the RC damper for the MOT pair (16 µH, near critical damping, pulse rating at 100 A); check the 72 kHz line it introduces. LEM between the two coils, damper across the whole pair (LEM inside the loop).
-- **Snap during flips (3e):** extend the zero-setpoint snap to the FSM's own ramp-downs (flip, stop), or have the control computer change the setpoint sign before the flip request.
-- ~~Firmware: "snap OUT1 to zero".~~ Done: register map rev 5, deployed 11-12. Still to do: set `snap_zero_amps` from the measured IN2 noise.
-- **5 A surge / latch visibility:** wire the latch output to DIO5 and stop the servo on it, and/or firmware stall detection. Until then: always stop the servo before pressing reset.
-- Test 4: scope the drain bar at turn-off (TVS clamp level at 100 A) and the node spikes when the bridge opens.
-- Optional: node B probe or LCR meter to measure the test coil's L.
-- **Bench ringing at 10–20 kHz (3i):** cured by the damper; mechanism still not understood.
-- 3j uncooled duty test.
-- Gate-voltage check of the bridge FETs during a flip (floating probe).
+- ~~Bench model: coil 9 → 45 µH; lab notes for day 2; bench document fix.~~ Done, commit 8edac7cc.
+- Design the damper for the MOT coil pair (16 µH, near critical damping, a resistor that survives 100 A pulses); check the small 72 kHz tone it adds. Put the current sensor between the two coils, and the damper across the whole pair.
+- **Zero snap during flips (3g):** make the snap act during flips and stops too, or have the control computer change the setpoint sign before the flip.
+- ~~Firmware "snap OUT1 to zero".~~ Done in rev 5 (11-12). Still to do: set the snap threshold from IN2's measured noise.
+- **5 A surge / the firmware cannot see the safety board:** connect the safety board to DIO5 and stop the servo on it, and/or stop when OUT1 is at maximum but no current flows. Until then: always stop the servo before pressing reset.
+- Test 4: scope the drain bar at switch-off (surge protector level at 100 A) and the spikes when the bridge opens.
+- Optional: measure the test coil's inductance directly (probe both coil ends, or use an LCR meter).
+- **Bench ringing at 10–20 kHz (3i):** cured by the damper; its cause is still not understood.
+- 3j heating test without cooling water (at 100 A).
+- Check the bridge switches' gate voltages during a flip (needs a floating probe).
