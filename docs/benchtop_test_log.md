@@ -17,7 +17,7 @@
 | 3d PI gain tuning | Fast, stable closed loop | [done] | kp 31.2 counts/A, ki 942 counts/(A·ms); ×2 more oscillates at 21 kHz; 2.5 A step +2.8 %; bench limit lowered to 2.2 A because of the ringing |
 | 3e Over-current trip | The current limit of the MVP | [passed] | Fires at ≈ 2.85 A (set 2.79 A), before the 3 A supply limit |
 | 3f Turn-off path | Freewheel vs TVS, turn-off time | [done] | Freewheel through the bridge body diode; slope set by the coil's L |
-| 3g Flips + dead time | Polarity change at zero current, no shoot-through | [passed] | Flips only inside the zero window; enable low 1 µs each side |
+| 3g Flips, reversal + dead time | Polarity change at zero current, no shoot-through; the computer's flip + sign-change sequence | [passed, open finding] |
 | 3h Heartbeat-latch trip | Hardware safety path at current | [passed] | Bridge opens at 2 A, current gone in ≈ 10 µs; rail spikes +2.5–3.2 V for ≈ 10 µs |
 | 3i Hold noise, dither on/off | Steady-hold stability vs 0.1 % spec | [done, open finding] | Average stable to 0.01 %; dither makes no difference on the bench; hold noise dominated by a 10–20 kHz ringing of the pass bank with the coil (±0.15 A), not from the loop |
 | Extra: range, long hold, flips | Gains over 0.5–2.2 A, drift, flip reliability | [passed] | No trips; 10 min hold stable within 0.5 mA after warm-up; 20/20 flips |
@@ -25,7 +25,6 @@
 | Damper test | Does 3.2 Ω + 10 µF across the coil stop the ringing? | [passed] | Yes: ringing 43–124 mA → 2.5–5 mA with the coil lifted; 2 A hold 100 µs noise 6.5 mA rms |
 | LEM inside the loop: turn-offs (11-12, late) | Is current still flowing after a turn-off, hidden in the coil–damper loop? | [done, open finding] | Freewheel 2 A → 0 in ≈ 170 µs, then a −0.2 A swing for ≈ 100 µs; bridge opened at 2 A: zero in ≈ 25 µs, gone by ≈ 200 µs, energy into the damper; latch holds; an unexplained 5 A surge caught by the firmware trip; closed-loop turn-off has a ≈ 1 ms PI tail |
 | Rev 5: zero-setpoint snap (11-12, evening) | Remove the closed-loop turn-off tail | [passed] | New firmware deployed; 2 A turn-off to 2 % in 0.14 ms instead of 1.55 ms; small setpoints still held; no chatter on IN2 |
-| 3e Full reversal ±2 A (11-13) | The control computer's flip + sign-swap sequence | [passed, open finding] | 12/12 reversals OK, settled in 1.2–1.4 ms; changing the sign first is fastest; the rev 5 snap does not act during flips |
 
 ## Test 0 · Red Pitaya, logic board and power-stage pre-checks (11-02 to 11-11) [passed]
 
@@ -252,25 +251,43 @@ Offsets: IN1 +0.256 A, IN2 +0.157 A, within one ADC count of day 1.
 
 **Not measured:** the voltage across the coil (node B is not probed), so 45 µH is calculated, not yet measured.
 
-## 3g · Flips and dead time [passed]
+## 3g · Flips, field reversal and dead time (11-12, 11-13) [passed, open finding]
 
-**Why.** A flip must ramp the current into the zero window, drop bridge enable, change polarity, and re-enable. The enable-low window is the only shoot-through protection; the logic board adds no dead time.
+**Why.** A flip must bring the current into the zero window, drop bridge enable, change polarity and re-enable; the enable-low window is the only shoot-through protection (the logic board adds no dead time). The control computer will reverse the field by pulsing the flip request (DIO3) and changing the sign of its setpoint while the flip is in progress (servo_interface_brief.md), so the whole reversal has to work as one sequence.
 
-**How.** Closed loop at ±2 A; flip request from software. Arm must stay *high* for flips to be accepted, so the arm input was held inverted during the test. After each flip the host re-signs the setpoint.
+**How.** Closed loop at ±2 A, bench profile; arm held high in software (flips need the arm *level*), flip request = a software edge on the flip input. 11-12: the scope at the Red Pitaya pins for the dead time. 11-13 (rev 5 firmware, run by the second Claude session): the board's own 16.8 ms capture of complete reversals +2 ↔ −2 A in three orderings (A flip and sign change together; B sign change first, flip 0.5 ms later; C flip first, sign change 0.2 ms later), sign-first-then-flip with different delays, and edge cases.
 
-![Current and polarity during flips](img/benchtop/flips.png)
+![Field reversals in three orderings, both directions](img/benchtop/t3e_reversal.png)
 
-*The current ramps from ±2 A into the ±0.49 A window in ≈ 300 µs, then the polarity changes. Afterwards the board sits at zero until the setpoint sign matches.*
+*Current × the sign it started with, so every run starts at +2 and ends at −2. All 12 reversals complete. In A and C the current pauses at ≈ 0.4 A for 150–250 µs (the PI tail) until the bridge opens inside the flip zero window; in B it goes straight to zero.*
+
+![Sign change first, then the flip request, at five delays](img/benchtop/t3e2_swap_then_flip.png)
+
+*The ordering the control computer should use: change the setpoint sign, then send the flip request. 20 of 20 reversals OK at every delay; the current goes straight to zero (no plateau) and the new current rises once the flip reaches the board.*
+
+![Flip edge cases](img/benchtop/t3f_flip_edges.png)
+
+*Edge cases. F1: a flip at 0 A just changes polarity. F2: a flip during the up-ramp works. F3/F4: a second flip request after the first flip has finished flips back again, leaving the setpoint sign wrong for the polarity (sign-mismatch flag, current held at 0). F3b: a second request during a flip is ignored, not queued.*
 
 ![Bridge enable and polarity around the flip](img/benchtop/deadtime.png)
 
 *Enable drops 1.02–1.04 µs before the polarity edge and returns 0.98–1.02 µs after it: the 125 × 8 ns setting.*
 
-**Result:** +2 → −2 → +2 A with no timeout and no trip; current at the polarity edge +0.13 A and −0.29 A.
+| Reversal ordering (±2 A) | Ramp-down 90 % → 0 | Leaving 90 % → settled within ±2 % at the new sign |
+|---|---|---|
+| A: flip + sign change together | 338 µs | 1.37 ms |
+| B: sign change first, flip 0.5 ms later | **146 µs** | **1.22 ms** |
+| C: flip first, sign change 0.2 ms later | 343 µs | 1.29 ms |
 
-**Side finding:** the dashboard's software-arm button gives only an edge, so flips after it are ignored. It needs a "hold arm" mode for bench flip tests (passed to the dashboard session).
+**Dead time (11-12):** enable drops 1.02–1.04 µs before the polarity edge and returns 0.98–1.02 µs after it (the 125 × 8 ns setting). Still open: the bridge FETs' gate voltages during a flip (floating probe), to see it at the FETs.
 
-**Still open:** the bridge FETs' gate voltages during a flip (needs a floating probe), to see the dead time at the FETs rather than at the Red Pitaya pins.
+**Reversals (11-13):** 12 of 12 in the three orderings and 20 of 20 sign-first: back in RUN at the new polarity, no sign mismatch, no timeout, no trip, overshoot 25–38 mA (noise). The new current reaches 90 % 0.8–0.95 ms after the old one starts to fall.
+
+**Sign change first is fastest:** an opposite-sign setpoint doubles the loop's error (−4 A instead of −2 A), so the PI turns the bank off about twice as fast. **Rules for the control computer:** change the sign, then send **one** flip request per reversal; a second request during a flip is ignored, and one after it flips back.
+
+**Open finding: the rev 5 zero-setpoint snap does not act during a flip.** During a flip the FSM forces the loop's setpoint to zero itself, which the snap does not see; the flip still ends quickly because the bridge opens once the current is inside the zero window, but in orderings A and C a ≈ 0.4 A plateau of 150–250 µs remains. **Decide before 100 A:** extend the snap to the FSM's ramp-downs (flips, stops), or rely on the sign-first rule.
+
+**Side findings:** with the safety latch still tripped after a deploy the FSM completes a flip at zero current (nothing flows) — reset the latch after every deploy. The dashboard's software-arm button gives only an edge, so flips after it are ignored; it needs a "hold arm" mode for bench flip tests.
 
 ## 3h · Heartbeat-latch trip at current [passed]
 
@@ -502,30 +519,6 @@ Coil current only; the field at the atoms also waits for chamber eddy currents (
 **Re-test after a Red Pitaya power cycle (redeploy, re-zero):** same results (fall to 2 % in 0.14 ms with the snap, 1.31 ms without; checks pass). **IN2 noise at 0 V:** 4.1 counts rms per sample, but the 1 µs averages the snap uses have sd 0.43 counts and never exceeded +2.45 counts in 2560 ticks (threshold 4): about 1.5 counts of margin with the input terminated.
 
 **To watch:** single status reads of IN2 swing ±5 counts (per-sample noise). Measure IN2 noise and drift with the control computer connected and set `snap_zero_amps` from that. Timing margin of this build is thin (+3 ps); check it on the next firmware change.
-
-## 3e · Full field reversal, +2 A ↔ −2 A (11-13) [passed, open finding]
-
-**Why.** The control computer will reverse the field by pulsing the flip request (DIO3) and changing the sign of its setpoint while the flip is in progress (servo_interface_brief.md). That combined sequence had never been run: earlier flip tests (3g, extra tests) flipped, waited for the loop to restart, then changed the sign.
-
-**How.** Rev 5 firmware, bench profile, closed loop, register setpoint; arm held high in software, flip = a software edge on the flip input. +2 → −2 A and −2 → +2 A, two runs each, in three orderings: **A** flip and sign swap together; **B** sign swap first, flip 0.5 ms later; **C** flip first, sign swap 0.2 ms later. Board's own 16.8 ms capture. (Run by the second Claude session.)
-
-![Field reversals in three orderings, both directions](img/benchtop/t3e_reversal.png)
-
-*Current × the sign it started with, so every run starts at +2 and ends at −2. All 12 reversals complete. In A and C the current pauses at ≈ 0.4 A for 150–250 µs (the PI tail) until the bridge opens inside the flip zero window; in B it goes straight to zero.*
-
-| Ordering | Ramp-down 90 % → 0 | Leaving 90 % → settled within ±2 % at the new sign |
-|---|---|---|
-| A: flip + swap together | 338 µs | 1.37 ms |
-| B: swap first, flip 0.5 ms later | **146 µs** | **1.22 ms** |
-| C: flip first, swap 0.2 ms later | 343 µs | 1.29 ms |
-
-**Result:** 12 of 12 reversals OK: back in RUN at the new polarity, no sign-mismatch flag, no timeout, no trip; final −2.003 / +1.989 A; overshoot 25–38 mA (noise level). The rise from 0 to 90 % of the new value takes 0.82–0.95 ms.
-
-**Why B is fastest:** a setpoint of the opposite sign doubles the loop's error (−4 A instead of −2 A), so the PI winds OUT1 down about twice as fast. It is not the zero-setpoint snap.
-
-**Open finding: the rev 5 snap does not act during a flip.** The snap looks at the requested setpoint and only works in RUN; during a flip the FSM forces the loop's setpoint to zero itself, in a different state. The flip still finishes quickly because the FSM opens the bridge as soon as the current is inside the zero window, which cuts the tail short. **Decision needed before 100 A:** extend the snap to the FSM's own ramp-downs (flips and stops), or have the control computer change the sign first (ordering B).
-
-**Also:** the first attempt ran with the safety latch still tripped from the rev 5 deploy. No current flowed, and the FSM even completed a flip at zero current. Reset the latch after every deploy.
 
 ## Open items
 
