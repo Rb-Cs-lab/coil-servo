@@ -252,13 +252,26 @@ module coil_servo_top #
   wire [21:0] abs_sp_dec = sp_dec[21] ? -sp_dec : sp_dec;
   wire [21:0] snap_on_lim  = {1'b0, snap_thresh, 7'd0};
   wire [21:0] snap_off_lim = {1'b0, snap_thresh, 7'd0} + 22'd128;
-  reg snap_zero;
+  reg snap_req;                         // the REQUESTED setpoint is zero
   always @(posedge aclk)
     if (!aresetn || !snap_enable || !run_state || open_loop)
-      snap_zero <= 1'b0;
+      snap_req <= 1'b0;
     else if (tick_s)
-      snap_zero <= snap_zero ? (abs_sp_dec <= snap_off_lim)
-                             : (abs_sp_dec <= snap_on_lim);
+      snap_req <= snap_req ? (abs_sp_dec <= snap_off_lim)
+                           : (abs_sp_dec <= snap_on_lim);
+  // The board brings the setpoint to zero ITSELF (sp_force_zero) for a
+  // flip or a stop -- ramp-down, dead time, settle, timeout hold -- while
+  // the requested setpoint may still be +-I. The snap acts there too (same
+  // snap_enable bit), so those ramp-downs also run at the freewheel rate
+  // instead of the PI tail (bench test 3e, 2026-11-13: a ~0.4 A plateau of
+  // 150-250 us before the bridge opened when the flip came first). Only
+  // with the bridge closed and no trip in progress: with the bridge open
+  // or tripped both DACs are zero anyway, and STS `snapped` stays quiet.
+  wire snap_force = snap_enable & ~open_loop & sp_force_zero &
+                    bridge_en & ~out_kill;
+  reg snap_zero;
+  always @(posedge aclk)
+    snap_zero <= aresetn & (snap_req | snap_force);
 
   // ------------------------------------------------------------------
   // PI and output stage
