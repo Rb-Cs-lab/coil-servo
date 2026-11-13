@@ -36,6 +36,7 @@
 | Day 3: checks before the control computer (11-13) | Everything that can be tested without the control computer | [passed, one fix made] | All cases end safely; 50 of 50 repeated sequences; a settings bug in the PC software found and fixed |
 | New firmware: snap in flips and stops (11-13) | Remove the pause near 0.4 A when the flip comes first | [passed] | Every reversal ordering and every stop reaches zero in ≈ 140 µs (before: up to 380 µs); firmware 583e877 |
 | Zero-current noise reference (11-13) | Which tones are real current | [done] | Most tones are measurement; 200–400 kHz lines grow with load current but are pickup, not current |
+| Fastest full reversal (11-13) | How fast can the current go from +2 A to −2 A? | [passed] | 0.81 ms to within ±2 % (0.95 ms with the current settings); after zero, the controller's rise is the limit |
 
 ## Test 0 · Each part on its own (11-02 to 11-11) [passed]
 
@@ -641,6 +642,27 @@ This is the coil current only; the field at the atoms also has to wait for curre
 **Possibly real, and small:** with current flowing, the 7.7 kHz bump (close to the coil + damper resonance, ≈ 7.5 kHz) and the 10–20 kHz band each grow by about 5 mA (≈ 0.25 % of 2 A).
 
 The 290 kHz lines are well above anything the controller reacts to (it works below about 10 kHz), so they do not disturb the current; they only make single readings look noisier.
+
+## Fastest full current reversal on the bench (11-13) [passed]
+
+**Why.** How fast can the setup reverse the current from +2 A to −2 A (and back), with the new firmware (zero snap also in flips)?
+
+**How.** Sign change first, flip right after, both directions, three runs each, the board's own recording. Two ways of sending them from the PC: (1) **together** in one network message, so they reach the board microseconds apart, like the control computer's IN2 and flip line will; (2) **separately**, ≈ 0.35 ms apart (one network round trip each). Each with the current settings and with two settings trimmed for speed: the zero check shortened from 64 to 8 samples, and the 100 µs settle wait after a flip (a placeholder for chamber eddy currents; there is no chamber on the bench) removed. Settings restored afterwards.
+
+![Fastest reversals, current and trimmed settings, sign and flip sent together or separately](img/benchtop/t3p_fast_reversal.png)
+
+*Top: sign change and flip together. The current drops to zero at the coil's own speed (≈ 140 µs), the bridge switches, and the controller brings the current up to the new value. Trimmed settings (blue) save the settle wait. Bottom: the PC sends them 0.35 ms apart and the current waits at zero for the flip.*
+
+| Sent | Settings | At zero | 90 % of new value | Within ±2 % of new value |
+|---|---|---|---|---|
+| Together | current | 141 µs | 740 µs | **0.95 ms** |
+| Together | trimmed | 130 µs | 585 µs | **0.81 ms** |
+| Separately | current | 143 µs | 959 µs | 1.18 ms |
+| Separately | trimmed | 142 µs | 805 µs | 1.05 ms |
+
+**Result:** 24 of 24 reversals OK. Fastest: **+2 A → −2 A, settled within ±2 %, in 0.81 ms** (0.95 ms with the current settings). Times from the moment the current starts to fall.
+
+**What limits it now:** getting to zero takes ≈ 140 µs (the coil's own speed); the check and switch-over ≈ 10 µs (trimmed) or ≈ 170 µs (current settings, including the settle wait); then about 0.5–0.7 ms for the controller to bring the current up to the new value. That last part is set by the controller settings, not the hardware (the supply could do it in about 20 µs at 2 A). On the real coils the settle wait must be set from the measured chamber eddy currents, and the controller will be retuned for 100 A.
 
 ## Open items
 

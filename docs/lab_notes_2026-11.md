@@ -989,3 +989,27 @@ running at setpoint 0 (snap on, bridge closed); (3) 2 A hold; plus (4) the
   switching. Re-check with the SE-600-5 in Test 4.
 - Possibly real and small: +5 mA at 7.7 kHz (near the coil + damper
   resonance, ≈ 7.5 kHz) and in 10–20 kHz (≈ 0.25 % of 2 A).
+
+## Fastest full current reversal on the bench (11-13)
+
+Firmware 583e877 (snap on), ±2 A, sign change first then flip, both
+directions, three runs each, board capture; data `logs/t3p_*`. Sent
+(1) **together** — one network write of CFG words 1–13 (new setpoint in
+word 1, flip edge in word 13, words 2–12 rewritten with their own values),
+so both land microseconds apart like the control computer's IN2 + DIO3 —
+or (2) **separately**, ≈ 0.35 ms apart. Settings: current, or trimmed
+(`zero_holdoff` 8 samples instead of 64, `settle` 0 instead of 100 µs;
+restored afterwards).
+
+| Sent | Settings | At zero | 90 % of new | Within ±2 % |
+|---|---|---|---|---|
+| together | current | 141 µs | 740 µs | **0.95 ms** |
+| together | trimmed | 130 µs | 585 µs | **0.81 ms** |
+| separately | current | 143 µs | 959 µs | 1.18 ms |
+| separately | trimmed | 142 µs | 805 µs | 1.05 ms |
+
+24/24 OK. Times from the current leaving 90 % of 2 A. After zero
+(≈ 140 µs, the coil's own speed) the limit is the controller's rise to the
+new value (0.5–0.7 ms with the bench settings), not the hardware. For the
+MOT: `settle_us` from the measured chamber eddy currents; controller
+retuned at 100 A.
