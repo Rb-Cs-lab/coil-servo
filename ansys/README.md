@@ -146,6 +146,13 @@ Rectangular Plot, pick e.g. `V(i_meas)`.
 | `vt_pass` | Pass-transistor threshold: 3.892 cold, 3.868 warm | 3.892 |
 | `V_opamp` | Gate amplifier supply (12.01 V now, 5.18 V before 11-13) | 12.01 V |
 | `V_sup`, `I_lim`, `C_sup`, `R_lead`, `L_lead` | Supply and its leads | bench values |
+| `sp2_amps`, `t_sp2_on`, `slew2` | A second setpoint step added to the first (step down, or sign change for a reversal) | 0 = not used |
+| `snap_amps` | Zero-setpoint snap threshold; −1 = snap off (firmware before rev 5) | 0.1 |
+| `ol_step`, `t_ol_step`, `t_ol_ramp` | A step (or slow sweep) of the fixed OUT1 command | 0 = not used |
+| `t_pol`, `en_gap`, `t_run_len` | Flip: when the polarity line changes, how long the bridge is off, how long OUT1 is held at zero | not used |
+| `t_hb_len`, `t_rst_per` | Heartbeat wire re-plugged after this long; reset pressed again after this long | not used |
+| `R_term` | Terminator at the op-amp input (1e9 Ω = not fitted) | 50 Ω |
+| `cgd_pass` | Pass-transistor drain-to-gate capacitance | 1 nF |
 | `L_coil`, `R_coil`, `R_damp1`, `R_damp2`, `C_damp` | Coil and damper (`R_damp1` = 1e6 Ω removes the damper) | bench values |
 
 Useful signals: `V(i_meas)` = the current the firmware sees, in amps
@@ -156,26 +163,43 @@ To add a scenario, add a line to `SCENARIOS` in `run_sims.py`.
 
 ## Result so far (details in `results/comparison.html`)
 
-Matches the bench: current for a fixed OUT1 (0.77 / 1.26 / 1.87 / 2.04 A
-against 0.71 / 1.23 / 1.93 / 2.0 A), rail bar at 2 A (4.61 V / 4.60 V),
-switch-off with the bridge closed (159 µs / ~170 µs), bridge opened at 2 A
-(21 µs with damper / ~25 µs; 12 µs without / 10–13 µs), controller steps
-(2 A: 0.48 / 0.69 ms to 90 / 98 % against 0.45–0.47 / 0.62–0.65 ms), the
-trip, the 7.6 ms heartbeat time-out, and OUT1 winding up to its clamp
-after a safety-board cut-off. A lost IN1 signal gives a 4.4 A surge with
-the rail collapsing — consistent with the 5 A surge of 11-12.
+All bench tests that a circuit model can do are simulated (45 runs); the
+report has a table "which bench tests are simulated" that also lists the
+ones that cannot be (noise, drift, heating, firmware and software
+behaviour).
 
-Does **not** match:
+Matches the bench:
 
-- **The 10–20 kHz ringing without the damper does not appear.** The parts
-  as modelled are stable at a fixed OUT1, so the cause is something the
-  model leaves out.
+- safety-board light sequence, all six steps, and the 7.6 ms time-out;
+- gate stage, with and without the terminator (within 0.02 V);
+- current against OUT1, cold and warm (within ~8 %);
+- controller steps at three gain settings and eight steps up and down over
+  the range (traces overlay closely);
+- switch-off with the bridge closed (159 µs / ~170 µs) and with the bridge
+  opened (21 µs with damper / ~25 µs; 12 µs without / 10–13 µs);
+- full reversal +2 → −2 A (0.96 ms / 0.95 ms; trimmed 0.81 ms / 0.81 ms);
+- the trip, and OUT1 winding up to its clamp after a safety-board cut-off;
+- a lost IN1 signal gives a 4.4 A surge with the rail collapsing —
+  consistent with the 5 A surge of 11-12.
+
+Does **not** match, or only partly:
+
+- **The 10–20 kHz ringing.** With datasheet capacitances the model does
+  not ring. With the pass transistors' drain-to-gate capacitance raised
+  from 1 nF to 17 nF (design variable `cgd_pass`) it shows a resonance at
+  16 / 13 / 11 kHz for 0.77 / 1.26 / 1.87 A — the bench rang at 20 / 15 /
+  11.5 kHz — and the damper removes it. But in the model the ringing dies
+  away within ~1 ms; on the bench it continued. A candidate explanation,
+  not a confirmed one.
+- **Closed loop without the damper:** the model's hold carries a
+  40–50 kHz ripple of ±30–50 mA that the bench does not show.
 - **Rail bar when the bridge opens:** model +25 V for under 1 µs, scope
-  +2.5–3.2 V for ~10 µs. Until that is understood, do not trust the
-  model's rail voltage for a bridge opening at 100 A.
+  +2.5–3.2 V for ~10 µs. Do not trust the model's rail voltage for a
+  bridge opening at 100 A.
+- The measured small-step resonance moves with current (16 → 8 kHz); the
+  model's does not.
 - Smaller points: swing below zero after switch-off (−0.09 A against
-  −0.2 A), drain bar with the bridge open (0 V against −0.5 V), no
-  overshoot on steps.
+  −0.2 A), drain bar with the bridge open (0 V against −0.5 V).
 
 ## Where each part is, and where its numbers come from
 

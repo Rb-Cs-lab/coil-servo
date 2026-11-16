@@ -74,6 +74,7 @@ def place(config):
                   "RV1": (51, 53, 0), "RV2": (79, 53, 0)})
     for k, name in enumerate(SOURCES):
         P[name] = (-86 + 12 * k, -24, 0)
+    P["V_setpoint2"] = (-86, -18, 0)      # in series on top of V_setpoint
     return P
 
 
@@ -107,6 +108,8 @@ def wires(config):
         "in1": [["X_in1.b", "U_rp.in1"], [(-42, 14), "C_cable.1"]],
         # ---- heartbeat through the "pullable wire" -------------------------
         "dio6": [["X_hb.b", "U_logic.dio6"]],
+        # ---- the two setpoint sources in series ----------------------------
+        "sp_b": [["V_setpoint.positive", "V_setpoint2.negative"]],
     }
     if config == "bench":
         W["A"] += [[(43, 64), "RV1.a"], [(43, 50), "LEM.in"]]
@@ -137,5 +140,5 @@ def texts(config):
         (-32, 20, "RED PITAYA (firmware stand-in)"),
         (-88, 20, "SENSING: burden, AD8421 (G = 1), 49.9 ohm, cable to IN1"),
         (-22, 58, "SAFETY LOGIC BOARD"),
-        (-88, -16, "TEST SOURCES: what the firmware state machine, the operator and faults do (set by the design variables)"),
+        (-80, -14, "TEST SOURCES: what the firmware state machine, the operator and faults do (set by the design variables)"),
     ]

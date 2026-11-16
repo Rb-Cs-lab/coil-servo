@@ -119,8 +119,9 @@ Rgs g s 10k
 *   d      drain bar          gbus   op-amp output (common gate drive)
 *   src    source bar (supply 0 V)
 *   VT     this FET's fitted threshold (see IXTN200N10L2 above)
-.subckt PASS_LEG d gbus g s src VT=3.892 RG=24.9 RPD=47k RBAL=0.030
-XM d g s IXTN200N10L2 VT=VT
+*   CGD    drain-gate ("Miller") capacitance, CGS gate-source capacitance
+.subckt PASS_LEG d gbus g s src VT=3.892 RG=24.9 RPD=47k RBAL=0.030 CGD=1n CGS=22n
+XM d g s IXTN200N10L2 VT=VT CGD=CGD CGS=CGS
 Rg gbus g RG
 Rpd g s RPD
 Rbal s src RBAL
@@ -231,13 +232,13 @@ Rhp hp 0 1k
 Gchg 0 c cur='0.05*max(v(hp)-1,0)*(1-v(c))'
 Cc c 0 10n
 Rc c 0 'TMONO/0.6931e-8'
-Eok okn 0 vol='0.5+0.5*tanh(40*(v(c)-0.5))'
+Eok okn 0 vol='0.5+0.5*tanh(4000*(v(c)-0.5))'
 Rokn okn 0 1Meg
 Eokout ok 0 vol='3.3*v(okn)'
 * 74HC74: s = 1 means tripped. Set by the falling edge of ok, cleared by rst.
 Enok nok 0 vol='1-v(okn)'
 Chp2 nok hp2 1n
-Rhp2 hp2 0 1k
+Rhp2 hp2 0 100k
 Vinit ini 0 PULSE(1 0 50n 10n 10n 1 2)
 Rini ini 0 1k
 Gs 0 s cur='1e-3*( (max(v(hp2)-0.2,0)*5+v(ini))*(1-v(s)) - (0.5+0.5*tanh(10*(v(rst)-1.65)))*v(s) + 0.2*(0.5+0.5*tanh(20*(v(s)-0.5))-v(s)) )'
@@ -292,7 +293,7 @@ Ronn on 0 1Meg
 Gint 0 xk cur='v(on)*1e-9*KI*(v(sp)-v(im)) + (1-v(on))*10*(FLOOR/1000-v(xk)) + 10*(max(FLOOR/1000-v(xk),0)-max(v(xk)-CLAMP/1000,0))'
 Cint xk 0 1u
 Rint xk 0 1G
-Eu uraw 0 vol='(0.5-0.5*tanh(40*(v(ol)-0.5)))*v(on)*min(max(KP*(v(sp)-v(im))/1000+v(xk),FLOOR/1000),CLAMP/1000) + (0.5+0.5*tanh(40*(v(ol)-0.5)))*v(act)*v(ol)'
+Eu uraw 0 vol='(0.5-0.5*tanh(400*(v(ol)-0.05)))*v(on)*min(max(KP*(v(sp)-v(im))/1000+v(xk),FLOOR/1000),CLAMP/1000) + (0.5+0.5*tanh(400*(v(ol)-0.05)))*v(act)*v(ol)'
 * loop latency: matched delay line
 Rds uraw da 50
 Tdel da 0 db 0 Z0=50 TD=TLAT

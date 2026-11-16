@@ -61,6 +61,22 @@ COMMON_VARS = {
     "t_en_off": ("1s", "time the bridge-enable line DIO1 drops (bridge opened)"),
     "t_hb_off": ("1s", "time the heartbeat wire is pulled"),
     "t_in1_off": ("1s", "time the IN1 cable loses contact"),
+    # --- extra knobs used by some tests (defaults = not used) ---
+    "sp_fall": ("1us", "how fast the setpoint falls at the end of t_sp_len (firmware: 50 A/ms toward a non-zero target)"),
+    "sp2_amps": ("0", "second setpoint step, ADDED to the first one at t_sp2_on (negative = step down or sign change)"),
+    "t_sp2_on": ("1s", "time of the second setpoint step"),
+    "slew2": ("200e3", "ramp of the second setpoint step, amps per second"),
+    "snap_amps": ("0.1", "zero-setpoint snap threshold, amps; -1 = snap off (firmware before rev 5)"),
+    "ol_step": ("0", "open-loop step added to ol_kcounts at t_ol_step, thousands of counts"),
+    "t_ol_step": ("1s", "time of the open-loop step"),
+    "t_ol_ramp": ("10ns", "duration of the open-loop step (long = slow sweep)"),
+    "t_run_len": ("10s", "how long OUT1 stays forced to zero after t_run_off"),
+    "t_pol": ("1s", "time the polarity line DIO0 goes low (reverse direction); 0 = reverse from the start"),
+    "en_gap": ("20s", "the bridge-enable line comes back this long after t_en_off (the flip dead time)"),
+    "t_hb_len": ("10s", "how long the heartbeat wire stays pulled"),
+    "t_rst_per": ("20s", "the reset button is pressed again this long after the first press"),
+    "R_term": ("50ohm", "terminator at the op-amp input (1e9 = not fitted)"),
+    "cgd_pass": ("1e-9", "pass-FET drain-gate capacitance, farads. 1 nF = datasheet value at 25 V; it is several times larger at the ~5 V the FETs work at"),
 }
 
 CONFIGS = {
@@ -161,13 +177,13 @@ def parts(config: str) -> list[tuple]:
     # One block per leg (MOSFET + gate resistor + pull-down + ballast, PASS_LEG).
     for k, vth in enumerate(VTH_3MA, 1):
         P += [(grp, f"M{k}", "PASS_LEG", {"d": "ret", "gbus": "gate_bus", "g": f"pg{k}", "s": f"ps{k}", "src": "0"},
-               {"VT": f"vt_pass+({vth - VTH_MEAN:+.4f})"})]
+               {"VT": f"vt_pass+({vth - VTH_MEAN:+.4f})", "CGD": "cgd_pass", "CGS": "23e-9-cgd_pass"})]
     P += [(grp, "D_tvs", "TVS_5KP12CA", {"a": "ret", "b": "0"}, {})]
 
     # ---- gate stage -----------------------------------------------------
     grp = "5 GATE STAGE: OPA994, gain 1 + 6.98k/1k, 50 ohm terminator"
     P += [
-        (grp, "R_term", "R", {"1": "out1", "2": "0"}, {"R": "50ohm"}),
+        (grp, "R_term", "R", {"1": "out1", "2": "0"}, {"R": "R_term"}),
         (grp, "U_opa", "OPA994", {"inp": "out1", "inn": "fb", "out": "gate_bus", "vcc": "vop", "vee": "0"}, {}),
         (grp, "R_f", "R", {"1": "fb", "2": "gate_bus"}, {"R": "6.98kOhm"}),
         (grp, "R_g", "R", {"1": "fb", "2": "0"}, {"R": "1kOhm"}),
@@ -188,7 +204,7 @@ def parts(config: str) -> list[tuple]:
     grp = "7 RED PITAYA: firmware stand-in (PI, clamp, floor, snap, trip)"
     P += [
         (grp, "U_rp", "RP_SERVO", {"in1": "in1", "in2": "in2", "out1": "out1", "pol": "dio0", "run": "run", "ol": "ol", "u": "u_kcounts", "im": "i_meas"},
-         {"KP": "kp", "KI": "ki", "CLAMP": "u_clamp", "FLOOR": "u_floor", "TRIP": "trip_amps"}),
+         {"KP": "kp", "KI": "ki", "CLAMP": "u_clamp", "FLOOR": "u_floor", "TRIP": "trip_amps", "SNAP": "snap_amps"}),
     ]
 
     # ---- logic board ----------------------------------------------------
@@ -202,14 +218,16 @@ def parts(config: str) -> list[tuple]:
     grp = "9 TEST SOURCES: what the firmware FSM, the operator and faults do (set by design variables)"
     pulse = lambda v1, v2, td, tr, tf, pw, per: {"V1": v1, "V2": v2, "TD": td, "TR": tr, "TF": tf, "PW": pw, "PER": per}
     P += [
-        (grp, "V_setpoint", "VPULSE", {"positive": "in2", "negative": "0"}, pulse("0", "sp_amps/200", "t_sp_on", "sp_amps/slew_up*1s+10ns", "1us", "t_sp_len", "10s")),
-        (grp, "V_run", "VPULSE", {"positive": "run", "negative": "0"}, pulse("1", "0", "t_run_off", "10ns", "10ns", "10s", "20s")),
-        (grp, "V_openloop", "VDC", {"positive": "ol", "negative": "0"}, {"DC": "ol_kcounts"}),
-        (grp, "V_dio0_pol", "VDC", {"positive": "dio0", "negative": "0"}, {"DC": "3.3V"}),
-        (grp, "V_dio1_en", "VPULSE", {"positive": "dio1", "negative": "0"}, pulse("0", "3.3", "10us", "10ns", "10ns", "t_en_off-10us", "20s")),
+        # the setpoint on IN2 is the sum of two sources in series: a first step, and an optional second one
+        (grp, "V_setpoint", "VPULSE", {"positive": "sp_b", "negative": "0"}, pulse("0", "sp_amps/200", "t_sp_on", "sp_amps/slew_up*1s+10ns", "sp_fall", "t_sp_len", "10s")),
+        (grp, "V_setpoint2", "VPULSE", {"positive": "in2", "negative": "sp_b"}, pulse("0", "sp2_amps/200", "t_sp2_on", "abs(sp2_amps)/slew2*1s+10ns", "1us", "10s", "20s")),
+        (grp, "V_run", "VPULSE", {"positive": "run", "negative": "0"}, pulse("1", "0", "t_run_off", "10ns", "10ns", "t_run_len", "20s")),
+        (grp, "V_openloop", "VPULSE", {"positive": "ol", "negative": "0"}, pulse("ol_kcounts", "ol_kcounts+ol_step", "t_ol_step", "t_ol_ramp", "10ns", "10s", "20s")),
+        (grp, "V_dio0_pol", "VPULSE", {"positive": "dio0", "negative": "0"}, pulse("3.3", "0", "t_pol", "10ns", "10ns", "10s", "20s")),
+        (grp, "V_dio1_en", "VPULSE", {"positive": "dio1", "negative": "0"}, pulse("0", "3.3", "10us", "10ns", "10ns", "t_en_off-10us", "t_en_off-10us+en_gap")),
         (grp, "V_dio6_hb", "VPULSE", {"positive": "dio6_rp", "negative": "0"}, pulse("0", "3.3", "1us", "10ns", "10ns", "524us", "1048us")),
-        (grp, "V_reset", "VPULSE", {"positive": "rst", "negative": "0"}, pulse("0", "3.3", "3us", "10ns", "10ns", "4us", "20s")),
-        (grp, "V_hb_wire", "VPULSE", {"positive": "hb_wire", "negative": "0"}, pulse("1", "0", "t_hb_off", "10ns", "10ns", "10s", "20s")),
+        (grp, "V_reset", "VPULSE", {"positive": "rst", "negative": "0"}, pulse("0", "3.3", "3us", "10ns", "10ns", "4us", "t_rst_per")),
+        (grp, "V_hb_wire", "VPULSE", {"positive": "hb_wire", "negative": "0"}, pulse("1", "0", "t_hb_off", "10ns", "10ns", "t_hb_len", "20s")),
         (grp, "V_in1_cable", "VPULSE", {"positive": "in1_ok", "negative": "0"}, pulse("1", "0", "t_in1_off", "10ns", "10ns", "10s", "20s")),
     ]
     return P
@@ -225,11 +243,17 @@ def make_symbols(sch):
     import re
     for name, (w, h, pins) in layout.SYMBOLS.items():
         arg = ["NAME:" + name, "ModTime:=", 1591858230, "Library:=", "", "ModSinceLib:=", False, "LibLocation:=", "Project",
-               "HighestLevel:=", 1, "Normalize:=", False, "InitialLevels:=", [0, 1], ["NAME:Graphics"]]
-        sch.osymbol_manager.Add(arg)
+               "HighestLevel:=", 1, "Normalize:=", False, "InitialLevels:=", [0, 1]]
+        sch.osymbol_manager.Add(arg + [["NAME:Graphics"]])
         for pin, (x, y, side) in pins.items():
-            arg.append(["NAME:PinDef", "Pin:=", [pin, x * G, y * G, _SIDE_ANGLE[side], "N", 0, 2 * G, False, 0, True, "", False, False, pin, True]])
-        arg.append(["NAME:Graphics", ["NAME:1", "Rect:=", [0, 0, 0, 0, w * G / 2, h * G / 2, w * G, h * G, 0, 0, 8192]]])
+            # the pin, and its name written just beside its outer end
+            tx, ty = (x * G + 0.0006, y * G) if side in "TB" else (x * G, y * G + 0.0006)
+            arg.append(["NAME:PinDef", "Pin:=", [pin, x * G, y * G, _SIDE_ANGLE[side], "N", 0, 2 * G, False, 0, True, "", True, False, pin, True],
+                        ["NAME:PropDisplayMap", "PinName:=", [2, 5, 1, "Text:=", [tx, ty, 0, 4, 5, False, "Arial", 0, pin, False, False,
+                                                                              "ExtentRect:=", [0, 0, 0, 0, tx, ty, 0.002, 0.0018, 0, 0, 0]]]]])
+        # the body: one rectangle (centre x, centre y, width, height). It must sit directly in the
+        # one Graphics block -- nested or in a second block, Ansys stores the symbol with no body.
+        arg.append(["NAME:Graphics", "Rect:=", [0, 0, 0, 0, w * G / 2, h * G / 2, w * G, h * G, 0, 0, 0]])
         sch.osymbol_manager.EditWithComps(name, arg, [])
     with open(LIB) as f:
         all_models = re.findall(r"^\.subckt\s+(\S+)", f.read(), re.M)
@@ -282,6 +306,13 @@ def build_design(cir, config: str, first: bool = True) -> dict:
             c.set_property("InstanceName", name)
             for k, v in props.items():
                 c.set_property(k, v)
+            for where in ("Center", "Top"):      # show the part's name on the block
+                try:
+                    sch.oeditor.ChangeProperty(["NAME:AllTabs", ["NAME:PropDisplayPropTab", ["NAME:PropServers", c.composed_name],
+                                                ["NAME:NewProps", ["NAME:InstanceName", "Format:=", "Value", "Location:=", where]]]])
+                    break
+                except Exception:
+                    continue
         comps[name] = c
         pm = _pinmap(kind, c)
         if set(pm) != set(pins):
