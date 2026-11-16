@@ -1,0 +1,62 @@
+<!DOCTYPE html><html><head><meta charset='utf-8'><title>Coil servo: Ansys model vs bench</title>
+<style>
+body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; max-width: 900px; margin: 24px auto; }
+h1, h2, h3 { color: #1F497D; }
+table { border-collapse: collapse; }
+th { background: #DDEBF7; text-align: left; }
+th, td { border: 1px solid #9DB6D3; padding: 3px 8px; vertical-align: top; }
+td.bad { background: #FBE5D6; }
+img { max-width: 100%; }
+p.cap { color: #444; margin-top: 2px; }
+</style></head><body>
+<h1>Coil servo power stage: Ansys circuit model compared with the bench</h1>
+<p>Model: <b>ansys/coil_servo.aedt</b>, design <b>bench</b> (3 A bench supply, 45 &micro;H test coil, 3.2 &Omega; + 10 &micro;F damper). Bench numbers: docs/benchtop_test_log.md and docs/lab_notes_2026-11.md (tests of 11-11 to 11-13). Regenerate with run_sims.py then compare.py.</p>
+<h2>Model against measurement</h2>
+<table><tr><th>Test</th><th>Quantity</th><th>Ansys model</th><th>Bench</th><th>Note</th></tr>
+<tr><td>Fixed OUT1 (open loop)</td><td>current at 3800 counts</td><td>0.77 A</td><td>0.71 A</td><td>bench 11-12, coil lifted</td></tr>
+<tr><td></td><td>current at 3870 counts</td><td>1.26 A</td><td>1.23 A</td><td>bench 11-12, coil lifted</td></tr>
+<tr><td></td><td>current at 3935 counts</td><td>1.87 A</td><td>1.93 A</td><td>bench 11-12, coil lifted</td></tr>
+<tr><td></td><td>current at 3950 counts</td><td>2.04 A</td><td>2.0 A</td><td></td></tr>
+<tr><td></td><td>rail bar at 2 A</td><td>4.61 V</td><td>4.60 V</td><td>supply leads drop 0.2 ohm x 2 A</td></tr>
+<tr><td>Fixed OUT1, damper removed</td><td>10-20 kHz ringing at 1.9 A</td><td class='bad'>none (0.0 mA p-p)</td><td>+-116 to +-165 mA at 12 kHz</td><td>NOT reproduced: the cause is not in this circuit model</td></tr>
+<tr><td>OUT1 -&gt; 0 at 2 A, bridge closed</td><td>time to zero current</td><td>159 us</td><td>~170 us</td><td>freewheel through the bridge diodes</td></tr>
+<tr><td></td><td>fall rate</td><td>12.9 mA/us</td><td>12-13 mA/us</td><td></td></tr>
+<tr><td></td><td>swing below zero (into the damper)</td><td>-0.09 A</td><td>~ -0.2 A</td><td>bench: for ~100 us</td></tr>
+<tr><td></td><td>drain bar while the current falls</td><td>5.52 V</td><td>~5.9 V</td><td>rail + one diode drop</td></tr>
+<tr><td></td><td>drain bar peak at switch-off</td><td>14.9 V</td><td>12.1 V</td><td>model: the supply-lead inductance, caught by the 5KP12CA</td></tr>
+<tr><td></td><td>voltage across the coil while it falls</td><td>0.47 V</td><td>0.52 V</td><td>bench: 0.52 V and 13.3 mA/us give L = 37 uH</td></tr>
+<tr><td>OUT1 -&gt; 0 at 1.5 A, no damper</td><td>time to zero / rate</td><td>122 us / 12.5 mA/us</td><td>100-160 us / 8-12 mA/us</td><td>Test 3f</td></tr>
+<tr><td>Bridge opened at 2 A, damper fitted</td><td>time to zero current</td><td>21 us</td><td>~25 us</td><td></td></tr>
+<tr><td></td><td>swing below zero</td><td>-0.34 A</td><td>~ -0.3 A</td><td></td></tr>
+<tr><td></td><td>drain bar while the coil discharges</td><td>-0.00 V</td><td>~ -0.5 V</td><td>model: the bank conducts backwards through its channel, hardly any drop</td></tr>
+<tr><td>Bridge opened at 2 A, no damper</td><td>time to zero current</td><td>12 us</td><td>10-13 us</td><td></td></tr>
+<tr><td></td><td>drain bar while the coil discharges</td><td>-0.06 V</td><td>~ -0.5 V</td><td>model: the bank conducts backwards through its channel, hardly any drop</td></tr>
+<tr><td></td><td>rail bar jump</td><td class='bad'>+25 V for &lt; 1 us</td><td>+2.5 to +3.2 V for ~10 us</td><td>DISAGREES: see &#x27;What does not match&#x27; below</td></tr>
+<tr><td>Controller on, step 0 -&gt; 1 A</td><td>time to 90 % / 98 %</td><td>0.74 / 1.05 ms</td><td>0.61-0.73 / 0.81-1.04 ms</td><td>bench gains kp 31.2, ki 942</td></tr>
+<tr><td></td><td>overshoot</td><td>0.0 %</td><td>1-2.4 %</td><td></td></tr>
+<tr><td></td><td>OUT1 at the hold</td><td>3836 counts</td><td>~3857 (fit)</td><td></td></tr>
+<tr><td>Controller on, step 0 -&gt; 2 A</td><td>time to 90 % / 98 %</td><td>0.48 / 0.69 ms</td><td>0.45-0.47 / 0.62-0.65 ms</td><td>bench gains kp 31.2, ki 942</td></tr>
+<tr><td></td><td>overshoot</td><td>0.0 %</td><td>1-2.4 %</td><td></td></tr>
+<tr><td></td><td>OUT1 at the hold</td><td>3946 counts</td><td>3942-3952</td><td></td></tr>
+<tr><td>Setpoint 2 A -&gt; 0 (zero snap)</td><td>time to 2 % (0.04 A)</td><td>153 us</td><td>130-140 us</td><td>rev 5 firmware</td></tr>
+<tr><td>Step to 2.9 A, trip at 2.8 A</td><td>trip fires / peak current</td><td>yes / 2.81 A</td><td>yes / ~2.85 A</td><td></td></tr>
+<tr><td>Heartbeat wire pulled at a 2 A hold</td><td>bridge cut after the last heartbeat edge</td><td>7.6 ms</td><td>7.6 ms</td><td>monostable 220 kOhm / 100 nF</td></tr>
+<tr><td></td><td>OUT1 afterwards</td><td>winds up to 4100 counts</td><td>4100 (the clamp)</td><td>the firmware cannot see the safety board</td></tr>
+<tr><td>IN1 signal lost at a 2 A hold</td><td>peak coil current</td><td>4.4 A</td><td>4.7-5 A (11-12 surge)</td><td>supports the lost-IN1 explanation</td></tr>
+<tr><td></td><td>rail sag</td><td>4.6 -&gt; 0.0 V</td><td>4.3 -&gt; 1.9 V</td><td>bench supply in current limit</td></tr>
+<tr><td>MOT PREDICTION: OUT1 -&gt; 0, bridge closed</td><td>start current / time to zero</td><td>86 A / 1.56 ms</td><td>(not built) repo model ~1.3 ms from 100 A</td><td>bank law extrapolated</td></tr>
+<tr><td></td><td>drain bar peak</td><td>19.1 V</td><td>-</td><td>5KP12CA clamps</td></tr>
+<tr><td>MOT PREDICTION: bridge opened at current</td><td>start current / time to zero</td><td>86 A / 175 us</td><td>(not built) offline estimate 182 us</td><td></td></tr>
+<tr><td></td><td>rail bar peak</td><td class='bad'>170 V</td><td>(not built) offline estimate 111-113 V</td><td>do not trust: the same model over-predicts this spike on the bench</td></tr>
+</table>
+<h2>What does not match</h2><ul><li><b>The 10&ndash;20 kHz ringing without the damper does not appear in the model.</b> With the parts modelled as they are here (a fixed current-versus-gate-voltage law for the pass transistors, fixed capacitances, an ideal bench supply with a current limit) the circuit is stable at a fixed OUT1. So the ringing does not come from the coil, damper, leads and transistors acting as simple parts. Still to try in the model: transistor capacitances that change with voltage, transistor self-heating, and the bench supply's own regulation.</li><li><b>Rail bar when the bridge opens at 2 A:</b> the model gives a jump of about +25 V lasting less than 1 &micro;s; the scope showed +2.5 to +3.2 V lasting about 10 &micro;s. In the model the only capacitance on the rail bar is that of the transistors (tens of nF), so the current in the supply leads has nowhere to go. The bench behaves as if a few &micro;F sat on the rail bar, or as if the lead inductance were smaller than the 3.6 &micro;H used. Until this is understood, do not trust the model's (or the earlier offline estimate's) rail voltage for a bridge opening at 100 A.</li><li><b>Swing below zero after a switch-off:</b> model &minus;0.09 A, bench about &minus;0.2 A.</li><li><b>Drain bar with the bridge open:</b> bench about &minus;0.5 V, model about 0 V.</li><li><b>No overshoot in the model's steps</b> (bench 1&ndash;2.4 %): the model's controller is smooth in time, the real one works in 1 &micro;s steps with 14-bit numbers.</li><li><b>Test coil inductance:</b> the bench switch-off trace gives 37 &micro;H (0.52 V across the coil, 13.3 mA/&micro;s); the calculated value in the repo is 45 &micro;H. The model uses 37 &micro;H.</li></ul>
+<h2>Plots</h2>
+<p><img src='cmp_static.png' alt='Current for a fixed OUT1 command (controller off). The model uses the bank law fitted to the 11-11/12 bench scans, so this mainly checks that the circuit around the bank is right.'></p><p class='cap'>Current for a fixed OUT1 command (controller off). The model uses the bank law fitted to the 11-11/12 bench scans, so this mainly checks that the circuit around the bank is right.</p>
+<p><img src='cmp_turnoff.png' alt='OUT1 set to zero at 2 A with the bridge left closed: the coil current circulates through the bridge and dies away.'></p><p class='cap'>OUT1 set to zero at 2 A with the bridge left closed: the coil current circulates through the bridge and dies away.</p>
+<p><img src='cmp_bridge_open.png' alt='Bridge opened at 2 A, damper fitted: all four bridge switches turned off while current flows (what the safety board does).'></p><p class='cap'>Bridge opened at 2 A, damper fitted: all four bridge switches turned off while current flows (what the safety board does).</p>
+<p><img src='cmp_bridge_open_nodamper.png' alt='Bridge opened at 2 A, no damper: all four bridge switches turned off while current flows (what the safety board does).'></p><p class='cap'>Bridge opened at 2 A, no damper: all four bridge switches turned off while current flows (what the safety board does).</p>
+<p><img src='cmp_steps.png' alt='Setpoint steps with the controller on, bench gains (kp 31.2 counts/A, ki 942 counts/(A ms)).'></p><p class='cap'>Setpoint steps with the controller on, bench gains (kp 31.2 counts/A, ki 942 counts/(A ms)).</p>
+<p><img src='cmp_hb_pull.png' alt='Model only. The safety board opens the bridge 7.6 ms after the last heartbeat edge; the controller, seeing no current, turns OUT1 up to its clamp. Pressing reset now would re-close the bridge at full drive (the known operating rule).'></p><p class='cap'>Model only. The safety board opens the bridge 7.6 ms after the last heartbeat edge; the controller, seeing no current, turns OUT1 up to its clamp. Pressing reset now would re-close the bridge at full drive (the known operating rule).</p>
+<p><img src='cmp_in1_lost.png' alt='Model only. With IN1 lost the controller sees the current fall and turns the bank up; the true current surges until the bench supply runs out. The trip cannot fire because it uses the same lost signal.'></p><p class='cap'>Model only. With IN1 lost the controller sees the current fall and turns the bank up; the true current surges until the bench supply runs out. The trip cannot fire because it uses the same lost signal.</p>
+<p><img src='cmp_mot_prediction.png' alt='PREDICTION for the two MOT coils on the SE-600-5 (not built). The pass-bank law is extrapolated from 2.5 A to 100 A and the supply&#x27;s output capacitance is assumed.'></p><p class='cap'>PREDICTION for the two MOT coils on the SE-600-5 (not built). The pass-bank law is extrapolated from 2.5 A to 100 A and the supply&#x27;s output capacitance is assumed.</p>
+</body></html>

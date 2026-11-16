@@ -25,3 +25,12 @@ logs/
 .claude/settings.local.json
 sim/traces
 build.log
+
+# Ansys Electronics Desktop (ansys/): solver results, locks, exported waveforms
+*.aedtresults/
+*.aedt.lock
+*.aedt.auto
+ansys/results/*.csv
+pyaedt*.log
+batch.log
+*.pyaedt/

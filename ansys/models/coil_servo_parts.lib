@@ -1,0 +1,330 @@
+* ======================================================================
+* coil_servo_parts.lib -- device models for the coil-servo power stage
+* (Ansys Circuit / Nexxim syntax; used by ansys/build_project.py)
+*
+* Each .subckt is one purchased part (or one board). Where a number was
+* MEASURED on our hardware it says so; DATASHEET values were typed from
+* memory of the datasheets and must be checked against the PDF before
+* they are trusted; ASSUMED values are guesses.
+* Full table of sources: ansys/README.md
+* ======================================================================
+
+
+* ----------------------------------------------------------------------
+* IXYS IXTN200N10L2 -- pass-bank MOSFET (linear mode), one of six.
+* Channel law = the fit to our bench data (logs/t3q_offline/fit_bank.py,
+* 5.18 V op-amp rail data, 11-11/12): smooth sub-threshold -> square law
+*   I = K * [2 nUT ln(1 + exp((Vgs - VT) / (2 nUT)))]^2      (per FET)
+* K 3.656 A/V^2, nUT 0.096 V, VT 3.892 V cold / 3.868 V warm (MEASURED,
+* fitted, valid 0.05-2.5 A total; extrapolation to 100 A is NOT verified).
+* The second (v(g,di)) term makes the same law work in the ohmic region
+* and in reverse. Per-FET VT = fitted mean + (3 mA threshold - mean 3.525).
+* CGS/CGD/CDS: DATASHEET-typical (Ciss 23 nF), constant -- the real
+* capacitances grow several-fold below ~5 V drain voltage (ASSUMED flat).
+* RLEG/LLEG: the 12 AWG drain leg, ASSUMED (length not recorded).
+* ----------------------------------------------------------------------
+.subckt IXTN200N10L2 d g s K=3.656 VT=3.892 NUT=0.096 CGS=22n CGD=1n CDS=2.5n RLEG=1.6m LLEG=150n
+Lleg d dl LLEG
+Rleg dl di RLEG
+Gch di s cur='K*(pow(2*NUT*(max(((v(g,s)-VT)/(2*NUT)),0)+log(1+exp(-abs(((v(g,s)-VT)/(2*NUT)))))),2)-pow(2*NUT*(max(((v(g,di)-VT)/(2*NUT)),0)+log(1+exp(-abs(((v(g,di)-VT)/(2*NUT)))))),2))'
+Cgs g s CGS
+Cgd g di CGD
+Cds di s CDS
+Dbody s di DBODY_L2
+Rleak di s 100Meg
+.model DBODY_L2 d is=8n n=1 rs=3m bv=110 ibv=1m
+.ends IXTN200N10L2
+
+
+* ----------------------------------------------------------------------
+* IXYS IXFN420N10T -- H-bridge switch, one of four (fully on or off).
+* K chosen so R_DS(on) = 2.3 mOhm at 16 V gate drive (DATASHEET R_DS(on)).
+* VT 3.52 V (MEASURED at 8 mA). Body diode: 0.5 V at 2 A (bench: drain
+* bar sits ~0.5-0.9 V above the rail while freewheeling), 0.8 V at 100 A
+* (repo model V_f), avalanche at 110 V (ASSUMED, 100 V part).
+* Capacitances: DATASHEET-typical / ASSUMED, constant.
+* ----------------------------------------------------------------------
+.subckt IXFN420N10T d g s K=17.4 VT=3.52 NUT=0.05 CGS=45n CGD=2n CDS=12n
+Gch d s cur='K*(pow(2*NUT*(max(((v(g,s)-VT)/(2*NUT)),0)+log(1+exp(-abs(((v(g,s)-VT)/(2*NUT)))))),2)-pow(2*NUT*(max(((v(g,d)-VT)/(2*NUT)),0)+log(1+exp(-abs(((v(g,d)-VT)/(2*NUT)))))),2))'
+Cgs g s CGS
+Cgd g d CGD
+Cds d s CDS
+Dbody s d DBODY_420
+Rleak d s 100Meg
+.model DBODY_420 d is=8n n=1 rs=2m bv=110 ibv=1m
+.ends IXFN420N10T
+
+
+* ----------------------------------------------------------------------
+* TI UCC5350SB isolated gate driver (one per bridge switch).
+* Output on only when IN+ high AND IN- low (IN- = DISABLE from the logic
+* board). 3.3 V logic thresholds at 1.65 V. Propagation delay TPD 65 ns
+* and output resistances RH/RL: DATASHEET-typical, from memory.
+* GND1 (logic ground) is the global ground.
+* ----------------------------------------------------------------------
+.subckt UCC5350SB inp inn outh outl vcc2 vee2 TPD=65n RH=2.5 RL=0.6
+Rinp inp 0 1Meg
+Rinn inn 0 1Meg
+Elog lg 0 vol='(0.5+0.5*tanh(10*(v(inp)-1.65)))*(0.5-0.5*tanh(10*(v(inn)-1.65)))'
+Rd lg dl 1k
+Cd dl 0 'TPD/690'
+Eon on 0 vol='0.5+0.5*tanh(20*(v(dl)-0.5))'
+Ron on 0 1Meg
+Gh vcc2 outh cur='v(on)*v(vcc2,outh)/RH'
+Gl outl vee2 cur='(1-v(on))*v(outl,vee2)/RL'
+Rh outh vee2 10Meg
+Rl outl vee2 10Meg
+.ends UCC5350SB
+
+
+* ----------------------------------------------------------------------
+* Recom RO-0515S isolated 5 V -> 15 V DC/DC (one per driver), with its
+* 1 uF || 10 uF output capacitors. Output 16 V unloaded (MEASURED: Q1
+* gate 16 V when on). Output resistance ASSUMED.
+* ----------------------------------------------------------------------
+.subckt RO_0515S vin voutp voutn ROUT=15 COUT=11u
+Rin vin 0 1k
+Eiso x voutn vol='3.2*v(vin)'
+Ro x voutp ROUT
+Co voutp voutn COUT
+.ends RO_0515S
+
+
+* ======================================================================
+* CELLS -- groups of parts drawn as ONE block on the schematic.
+* Reason: Ansys Electronics Desktop STUDENT allows at most 50 components
+* per circuit design; the power stage has 82. Every purchased part is
+* still its own line below.
+* ======================================================================
+
+* One H-bridge switch position: MOSFET + its isolated driver + the
+* driver's floating supply + gate resistors (10 ohm on, 4.7 ohm off,
+* 10 kOhm gate-source). g = the MOSFET gate (for probing).
+*   d, s   drain, source (the source is also the driver's floating 0 V)
+*   inp    driver IN+ (polarity or its complement, from the logic board)
+*   inn    driver IN- (DISABLE, from the logic board)
+*   v5     +5 V logic supply feeding the RO-0515S
+.subckt BRIDGE_SWITCH d g s inp inn v5
+XQ d g s IXFN420N10T
+XU inp inn oh ol vd s UCC5350SB
+XP v5 vd s RO_0515S
+Ron oh g 10
+Roff ol g 4.7
+Rgs g s 10k
+.ends BRIDGE_SWITCH
+
+* One pass-bank leg: MOSFET + 24.9 ohm gate resistor + 47 kOhm gate
+* pull-down + Caddock MP930 0.030 ohm ballast. g, s = the MOSFET's own
+* gate and source pins (for probing).
+*   d      drain bar          gbus   op-amp output (common gate drive)
+*   src    source bar (supply 0 V)
+*   VT     this FET's fitted threshold (see IXTN200N10L2 above)
+.subckt PASS_LEG d gbus g s src VT=3.892 RG=24.9 RPD=47k RBAL=0.030
+XM d g s IXTN200N10L2 VT=VT
+Rg gbus g RG
+Rpd g s RPD
+Rbal s src RBAL
+.ends PASS_LEG
+
+
+* ----------------------------------------------------------------------
+* Littelfuse 5KP12CA bidirectional TVS across the pass bank.
+* 1 mA at 13.6 V (V_BR >= 13.3 V), ~20 V at 250 A (DATASHEET clamp
+* 19.9 V). Capacitance ASSUMED.
+* ----------------------------------------------------------------------
+.subckt TVS_5KP12CA a b CJ=8n
+* smooth power law (solves more reliably than a hard diode knee):
+* 1 mA at 13.6 V, ~250 A at 20 V
+Gt a b cur='1e-3*(v(a,b)/13.6)*pow(abs(v(a,b))/13.6,31)'
+Cj a b CJ
+Rp a b 100Meg
+.ends TVS_5KP12CA
+
+
+* ----------------------------------------------------------------------
+* EPCOS S20K20 (B72220S0200K101) varistor across the coil.
+* 1 mA at 33 V, ~100 A at 80 V (DATASHEET) -> I = 1 mA (V/33)^13.
+* Capacitance ASSUMED.
+* ----------------------------------------------------------------------
+.subckt VARISTOR_S20K20 a b CV=9n
+Gv a b cur='1e-3*(v(a,b)/33)*pow(abs(v(a,b))/33,12)'
+Cv a b CV
+Rv a b 1G
+.ends VARISTOR_S20K20
+
+
+* ----------------------------------------------------------------------
+* LEM LF 310-S current transducer. ip -> in is the primary conductor
+* (positive current in at ip gives positive output current out of m).
+* 2000:1. Response lag TAU 0.8 us (ASSUMED; datasheet: DC-100 kHz).
+* Its +-15 V supply is not modelled (floating bench supply).
+* ----------------------------------------------------------------------
+.subckt LEM_LF310S ip in m KN=2000 TAU=0.8u
+Vs ip in 0
+Fx 0 x Vs 1
+Rx x 0 1
+Cx x 0 TAU
+Gm 0 m cur='v(x)/KN'
+Rm m 0 10Meg
+.ends LEM_LF310S
+
+
+* ----------------------------------------------------------------------
+* Analog Devices AD8421 instrumentation amplifier, G = 1 (R_G open,
+* MEASURED configuration), REF pin to ground. 10 MHz bandwidth at G = 1
+* (DATASHEET-typical). Offsets and noise are not modelled.
+* ----------------------------------------------------------------------
+.subckt AD8421 inp inn ref out G=1 FBW=10e6
+Rip inp 0 1G
+Rin inn 0 1G
+G1 0 x cur='G*v(inp,inn)'
+R1 x 0 1
+C1 x 0 '1/(6.2832*FBW)'
+Eo out ref vol='v(x)'
+.ends AD8421
+
+
+* ----------------------------------------------------------------------
+* TI OPA994 op-amp (gate stage). Gain-bandwidth 24 MHz, slew 30 V/us,
+* output current limit 125 mA (DATASHEET-typical, from memory). The
+* current limit matters: it is what makes the six gates (6 x 23 nF) fall
+* from 4 V to 0 in ~4 us (MEASURED 11-12). Output reaches within 10 mV of
+* its rails (MEASURED: 5.17-5.18 V on a 5.184 V rail).
+* ----------------------------------------------------------------------
+.subckt OPA994 inp inn out vcc vee GBW=24e6 SR=30e6 ILIM=0.125 ROUT=3
+Rip inp 0 1G
+Rin inn 0 1G
+Gm 0 x cur='(SR*100p)*tanh((6.2832*GBW*100p)*v(inp,inn)/(SR*100p))'
+Cc x 0 100p
+Ra x 0 6.6Meg
+Gcl x 0 cur='0.1*(max(v(x)-v(vcc)+0.01,0)-max(v(vee)+0.01-v(x),0))'
+Go 0 out cur='ILIM*tanh((v(x)-v(out))/(ROUT*ILIM))'
+Ro out 0 100Meg
+Rs vcc vee 100k
+.ends OPA994
+
+
+* ----------------------------------------------------------------------
+* Safety logic board (built 2026-11-03): 74HC04 inverter, CD74HC123
+* monostable (220 kOhm / 100 nF, MEASURED 7.6 ms), 74HC74 latch with the
+* reset button, 74HC10 NAND. Behavioural: the logic functions and the
+* measured timing, not the chips' electrical detail.
+*   dio0 = polarity, dio1 = bridge enable, dio6 = heartbeat (from E1)
+*   rst  = reset button (high = pressed)
+*   pol / npol -> driver IN+ of Q1,Q4 / Q2,Q3;  dis -> all four IN-
+*   ok = monostable output (green LED), trip = latch (red LED)
+* The latch POWERS UP TRIPPED and trips on the EDGE of the monostable
+* dropping (as built) -- a reset pressed while the heartbeat is missing
+* clears it and nothing trips it again.
+* ----------------------------------------------------------------------
+.subckt LOGIC_BOARD dio0 dio1 dio6 rst pol npol dis ok trip TMONO=7.6m
+Rpd0 dio0 0 10k
+Rpd1 dio1 0 10k
+Rpd6 dio6 0 10k
+Rpdr rst 0 10k
+* 74HC04 #1: polarity and its complement
+Epol pol 0 vol='3.3*(0.5+0.5*tanh(10*(v(dio0)-1.65)))'
+Enpol npol 0 vol='3.3*(0.5-0.5*tanh(10*(v(dio0)-1.65)))'
+* CD74HC123: retriggered by each rising heartbeat edge, times out TMONO later
+Chp dio6 hp 1n
+Rhp hp 0 1k
+Gchg 0 c cur='0.05*max(v(hp)-1,0)*(1-v(c))'
+Cc c 0 10n
+Rc c 0 'TMONO/0.6931e-8'
+Eok okn 0 vol='0.5+0.5*tanh(40*(v(c)-0.5))'
+Rokn okn 0 1Meg
+Eokout ok 0 vol='3.3*v(okn)'
+* 74HC74: s = 1 means tripped. Set by the falling edge of ok, cleared by rst.
+Enok nok 0 vol='1-v(okn)'
+Chp2 nok hp2 1n
+Rhp2 hp2 0 1k
+Vinit ini 0 PULSE(1 0 50n 10n 10n 1 2)
+Rini ini 0 1k
+Gs 0 s cur='1e-3*( (max(v(hp2)-0.2,0)*5+v(ini))*(1-v(s)) - (0.5+0.5*tanh(10*(v(rst)-1.65)))*v(s) + 0.2*(0.5+0.5*tanh(20*(v(s)-0.5))-v(s)) )'
+Cs s 0 1n
+Rs s 0 1G
+Etrip trip 0 vol='3.3*(0.5+0.5*tanh(20*(v(s)-0.5)))'
+* 74HC10: drivers enabled (dis low) only if dio1 AND ok AND not tripped
+Edis dis 0 vol='3.3*(1-(0.5+0.5*tanh(10*(v(dio1)-1.65)))*v(okn)*(0.5-0.5*tanh(20*(v(s)-0.5))))'
+.ends LOGIC_BOARD
+
+
+* ----------------------------------------------------------------------
+* Red Pitaya running the coil-servo firmware -- a CONTINUOUS-TIME stand-in
+* for the fabric (the real thing is digital: 1.024 us ticks, 14-bit).
+* The flip state machine, slew limiter and dither are NOT in here; the
+* test sources on the schematic play their part. Verified firmware
+* behaviour lives in the cocotb benches (sim/), not here.
+*   in1  measured current   (IFSV amps per volt: 224 A / 1.12 V MEASURED)
+*   in2  setpoint, same scale
+*   pol  bridge polarity bit (DIO0): the loop works on current along it
+*   run  > 0.5: servo running; low: OUT1 = 0 and integrator cleared
+*   ol   open-loop OUT1 command in thousands of counts (0 = closed loop)
+*   out1 behind 50 ohm: UVC volts per count into the 50 ohm terminator
+*        (142.6 uV MEASURED), VOFF at code 0 (-41.3 mV MEASURED)
+* PI: KP counts/A, KI counts/(A s); output and integrator bounded to
+* FLOOR..CLAMP counts; zero-setpoint snap below SNAP amps; over-current
+* trip at TRIP amps held for ~TTRIP (latched: OUT1 = 0 until the end).
+* TLAT = loop latency (3.6 us, repo model).
+* u (probe) = OUT1 command in thousands of counts, im = amps seen.
+* ----------------------------------------------------------------------
+.subckt RP_SERVO in1 in2 out1 pol run ol u im KP=31.2 KI=942e3 CLAMP=4100 FLOOR=3450 TRIP=2.8 TTRIP=4u SNAP=0.1 IFSV=200 UVC=142.6u VOFF=-41.3m TLAT=3.6u
+Rin1 in1 0 1Meg
+Rin2 in2 0 1Meg
+Rpol pol 0 1Meg
+Rrun run 0 1Meg
+Rol ol 0 1Meg
+Esg sg 0 vol='tanh(10*(v(pol)-1.65))'
+Eim im 0 vol='IFSV*v(in1)*v(sg)'
+Esp sp 0 vol='max(IFSV*v(in2)*v(sg),0)'
+Rim im 0 1Meg
+Rsp sp 0 1Meg
+* over-current trip latch (tr -> 1)
+Gtr 0 tr cur='(0.69e-9/TTRIP)*(max(0.5+0.5*tanh(2000*(abs(IFSV*v(in1))-TRIP)),0.5+0.5*tanh(20*(v(tr)-0.5)))-v(tr))'
+Ctr tr 0 1n
+Rtr tr 0 1G
+* act: running and not tripped.  on: act and setpoint above the snap level
+Eact act 0 vol='(0.5+0.5*tanh(20*(v(run)-0.5)))*(0.5-0.5*tanh(20*(v(tr)-0.5)))'
+Eon on 0 vol='v(act)*(0.5+0.5*tanh(200*(v(sp)-SNAP)))'
+Ract act 0 1Meg
+Ronn on 0 1Meg
+* integrator, in thousands of counts on a 1 uF capacitor
+Gint 0 xk cur='v(on)*1e-9*KI*(v(sp)-v(im)) + (1-v(on))*10*(FLOOR/1000-v(xk)) + 10*(max(FLOOR/1000-v(xk),0)-max(v(xk)-CLAMP/1000,0))'
+Cint xk 0 1u
+Rint xk 0 1G
+Eu uraw 0 vol='(0.5-0.5*tanh(40*(v(ol)-0.5)))*v(on)*min(max(KP*(v(sp)-v(im))/1000+v(xk),FLOOR/1000),CLAMP/1000) + (0.5+0.5*tanh(40*(v(ol)-0.5)))*v(act)*v(ol)'
+* loop latency: matched delay line
+Rds uraw da 50
+Tdel da 0 db 0 Z0=50 TD=TLAT
+Rdl db 0 50
+Eu2 u 0 vol='2*v(db)'
+Ru u 0 1Meg
+* DAC behind its 50 ohm output
+Edac dac 0 vol='2*(UVC*1000*v(u)+VOFF)'
+Rout dac out1 50
+.ends RP_SERVO
+
+
+* ----------------------------------------------------------------------
+* Bench power supply in constant-voltage / constant-current mode.
+* VSET volts, current limit ILIM, sources current only. COUT = its output
+* capacitance: 100 uF INFERRED from the 11-12 surge trace (not measured);
+* RREG sets how stiffly it regulates (ASSUMED).
+* For the Mean Well SE-600-5 use VSET 5, ILIM 110, COUT 10m (ASSUMED).
+* ----------------------------------------------------------------------
+.subckt DC_SUPPLY p n VSET=5.06 ILIM=3 COUT=100u RREG=20m ESR=30m
+Greg n p cur='min(max((VSET-v(p,n))/RREG,0),ILIM)'
+Co p c COUT
+Resr c n ESR
+Rb p n 10k
+.ends DC_SUPPLY
+
+
+* ----------------------------------------------------------------------
+* Test fixture, not a real part: a connection that can be opened during
+* a run (a pulled heartbeat wire, a loose BNC). ctl > 0.5 = connected.
+* ----------------------------------------------------------------------
+.subckt TEST_LINK a b ctl
+Rctl ctl 0 1Meg
+Glink a b cur='v(a,b)*(1e-9+(0.5+0.5*tanh(20*(v(ctl)-0.5)))*10)'
+.ends TEST_LINK
