@@ -12,15 +12,19 @@ Student 2025 R2) with one "Circuit" design per configuration:
            (planned Test 4 wiring -- NOT built yet, values provisional)
 
 The circuit is described once, in PARTS below, as a table of
-(group, name, kind, pins -> net names, values). The schematic is drawn from
-that table: every pin carries a net label, and pins with the same label are
-connected. The part models are in models/coil_servo_parts.lib.
+(group, name, kind, pins -> net names, values): that table is the electrical
+truth. layout.py says where each part sits and how the wires are drawn; the
+builder then checks that every pin ended up on the net the table asks for.
+The part models are in models/coil_servo_parts.lib.
 See README.md in this folder.
 """
 from __future__ import annotations
 
+import math
 import os
 import sys
+
+import layout
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LIB = os.path.join(HERE, "models", "coil_servo_parts.lib")
@@ -165,7 +169,7 @@ def parts(config: str) -> list[tuple]:
     P += [
         (grp, "R_term", "R", {"1": "out1", "2": "0"}, {"R": "50ohm"}),
         (grp, "U_opa", "OPA994", {"inp": "out1", "inn": "fb", "out": "gate_bus", "vcc": "vop", "vee": "0"}, {}),
-        (grp, "R_f", "R", {"1": "gate_bus", "2": "fb"}, {"R": "6.98kOhm"}),
+        (grp, "R_f", "R", {"1": "fb", "2": "gate_bus"}, {"R": "6.98kOhm"}),
         (grp, "R_g", "R", {"1": "fb", "2": "0"}, {"R": "1kOhm"}),
         (grp, "V_opamp", "VDC", {"positive": "vop", "negative": "0"}, {"DC": "V_opamp"}),
     ]
@@ -211,104 +215,154 @@ def parts(config: str) -> list[tuple]:
     return P
 
 
-def models_used(P) -> list[str]:
-    std = {"R", "L", "C", "VDC", "VPULSE"}
-    out = []
-    for _, _, kind, _, _ in P:
-        if kind not in std and kind not in out:
-            out.append(kind)
-    return out
+STD_KINDS = {"R", "L", "C", "VDC", "VPULSE"}
+_SIDE_ANGLE = {"L": 0.0, "R": math.pi, "T": 1.5 * math.pi, "B": 0.5 * math.pi}   # direction from the pin's end to the body
+_LABEL_ANGLE = {"L": 0, "R": 180, "B": 90, "T": 270}                             # which way a net label points
 
 
-def build_design(cir, config: str) -> dict:
-    """Draw one design. Returns {name: component}."""
+def make_symbols(sch):
+    """Draw the block symbols (a box with named pins on four sides) and tie the models to them."""
+    import re
+    for name, (w, h, pins) in layout.SYMBOLS.items():
+        arg = ["NAME:" + name, "ModTime:=", 1591858230, "Library:=", "", "ModSinceLib:=", False, "LibLocation:=", "Project",
+               "HighestLevel:=", 1, "Normalize:=", False, "InitialLevels:=", [0, 1], ["NAME:Graphics"]]
+        sch.osymbol_manager.Add(arg)
+        for pin, (x, y, side) in pins.items():
+            arg.append(["NAME:PinDef", "Pin:=", [pin, x * G, y * G, _SIDE_ANGLE[side], "N", 0, 2 * G, False, 0, True, "", False, False, pin, True]])
+        arg.append(["NAME:Graphics", ["NAME:1", "Rect:=", [0, 0, 0, 0, w * G / 2, h * G / 2, w * G, h * G, 0, 0, 8192]]])
+        sch.osymbol_manager.EditWithComps(name, arg, [])
+    with open(LIB) as f:
+        all_models = re.findall(r"^\.subckt\s+(\S+)", f.read(), re.M)
+    models = ["NAME:Models"]
+    for m in all_models:
+        models += [m + ":=", [m in layout.SYMBOLS, m if m in layout.SYMBOLS else "", "", False]]
+    sch.ocomponent_manager.ImportModelsFromFile(
+        LIB.replace("\\", "/"),
+        ["NAME:Options", "Mode:=", 2, "Overwrite:=", True, "SupportsSimModels:=", False, "LoadOnly:=", False, models])
+
+
+def _pinmap(kind, comp):
+    cpins = list(comp.pins)
+    if kind in ("R", "L", "C"):      # "1" = left (or top, when drawn vertically), "2" = the other end
+        order = sorted(cpins, key=lambda p: (round(p.location[0], 6), -round(p.location[1], 6)))
+        return {"1": order[0], "2": order[1]}
+    return {p.name: p for p in cpins}
+
+
+def build_design(cir, config: str, first: bool = True) -> dict:
+    """Draw one design as a wired circuit diagram. Returns {name: component}."""
     sch = cir.modeler.schematic
     P = parts(config)
+    place, wires = layout.place(config), layout.wires(config)
 
     variables = dict(COMMON_VARS)
     variables.update(CONFIGS[config]["vars"])
     for name, (value, _doc) in variables.items():
         cir[name] = value
+    if first:
+        make_symbols(sch)
 
-    for model in models_used(P):
-        ok = sch.create_component_from_spicemodel(LIB, model=model, create_component=False)
-        if not ok:
-            raise RuntimeError(f"could not import model {model} from {LIB}")
+    # ---- place the parts -------------------------------------------------
+    comps, pinloc, pinside, pinnet = {}, {}, {}, {}
+    for _, name, kind, pins, props in P:
+        x, y, angle = place[name]
+        loc = [x * G, y * G]
+        if kind == "R":
+            c = sch.create_resistor(name, props["R"], location=loc, angle=angle)
+        elif kind == "L":
+            c = sch.create_inductor(name, props["L"], location=loc, angle=angle)
+        elif kind == "C":
+            c = sch.create_capacitor(name, props["C"], location=loc, angle=angle)
+        elif kind == "VDC":
+            c = sch.create_voltage_dc(name, props["DC"], location=loc)
+        elif kind == "VPULSE":
+            c = sch.create_voltage_pulse(name, [props[k] for k in ("V1", "V2", "TD", "TR", "TF", "PW", "PER")], location=loc)
+        else:
+            c = sch.create_component(None, component_library=None, component_name=kind, location=loc)
+            c.set_property("InstanceName", name)
+            for k, v in props.items():
+                c.set_property(k, v)
+        comps[name] = c
+        pm = _pinmap(kind, c)
+        if set(pm) != set(pins):
+            raise RuntimeError(f"{name} ({kind}): model pins {sorted(pm)} != table pins {sorted(pins)}")
+        cx = sum(p.location[0] for p in pm.values()) / len(pm)
+        cy = sum(p.location[1] for p in pm.values()) / len(pm)
+        for pname, net in pins.items():
+            px, py = pm[pname].location
+            key = f"{name}.{pname}"
+            pinloc[key] = (round(px / G), round(py / G))
+            pinnet[key] = net
+            if kind in layout.SYMBOLS:
+                pinside[key] = layout.SYMBOLS[kind][2][pname][2]
+            elif abs(px - cx) >= abs(py - cy):
+                pinside[key] = "L" if px < cx else "R"
+            else:
+                pinside[key] = "B" if py < cy else "T"
 
-    comps = {}
-    wrong = []
-    groups: dict[str, list] = {}
-    for row in P:
-        groups.setdefault(row[0], []).append(row)
+    # ---- draw the wires --------------------------------------------------
+    wired = set()
+    for net, paths in wires.items():
+        for path in paths:
+            pts = []
+            for tok in path:
+                if isinstance(tok, str):
+                    if pinnet[tok] != net:
+                        raise RuntimeError(f"layout: wire of net {net} goes to {tok}, which the parts table puts on {pinnet[tok]}")
+                    wired.add(tok)
+                    pt = pinloc[tok]
+                elif tok[0] == "x":
+                    pt = (tok[1], pts[-1][1])
+                elif tok[0] == "y":
+                    pt = (pts[-1][0], tok[1])
+                else:
+                    pt = tuple(tok)
+                if pts and pt[0] != pts[-1][0] and pt[1] != pts[-1][1]:
+                    raise RuntimeError(f"layout: net {net}: wire from {pts[-1]} to {pt} ({tok}) is not horizontal or vertical")
+                if not pts or pt != pts[-1]:
+                    pts.append(pt)
+            if not sch.create_wire([[x * G, y * G] for x, y in pts], name=net):
+                raise RuntimeError(f"could not draw wire of net {net}: {pts}")
 
-    DX, DY, NCOL = 16 * G, 14 * G, 6
-    y_top = 0.0
-    for gname, rows in groups.items():
+    # ---- every pin no wire reaches: ground symbol or net label ------------
+    for key, net in pinnet.items():
+        if key in wired:
+            continue
+        x, y = pinloc[key]
+        if net == "0":
+            sch.create_gnd(location=[x * G, (y - 1) * G])
+        else:
+            sch.create_page_port(net, location=[x * G, y * G], angle=_LABEL_ANGLE[pinside[key]])
+
+    # ---- titles ----------------------------------------------------------
+    for x, y, text in layout.texts(config):
         try:
-            cir.modeler.schematic.oeditor.CreateText(
-                ["NAME:TextData", "X:=", 0.0, "Y:=", y_top + 6 * G, "Size:=", 14, "Angle:=", 0, "Text:=", gname,
+            sch.oeditor.CreateText(
+                ["NAME:TextData", "X:=", x * G, "Y:=", y * G, "Size:=", 12, "Angle:=", 0, "Text:=", text,
                  "Color:=", 0, "Id:=", 0, "ShowRect:=", False, "X1:=", 0, "Y1:=", 0, "X2:=", 0, "Y2:=", 0,
                  "RectLineWidth:=", 0, "RectBorderColor:=", 0, "RectFill:=", 0, "RectColor:=", 0],
                 ["NAME:Attributes", "Page:=", 1])
         except Exception:
             pass
-        for i, (_, name, kind, pins, props) in enumerate(rows):
-            loc = [(i % NCOL) * DX, y_top - (i // NCOL) * DY]
-            if kind == "R":
-                c = sch.create_resistor(name, props["R"], location=loc)
-            elif kind == "L":
-                c = sch.create_inductor(name, props["L"], location=loc)
-            elif kind == "C":
-                c = sch.create_capacitor(name, props["C"], location=loc)
-            elif kind == "VDC":
-                c = sch.create_voltage_dc(name, props["DC"], location=loc)
-            elif kind == "VPULSE":
-                c = sch.create_voltage_pulse(name, [props[k] for k in ("V1", "V2", "TD", "TR", "TF", "PW", "PER")], location=loc)
-            else:
-                c = sch.create_component(None, component_library=None, component_name=kind, location=loc)
-                c.set_property("InstanceName", name)
-                for k, v in props.items():
-                    c.set_property(k, v)
-            comps[name] = c
-            cpins = list(c.pins)
-            if kind in ("R", "L", "C"):
-                order = sorted(cpins, key=lambda p: (round(p.location[0], 6), -round(p.location[1], 6)))
-                pinmap = {"1": order[0], "2": order[1]}
-            else:
-                pinmap = {p.name: p for p in cpins}
-            if set(pinmap) != set(pins):
-                raise RuntimeError(f"{name} ({kind}): model pins {sorted(pinmap)} != table pins {sorted(pins)}")
-            cx = sum(p.location[0] for p in cpins) / len(cpins)
-            for pname, net in pins.items():
-                x, y = pinmap[pname].location
-                if net == "0":
-                    sch.create_gnd(location=[x, y - G])
-                else:
-                    sch.create_page_port(net, location=[x, y], angle=0 if x <= cx else 180)
-        y_top -= ((len(rows) - 1) // NCOL + 1) * DY + 6 * G
 
-    # check that every pin landed on the net the table asks for
+    # ---- check: every pin is on the net the parts table asks for ----------
+    wrong = []
     for _, name, kind, pins, _ in P:
-        c = comps[name]
-        cpins = list(c.pins)
-        if kind in ("R", "L", "C"):
-            order = sorted(cpins, key=lambda p: (round(p.location[0], 6), -round(p.location[1], 6)))
-            pinmap = {"1": order[0], "2": order[1]}
-        else:
-            pinmap = {p.name: p for p in cpins}
+        pm = _pinmap(kind, comps[name])
         for pname, net in pins.items():
-            got = pinmap[pname].net
+            got = pm[pname].net
             if got != net:
-                wrong.append((name, pname, net, got))
+                wrong.append((name, pname, "wanted " + net, "got " + str(got)))
     if wrong:
-        raise RuntimeError("schematic nets differ from the table:\n" + "\n".join(map(str, wrong)))
+        raise RuntimeError("schematic nets differ from the parts table:\n" + "\n".join(map(str, wrong)))
 
     from ansys.aedt.core.generic.constants import Setups
     for sname, step, stop in (("Tran_600us", "50ns", "600us"), ("Tran_3ms", "200ns", "3ms"), ("Tran_12ms", "500ns", "12ms")):
         s = cir.create_setup(sname, Setups.NexximTransient)
         s.props["TransientData"] = [step, stop]
         s.update()
-    print(f"[{config}] {len(P)} parts placed, {len(variables)} design variables, all pins on their nets")
+    n_lab = len(pinnet) - len(wired)
+    print(f"[{config}] {len(P)} parts, {sum(len(v) for v in wires.values())} wires, {n_lab} labelled/grounded pins, every pin on its net")
     return comps
 
 
@@ -333,7 +387,7 @@ def main(argv):
                 from ansys.aedt.core import Circuit
                 cir = Circuit(project=PROJECT, design=config, version=AEDT_VERSION, non_graphical=True,
                               new_desktop=False, student_version=True)
-            build_design(cir, config)
+            build_design(cir, config, first=(i == 0))
             cir.save_project()
     finally:
         if cir is not None:

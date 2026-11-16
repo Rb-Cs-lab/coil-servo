@@ -14,6 +14,8 @@ represented by a simple stand-in (see "What is and is not modelled").
 | `coil_servo.aedt` | The Ansys project. Two circuit designs: **bench** (as built) and **mot** (the two MOT coils on the SE-600-5 — planned, not built) |
 | `models/coil_servo_parts.lib` | One model per purchased part (text file, readable) |
 | `build_project.py` | Rebuilds `coil_servo.aedt` from the parts table inside it |
+| `layout.py` | Where each part sits on the sheet and how the wires run |
+| `preview_layout.py` | Draws `results/schematic_*.png`, a picture of the schematic, without Ansys |
 | `run_sims.py` | Runs the test scenarios and saves the waveforms |
 | `compare.py` | Plots model against bench and writes `results/comparison.html` |
 | `results/comparison.html` | **Start here**: table and plots, model vs bench |
@@ -32,20 +34,33 @@ once (below); it writes a fresh project with the right path.
 
 ### Reading the schematic
 
-The schematic is drawn by a script, so it uses **net labels instead of
-drawn wires**: every pin carries a small flag with a name (`rail`, `A`,
-`B`, `ret`, `gate_bus`, …), and all pins with the same name are
-connected. The parts are laid out in nine titled groups:
+The schematic is drawn as a circuit diagram (a picture of it, made without
+Ansys, is in `results/schematic_bench.png`):
 
-1. Supply and its leads
-2. H-bridge (4 switch blocks)
-3. Coil, damper, varistor, current sensor
-4. Pass bank (6 leg blocks) and the TVS
-5. Gate stage (OPA994)
-6. Sensing chain (burden, AD8421, cable to IN1)
-7. Red Pitaya (firmware stand-in)
-8. Safety logic board
-9. Test sources — what the firmware, the operator and faults do
+- **Top:** the supply and its leads feed the **rail bar**.
+- **Middle:** the H-bridge. Q1 and Q2 hang from the rail bar, Q3 and Q4
+  stand on the return bar; between the two legs (node A on the left, node
+  B on the right) sit the varistor, the damper and the coil with the LEM.
+- **Below:** the return bar runs down to the pass bank's drain bar, with
+  the six legs M1…M6 and the 5KP12CA hanging from it. The ground symbols
+  under the legs are the source bar (= supply minus).
+- **Bottom left to right:** sensing chain → IN1 of the Red Pitaya → OUT1 →
+  50 Ω terminator → OPA994 with its two gain resistors → the gate bus to
+  the six legs.
+- **Left of the bridge:** the safety logic board. **Bottom row:** the test
+  sources.
+
+Blocks are drawn as boxes with the current path top to bottom (drain on
+top, source at the bottom) and control pins on the sides.
+
+A few connections use **net labels instead of wires** — a small flag with
+a name; pins with the same name are connected. This is on purpose, where
+wires would cross the power path: the three logic lines to the four bridge
+drivers (`pol`, `npol`, `dis`), the 5 V logic supply (`v5`), the LEM
+output (`lem_m`, which goes to the sensing chain at the bottom left), the
+Red Pitaya's polarity input (`dio0`) and the test sources. The labels
+`g1…4`, `pg1…6`, `ps1…6`, `u_kcounts`, `i_meas`, `hb_ok`, `latch_trip` are
+measuring points only.
 
 Main net names: `sup_p` supply + terminal · `rail` rail bar · `A`, `B`
 bridge outputs · `ret` return bar = pass-bank drain bar · `0` source bar =
@@ -53,6 +68,12 @@ supply − · `gate_bus` op-amp output · `pg1…6` / `ps1…6` each pass FET's
 gate / source · `g1…4` bridge gates · `lem_m` LEM output · `in1`, `in2`,
 `out1` the Red Pitaya's connectors · `dio0`, `dio1`, `dio6` polarity,
 bridge enable, heartbeat · `dis` the drivers' DISABLE line.
+
+To move parts or re-route wires, edit `layout.py` (positions and wire
+paths, in grid units) and run `build_project.py`; it refuses to save a
+drawing in which any pin ends up on a different net than the parts table
+in `build_project.py` says. Edits made by hand in the Ansys window are
+lost at the next rebuild.
 
 ### Why some parts are grouped into blocks
 
@@ -198,6 +219,6 @@ and anything to do with grounding between the Red Pitaya and the supply.
 - **The pass-transistor law is only checked up to 2.5 A.** The `mot`
   design uses it at 100 A — a 40× extrapolation. Treat every `mot` number
   as a rough prediction.
-- The schematic drawing itself has not been looked at on screen (it was
-  built without a window); the connections were checked by the script, pin
-  by pin, and by the simulations.
+- The schematic was built without opening the Ansys window. The connections were
+  checked by the script, pin by pin, and by the simulations; how it looks was
+  checked only on the preview picture, not in Ansys itself.
