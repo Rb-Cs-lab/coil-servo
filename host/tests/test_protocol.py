@@ -158,6 +158,17 @@ def test_wait_for_run_times_out_and_disables(server):
         assert b.read_cfg()["servo_enable"] == 0
 
 
+
+def test_wait_for_run_accepts_zero_open(server):
+    """Rev 6: with fastoff_zero set, arming at 0 A goes RUN -> ZERO_OPEN
+    within one PI tick; ZERO_OPEN (state 11) is running, not a timeout."""
+    from coil_servo_model.registers import MAP_REV
+    with Board("127.0.0.1", port=server) as b:
+        b.write_words(STS_BASE, [(MAP_REV << 24) | 11])   # pretend ZERO_OPEN
+        b.write_cfg(servo_enable=1)
+        assert b.wait_for_run(timeout=0.3)["fsm_state_name"] == "ZERO_OPEN"
+        assert b.read_cfg()["servo_enable"] == 1
+
 def test_refuses_writes_to_an_old_register_map(server):
     """A bitstream reporting another map revision (the 2026-08-27 image
     reads 0) must not receive CFG writes: its 16-word block would alias
