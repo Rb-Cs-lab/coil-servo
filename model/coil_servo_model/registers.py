@@ -22,6 +22,9 @@ CFG_FIELDS = {
     "trip_ack":       (0, 19, 1, False),
     "dither_enable":  (0, 20, 1, False),
     "snap_enable":    (0, 21, 1, False),
+    "fastoff_flip":   (0, 22, 1, False),
+    "fastoff_stop":   (0, 23, 1, False),
+    "fastoff_zero":   (0, 24, 1, False),
     "setpoint":       (1, 0, 14, True),
     "kp_mant":        (2, 0, 18, True),
     "kp_shift":       (3, 0, 5, False),
@@ -51,8 +54,10 @@ CFG_WORDS = 32      # CFG_DATA_WIDTH = 1024 bits
 # in coil_servo_top.v and in the server's mock) on any layout change. The
 # 2026-08-27 full-architecture bitstream reads 0; rev 3 = 2026-11-11 MVP
 # build; rev 4 adds the IN1/IN2 offset registers and the build ID; rev 5
-# the zero-setpoint snap (ctrl b21 snap_enable, word 23, STS b14).
-MAP_REV = 5
+# the zero-setpoint snap (ctrl b21 snap_enable, word 23, STS b14); rev 6
+# the fast turn-off with the bridge opened at current (ctrl b22-b24,
+# FSM states 10 OPEN_RAMP and 11 ZERO_OPEN).
+MAP_REV = 6
 STS_WORDS = 8       # STS_DATA_WIDTH = 256 bits
 
 STS_FIELDS = {
@@ -78,7 +83,8 @@ STS_FIELDS = {
 }
 
 FSM_STATES = ["IDLE", "RUN", "RAMP_DOWN", "DISABLE", "FLIP", "ENABLE",
-              "SETTLE", "TIMEOUT_HOLD", "TRIP", "TRIPPED"]
+              "SETTLE", "TIMEOUT_HOLD", "TRIP", "TRIPPED",
+              "OPEN_RAMP", "ZERO_OPEN"]
 
 CFG_BASE = 0x4000_0000
 STS_BASE = 0x4100_0000

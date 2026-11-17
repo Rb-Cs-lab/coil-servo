@@ -131,3 +131,33 @@ def test_integration_converges_with_substeps():
         coarse.step(v, 0.0, False, T_S, substeps=8)
         fine.step(v, 0.0, False, T_S, substeps=64)
     assert coarse.I == pytest.approx(fine.I, rel=5e-3)
+
+
+def test_bridge_open_with_fastoff_hardware_goes_into_the_tvs():
+    """Blocking diode + 5KP30A fitted (docs/fast_turnoff.md): with the bridge
+    open the MOT current falls at ~(V_TVS + 2 V_f)/L, 100 A -> 0 in tens of
+    microseconds, against ~0.2 ms into the supply without them and ~1.3 ms
+    freewheeling with the bridge closed."""
+    ch = replace(MOT, fastoff_fitted=True)
+    p = Plant(ch, i0=100.0)
+    p.bridge_enabled = False
+    t, dt = 0.0, 1e-7
+    while p.I > 0.0 and t < 1e-3:
+        p.step(0.0, 0.0, False, dt)
+        t += dt
+    assert abs(t - ch.fastoff_time) < 2e-6
+    assert 25e-6 < t < 60e-6
+    slow = Plant(MOT, i0=100.0)
+    slow.bridge_enabled = False
+    t2 = 0.0
+    while slow.I > 0.0 and t2 < 1e-3:
+        slow.step(0.0, 0.0, False, dt)
+        t2 += dt
+    assert t2 > 3 * t
+
+
+def test_blocking_diode_costs_compliance():
+    ch = replace(MOT, fastoff_fitted=True)
+    assert ch.V_rail_eff == MOT.V_rail - ch.V_block
+    assert ch.max_current < MOT.max_current
+    assert ch.max_current > ch.I_rated, "100 A must still be reachable"

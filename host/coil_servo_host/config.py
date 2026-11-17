@@ -97,6 +97,12 @@ def build_model(name: str, table: dict) -> Channel:
             over[k] = float(over[k])
     if "out1_terminated" in over:
         over["out1_terminated"] = bool(over["out1_terminated"])
+    # fast turn-off hardware (blocking diode + bridge TVS, rev 6)
+    if "fastoff_fitted" in table:
+        over["fastoff_fitted"] = bool(table["fastoff_fitted"])
+    for k in ("V_tvs_bridge", "V_block"):
+        if k in table:
+            over[k] = float(table[k])
     if "lem_turns" in over:
         n = over["lem_turns"]
         if isinstance(n, bool) or not isinstance(n, int) or n < 1:
@@ -181,6 +187,28 @@ def load_channel(name: str, path: Path = CONFIG_PATH) -> dict:
         refuse(f"snap_zero_amps = {snap_amps} A must stay well below the flip "
                f"zero window ({table['zero_win_amps']} A): every setpoint at or "
                f"below it means 'off', so it could not be held")
+    # fast turn-off with the bridge opened at current (register map rev 6;
+    # docs/fast_turnoff.md). Optional, default off. Opening the bridge at
+    # current is only safe with the blocking diode and the bridge TVS fitted
+    # (fastoff_fitted = true, a statement about the hardware); without them
+    # the coil energy goes into the supply's output capacitors.
+    fitted = table.get("fastoff_fitted", False)
+    if not isinstance(fitted, bool):
+        refuse(f"fastoff_fitted = {fitted!r} must be true or false")
+    fastoff = {}
+    for k in ("fastoff_flip", "fastoff_stop", "fastoff_zero"):
+        v = int(table.get(k, 0))
+        if v not in (0, 1):
+            refuse(f"{k} = {v} must be 0 or 1")
+        fastoff[k] = v
+    if any(fastoff.values()) and not fitted:
+        on = [k for k, v in fastoff.items() if v]
+        refuse(f"{', '.join(on)} = 1 opens the bridge at current, but "
+               f"fastoff_fitted is not true: fit the blocking diode and the "
+               f"bridge TVS first (docs/fast_turnoff.md)")
+    if fastoff["fastoff_zero"] and not snap_en:
+        refuse("fastoff_zero = 1 needs snap_zero_enable = 1: the zero-setpoint "
+               "snap is what detects the zero setpoint")
     for k in ("out2_enable", "boost_mode"):
         if int(table[k]) != 0:
             refuse(f"{k} must be 0: OUT2 / the boost output are not fitted "
@@ -237,6 +265,7 @@ def load_channel(name: str, path: Path = CONFIG_PATH) -> dict:
         dither_enable=int(table["dither_enable"]),
         snap_enable=snap_en,
         snap_thresh=amps_to_counts(snap_amps, i_fs),
+        **fastoff,
         in1_offset=amps_to_counts(in1_off, i_fs),
         in2_offset=amps_to_counts(in2_off, i_fs),
         # board LEDs: a fixed pattern marks bench settings (0 = production)
@@ -384,6 +413,16 @@ def summary_rows(ch: dict) -> list:
          (f"on: |setpoint| <= {c['snap_thresh'] * m.amps_per_lsb:.3g} A "
           f"({c['snap_thresh']} counts) -> OUT1 = 0 at once, coil freewheels")
          if c["snap_enable"] else "off (OUT1 follows the PI down to zero)"),
+        ("fast turn-off (bridge opened at current)",
+         (("hardware fitted; " if m.fastoff_fitted else "HARDWARE NOT FITTED; ")
+          + (", ".join(n for n, k in (("flips", "fastoff_flip"),
+                                      ("stops", "fastoff_stop"),
+                                      ("zero setpoint", "fastoff_zero"))
+                       if c.get(k)) or "not used")
+          + (f" -- {m.fastoff_time * 1e6:.0f} us from rated" if
+             m.fastoff_fitted and any(c.get(k) for k in
+                                      ("fastoff_flip", "fastoff_stop",
+                                       "fastoff_zero")) else ""))),
         ("IN1 / IN2 zero offset", f"{c['in1_offset'] * m.amps_per_lsb:+.3f} A "
          f"({c['in1_offset']:+d} counts) / "
          f"{c['in2_offset'] * m.amps_per_lsb:+.3f} A "

@@ -23,9 +23,15 @@ can change:
     to the TVS clamp,
       L dI/dt = -(V_tvs - V_rail + I*R_series);
     in both cases the current stops falling at what the bank asks for;
-  * bridge open at current (heartbeat-latch trip): body diodes push the
-    current back into the supply,
-      L dI/dt = -(V_rail + 3 V_f + I*R_series), down to zero.
+  * bridge open at current (heartbeat-latch trip, or the rev-6 fast
+    turn-off): body diodes push the current back into the supply,
+      L dI/dt = -(V_rail + 3 V_f + I*R_series), down to zero;
+    with the fast turn-off hardware fitted (fastoff_fitted: blocking diode
+    in the supply lead, TVS across the bridge input) into the TVS instead,
+      L dI/dt = -(V_tvs_bridge + I*R_tvs_bridge + 2 V_f + I*R_fw).
+    The RC damper across the coil (bench, 2026-11-12) is not modelled: at
+    bench currents it takes the whole turn-off (docs/fast_turnoff.md).
+  * the blocking diode, if fitted, takes V_block off the rail on the way up.
 
 OUT2 and the boost output are not connected in the MVP: the plant rejects any
 nonzero command on them, so a firmware/config mistake shows up in simulation.
@@ -69,13 +75,13 @@ class Plant:
             I = self.I
 
             if not self.bridge_enabled:
-                dIdt = -(ch.V_rail + 3.0 * ch.V_f + I * ch.R_series) / ch.L
+                dIdt = -ch.open_bridge_voltage(I) / ch.L
                 self.I = max(I + h * dIdt, 0.0) if I > 0.0 else 0.0
                 continue
 
             I_cmd = ch.bank_current(self.V_gate)
             if I_cmd >= I:
-                dIdt = (ch.V_rail - I * ch.R_series - ch.v_bank_min(I)) / ch.L
+                dIdt = (ch.V_rail_eff - I * ch.R_series - ch.v_bank_min(I)) / ch.L
                 I_new = I + h * dIdt
                 if dIdt > 0.0:
                     I_new = min(I_new, I_cmd, I_lim)

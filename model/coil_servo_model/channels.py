@@ -76,6 +76,22 @@ class Channel:
     turnoff_model: str = "freewheel"
     V_tvs: float = 13.3          # 5KP12CA V_BR(min) [V]
 
+    # --- Fast turn-off hardware (docs/fast_turnoff.md; parts arrived
+    # 2026-11-17): a blocking Schottky in the supply + lead (IXYS
+    # DSS2x101-015A, both 100 A legs paralleled) and a TVS from the rail bar
+    # to the return bar (Littelfuse 5KP30A). With them, opening the bridge at
+    # current sends the coil current through two body diodes into the TVS:
+    #   L dI/dt = -(V_tvs_bridge + I*R_tvs_bridge + 2 V_f + I*R_fw).
+    # Without them it goes back into the supply (V_rail + 3 V_f).
+    fastoff_fitted: bool = False
+    V_tvs_bridge: float = 33.3   # 5KP30A V_BR(min) at 5 mA [V] (datasheet)
+    # dynamic resistance: V_C(max) 48.4 V at I_PP 103 A, from V_BR(min)
+    R_tvs_bridge: float = (48.4 - 33.3) / 103.0   # [ohm] -- datasheet worst case
+    # blocking diode forward drop at full current [V] -- PROVISIONAL
+    # (datasheet ~0.6-0.8 V per leg at 100 A; ~0.5-0.6 V with both legs
+    # paralleled; measure it). Comes off the rail on the way up.
+    V_block: float = 0.6
+
     # --- Sensing: LEM LF 310-S (2000:1) -> burden -> AD8421 -> IN1 ---
     lem_ratio: float = 2000.0
     R_burden: float = 10.0       # [ohm] (MPR24000Z1009BCU00)
@@ -192,10 +208,28 @@ class Channel:
         return round(self.out1_for_current(self.I_rated) * 8192)
 
     @property
+    def V_rail_eff(self) -> float:
+        """Rail at the bridge: the supply less the blocking diode, if fitted."""
+        return self.V_rail - (self.V_block if self.fastoff_fitted else 0.0)
+
+    def open_bridge_voltage(self, I: float) -> float:
+        """Voltage pushing the coil current down with the bridge open [V]."""
+        if self.fastoff_fitted:
+            return self.V_tvs_bridge + I * self.R_tvs_bridge + 2.0 * self.V_f + I * self.R_fw
+        return self.V_rail + 3.0 * self.V_f + I * self.R_series
+
+    @property
+    def fastoff_time(self) -> float:
+        """Bridge-open turn-off from I_rated to zero [s] (TVS fitted)."""
+        a = self.V_tvs_bridge + 2.0 * self.V_f
+        b = self.R_tvs_bridge + self.R_fw
+        return self.L / b * math.log((a + b * self.I_rated) / a)
+
+    @property
     def max_current(self) -> float:
         """Steady current with the bank fully on [A]: the rail's compliance
         limit, or the supply's current limit if that is lower."""
-        i = self.V_rail / (self.R_series + (self.R_ds_on + self.R_ballast) / len(self.V_th))
+        i = self.V_rail_eff / (self.R_series + (self.R_ds_on + self.R_ballast) / len(self.V_th))
         if self.I_supply_max is not None:
             i = min(i, self.I_supply_max)
         return i

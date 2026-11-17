@@ -76,6 +76,19 @@ snap_zero_amps = 0.1            # |setpoint| at or below this counts as zero
                                 # noise; set from the measured IN2 noise.
                                 # Must stay well below zero_win_amps.
 
+# --- fast turn-off with the bridge opened at current (rev 6) ---
+# docs/fast_turnoff.md. fastoff_fitted states the HARDWARE: blocking
+# Schottky (DSS2x101-015A) in the supply + lead and 5KP30A TVS from the
+# rail bar to the return bar. The three options are refused unless it is
+# true. Each opens the bridge at current for that event (coil current into
+# the TVS, ~40 us from 100 A on the MOT) instead of freewheeling with the
+# bridge closed (~1.3 ms). Off until the hardware tests (docs/fast_turnoff.md
+# section 3) pass.
+fastoff_fitted = false
+fastoff_flip = 0                # flips
+fastoff_stop = 0                # graceful stops (servo_enable 1 -> 0)
+fastoff_zero = 0                # a zero setpoint (needs snap_zero_enable = 1)
+
 # --- flip / stop ---
 zero_win_amps = 0.5             # flip zero window -- PROVISIONAL (calibrate
                                 # the ~0.3 A IN1 offset first)
@@ -208,6 +221,19 @@ slew_down_amps_per_ms = 50.0    # are set by rail/L and V_f/L, not by the
                                 # current scale
 snap_zero_enable = 1            # zero-setpoint snap, as [mot]
 snap_zero_amps = 0.1            # PROVISIONAL, as [mot] (~4 counts at G=1)
+
+# --- fast turn-off with the bridge opened at current (rev 6) ---
+# docs/fast_turnoff.md. fastoff_fitted states the HARDWARE: blocking
+# Schottky (DSS2x101-015A) in the supply + lead and 5KP30A TVS from the
+# rail bar to the return bar. The three options are refused unless it is
+# true. Each opens the bridge at current for that event (coil current into
+# the TVS, ~3 us from 2 A on the bench coil without the damper) instead of freewheeling with the
+# bridge closed (~1.3 ms). Off until the hardware tests (docs/fast_turnoff.md
+# section 3) pass.
+fastoff_fitted = false
+fastoff_flip = 0                # flips
+fastoff_stop = 0                # graceful stops (servo_enable 1 -> 0)
+fastoff_zero = 0                # a zero setpoint (needs snap_zero_enable = 1)
 
 # --- flip / stop ---
 zero_win_amps = 0.5             # flip zero window -- PROVISIONAL, suits both

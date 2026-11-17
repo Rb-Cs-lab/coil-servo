@@ -43,6 +43,28 @@
 // comparator and a counter adder in one 8 ns clock (first MVP build failed
 // by 1.0 ns). Decisions land one clock (8 ns) after the sample.
 //
+// FAST TURN-OFF, BRIDGE OPENED AT CURRENT (rev 6; needs the blocking
+// diode in the supply + lead and the TVS across the bridge input, see
+// docs/fast_turnoff.md). Three CFG bits, all reset 0 (= rev 5 behaviour):
+//   fastoff_flip: a flip request opens the bridge at once (S_OPEN) instead
+//     of servoing to zero with it closed (S_RAMP);
+//   fastoff_stop: a graceful stop does the same;
+//   fastoff_zero: in RUN, a zero REQUESTED setpoint (snap_req, the rev-5
+//     zero-setpoint snap condition) opens the bridge and the FSM waits in
+//     S_ZOPEN; when the setpoint leaves zero it re-closes the bridge -- only
+//     after the current has qualified the zero window and the bridge has
+//     been open for at least the dead time -- clears the integrator and
+//     returns to RUN, polarity unchanged.
+// Opening at current always drops bridge_en and raises out_kill on the same
+// clock (the output mux zeroes both DACs on either). With the bridge open
+// the coil current runs through two body diodes into the TVS and falls at
+// ~V_TVS/L; the FSM never toggles polarity before the zero window is
+// qualified and the dead time has passed (S_OPEN -> S_DIS -> S_FLIP, the
+// same tail as a normal flip). If the window is not qualified within
+// flip_timeout (0 = wait forever) the FSM latches in TRIPPED: with the
+// bridge open the current cannot persist, so either the sensor zero is
+// wrong or the TVS / blocking diode is missing.
+//
 // State encoding matches docs/register_map.md.
 
 module servo_flip_fsm
@@ -55,6 +77,10 @@ module servo_flip_fsm
   input  wire               flip_req,       // one-cycle pulse, conditioned
   input  wire               flip_fault_ack, // CFG ctrl b7
   input  wire               trip_ack,       // CFG ctrl b19
+  input  wire               fastoff_flip,   // CFG ctrl b22 (rev 6)
+  input  wire               fastoff_stop,   // CFG ctrl b23 (rev 6)
+  input  wire               fastoff_zero,   // CFG ctrl b24 (rev 6)
+  input  wire               snap_req,       // requested setpoint is zero
 
   input  wire               tick,           // decimated-rate strobe
   input  wire signed [21:0] i_meas,         // decimated measured current
@@ -74,7 +100,7 @@ module servo_flip_fsm
   output reg                int_clear,      // one-cycle pulse to servo_pi
   output reg                int_hold,       // to servo_pi
   output reg                out_kill,       // force both DACs to zero
-  output wire               run_state,      // in RUN (u_floor applies)
+  output wire               run_state,      // in RUN or ZERO_OPEN
   output wire        [3:0]  fsm_state,      // STS
   output wire               timeout_hold,   // STS: parked in TIMEOUT_HOLD
   output wire               tripped         // STS: in TRIP or TRIPPED
@@ -83,7 +109,8 @@ module servo_flip_fsm
   localparam [3:0] S_IDLE = 4'd0, S_RUN = 4'd1, S_RAMP = 4'd2,
                    S_DIS = 4'd3, S_FLIP = 4'd4, S_EN = 4'd5,
                    S_SETTLE = 4'd6, S_THOLD = 4'd7,
-                   S_TRIP = 4'd8, S_TRIPPED = 4'd9;
+                   S_TRIP = 4'd8, S_TRIPPED = 4'd9,
+                   S_OPEN = 4'd10, S_ZOPEN = 4'd11;
 
   reg [3:0] state;
   reg stop_req;              // this RAMP_DOWN is a graceful stop, not a flip
@@ -91,11 +118,14 @@ module servo_flip_fsm
   reg [15:0] win_cnt;
   reg [15:0] trip_cnt;
   reg armed_prev;
+  reg zero_seen;             // S_ZOPEN: the zero window has been qualified
 
   assign fsm_state = state;
   assign timeout_hold = (state == S_THOLD);
   assign tripped = (state == S_TRIP) || (state == S_TRIPPED);
-  assign run_state = (state == S_RUN);
+  // RUN or ZERO_OPEN: the zero-setpoint snap keeps evaluating in both
+  // (in ZERO_OPEN the DACs are killed and the integrator held anyway)
+  assign run_state = (state == S_RUN) || (state == S_ZOPEN);
 
   wire arm_rise = armed & ~armed_prev;
 
@@ -145,6 +175,7 @@ module servo_flip_fsm
       win_cnt <= 16'd0;
       trip_cnt <= 16'd0;
       armed_prev <= 1'b1;         // a level high at load is not an edge
+      zero_seen <= 1'b0;
     end else begin
       int_clear <= 1'b0;          // default: pulses last one cycle
       armed_prev <= armed;
@@ -157,6 +188,18 @@ module servo_flip_fsm
       if (trip_fire) begin
         // over-current: outputs to zero now, bridge left as it is
         state <= S_TRIP;
+        out_kill <= 1'b1;
+        sp_force_zero <= 1'b1;
+        int_hold <= 1'b1;
+        timer <= 32'd0;
+        win_cnt <= 16'd0;
+      end else if (!servo_enable && (state == S_ZOPEN ||
+          (fastoff_stop &&
+           (state == S_RUN || state == S_SETTLE || state == S_THOLD)))) begin
+        // fast stop (rev 6): open the bridge now (already open in ZERO_OPEN)
+        state <= S_OPEN;
+        stop_req <= 1'b1;
+        bridge_en <= 1'b0;
         out_kill <= 1'b1;
         sp_force_zero <= 1'b1;
         int_hold <= 1'b1;
@@ -189,12 +232,77 @@ module servo_flip_fsm
           end
 
           S_RUN: begin
-            if (flip_req && armed) begin
+            if (flip_req && armed && fastoff_flip) begin
+              // fast flip (rev 6): open the bridge at current
+              state <= S_OPEN;
+              stop_req <= 1'b0;
+              bridge_en <= 1'b0;
+              out_kill <= 1'b1;
+              sp_force_zero <= 1'b1;
+              int_hold <= 1'b1;
+              timer <= 32'd0;
+              win_cnt <= 16'd0;
+            end else if (flip_req && armed) begin
               state <= S_RAMP;
               stop_req <= 1'b0;
               sp_force_zero <= 1'b1;
               timer <= 32'd0;
               win_cnt <= 16'd0;
+            end else if (fastoff_zero && snap_req) begin
+              // zero setpoint requested (rev 6): open the bridge at current
+              // and wait there with the DACs at zero
+              state <= S_ZOPEN;
+              bridge_en <= 1'b0;
+              out_kill <= 1'b1;
+              int_hold <= 1'b1;
+              timer <= 32'd0;
+              win_cnt <= 16'd0;
+              zero_seen <= 1'b0;
+            end
+          end
+
+          S_ZOPEN: begin
+            // bridge open, DACs zero, polarity unchanged; the requested
+            // setpoint is (near) zero. A flip goes through S_OPEN like a
+            // fast flip (the window is re-qualified there). When the
+            // setpoint leaves zero, re-close only after the zero window
+            // has been qualified and the dead time has passed.
+            if (window_qualified)
+              zero_seen <= 1'b1;
+            if (tick_d)
+              win_cnt <= in_window_r ? win_cnt + 16'd1 : 16'd0;
+            if (timer < {16'd0, deadtime})
+              timer <= timer + 32'd1;
+            if (flip_req && armed) begin
+              state <= S_OPEN;
+              stop_req <= 1'b0;
+              sp_force_zero <= 1'b1;
+              timer <= 32'd0;
+              win_cnt <= 16'd0;
+            end else if ((!snap_req || !fastoff_zero) && zero_seen &&
+                         timer >= {16'd0, deadtime}) begin
+              state <= S_RUN;
+              bridge_en <= 1'b1;
+              out_kill <= 1'b0;
+              int_hold <= 1'b0;
+              int_clear <= 1'b1;         // restart from the floor, clean
+            end
+          end
+
+          S_OPEN: begin
+            // bridge opened at current: the coil current falls through the
+            // body diodes into the TVS. Same window qualification as
+            // S_RAMP, then the normal dead time / flip / stop tail.
+            if (window_qualified) begin
+              state <= S_DIS;
+              timer <= 32'd0;
+            end else begin
+              if (tick_d)
+                win_cnt <= in_window_r ? win_cnt + 16'd1 : 16'd0;
+              if (flip_timeout != 32'd0 && timer >= flip_timeout)
+                state <= S_TRIPPED;      // cannot happen with a sane sensor
+              else
+                timer <= timer + 32'd1;
             end
           end
 
@@ -218,8 +326,10 @@ module servo_flip_fsm
 
           S_DIS: begin
             if (timer >= {16'd0, deadtime}) begin
-              if (stop_req)
+              if (stop_req) begin
                 state <= S_IDLE;         // graceful stop ends here
+                out_kill <= 1'b0;        // after a fast stop (bridge open)
+              end
               else begin
                 state <= S_FLIP;
                 polarity <= ~polarity;   // bridge is open: safe to toggle
@@ -233,6 +343,7 @@ module servo_flip_fsm
             if (timer >= {16'd0, deadtime}) begin
               state <= S_EN;
               bridge_en <= 1'b1;
+              out_kill <= 1'b0;          // after a fast flip (S_OPEN)
               int_clear <= 1'b1;         // restart the integrator clean
               int_hold <= 1'b0;
               timer <= 32'd0;
