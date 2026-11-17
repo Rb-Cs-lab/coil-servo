@@ -298,6 +298,7 @@ function renderDetail(card) {
       <button class="btn stop" id="b-stop" title="servo_enable = 0: graceful ramp to zero">STOP</button>
     </div>
     <div class="small muted" id="d-fw" style="margin-top:4px"></div>
+    <div class="small" id="d-fastoff" style="margin-top:4px"></div>
     <div class="alarms" id="d-inuse" style="margin-top:8px"></div>
     <div class="alarms" id="d-alarms" style="margin-top:8px"></div>
     <div id="d-pending" style="margin-top:8px"></div>
@@ -745,6 +746,7 @@ function updateDetail() {
   $("#d-u").textContent = !(on && st.out1_volts != null) ? "—"
     : st.out1_mode === "off" ? `${st.out1_volts.toFixed(4)} V (DAC code 0: outputs off)`
     : st.out1_mode === "snapped" ? `${st.out1_volts.toFixed(4)} V (DAC code 0: zero-setpoint snap)`
+    : st.out1_mode === "bridge_open" ? `${st.out1_volts.toFixed(4)} V (DAC code 0: bridge opened, fast turn-off)`
     : `${st.out1_volts.toFixed(4)} V (${st.out1_counts} counts${
         st.out1_mode === "open" ? ", open loop: the clamped setpoint" : ""})`;
   $("#d-pi").textContent = on && st.pi_volts != null
@@ -759,6 +761,10 @@ function updateDetail() {
   const fw = $("#d-fw");
   fw.textContent = on ? fwText(st) : "";
   fw.classList.toggle("fw-bad", on && st.map_ok === false);
+  const fo = st.fastoff_board || [];
+  $("#d-fastoff").innerHTML = on && fo.length
+    ? `<b>Fast turn-off on</b> — the bridge opens at current for ${esc(fo.join(", "))}
+       (coil energy into the bridge TVS)` : "";
 
   let p = "";
   if (st.pending) p += `<div class="pending">Servo enabled as [${esc(st.pending.profile)}]: ${esc(st.pending.message)}

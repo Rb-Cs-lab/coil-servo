@@ -62,7 +62,8 @@ h2 { font-size: 15px; margin: 0 0 10px; }
 .dot.online { background: var(--ok); }
 .dot.offline { background: var(--bad); }
 .state { font-size: 22px; font-weight: 700; letter-spacing: 0.02em; }
-.state.RUN { color: var(--ok); }
+.state.RUN, .state.ZERO_OPEN { color: var(--ok); }
+.state.OPEN_RAMP { color: var(--warn); }
 .state.TRIP, .state.TRIPPED, .state.TIMEOUT_HOLD { color: var(--bad); }
 .state.offline, .state.unknown { color: var(--muted); }
 .current { font-size: 30px; font-variant-numeric: tabular-nums;

@@ -150,7 +150,11 @@ Click a card for its page.
   the setpoint, limited to the clamp, not the PI value. With the
   zero-setpoint snap on (register map rev 5) and the setpoint at zero in
   RUN, OUT1 is also DAC code 0 ("DAC code 0: zero-setpoint snap") while the
-  PI value is whatever the cleared integrator gives. Then any alarms
+  PI value is whatever the cleared integrator gives. When the fast
+  turn-off (rev 6, below) has opened the bridge, it reads "DAC code 0:
+  bridge opened, fast turn-off". Under the firmware line, **Fast turn-off
+  on — the bridge opens at current for …** appears whenever the board has
+  any of the three fast turn-off options set. Then any alarms
   and the big
   **STOP** button. On a greyed card it says which role the board is in
   ("in use as MOT", with a link) and how to switch.
@@ -170,6 +174,25 @@ Click a card for its page.
   Configuration panel as "zero-setpoint snap"; like dither it is part of
   the profile — change it in channels.toml and Apply profile. The status
   log has a `snapped` column.
+- **Fast turn-off (register map rev 6, docs/fast_turnoff.md):** with a
+  blocking diode in the supply lead and a TVS (a voltage-clamping diode)
+  across the bridge fitted, the firmware can *open* the bridge at current
+  instead of letting the coil freewheel down with it closed — ~40 µs from
+  100 A instead of ~1.3 ms. Three options, each for one event: flips
+  (`fastoff_flip`), stops (`fastoff_stop`) and a zero setpoint
+  (`fastoff_zero`, needs the snap). Like the snap they are part of the
+  profile: set them in channels.toml and Apply profile — there are no
+  switches on this page, because channels.toml also carries
+  `fastoff_fitted`, the statement that the hardware is in, and the config
+  loader refuses the options without it. The Configuration panel shows a
+  "fast turn-off" row: *hardware fitted* or *HARDWARE NOT FITTED*, which
+  options are on, and the turn-off time from rated current. Two new states:
+  **ZERO_OPEN** (green, a normal running state: zero setpoint, bridge open,
+  `snapped` on; a setpoint re-closes the bridge) and **OPEN_RAMP** (amber,
+  lasts microseconds: the bridge was opened for a flip or stop and the
+  firmware waits for zero current). A board that opens the bridge at
+  current while its profile says the hardware is *not* fitted is a red
+  alarm (only possible if someone wrote the settings by hand).
 - **Mode:** whether the servo is enabled, where the setpoint comes from
   (IN2 = the control computer's analog output, or the setpoint register
   = this page), open loop on/off, heartbeat, and the register-map
@@ -212,7 +235,7 @@ look at the logic board.
 
 ### Old bitstream
 
-The host code knows register-map revision 5. A board still running an
+The host code knows register-map revision 6. A board still running an
 older bitstream (the 2026-08-27 image reports revision 0) has a different
 register layout: writing would land values in the wrong registers. The
 dashboard then shows **OLD BITSTREAM** in red and is **monitoring only** for

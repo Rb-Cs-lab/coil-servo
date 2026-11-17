@@ -21,6 +21,9 @@ Two time scales:
     the coarse state, including setpoint writes made during the window (so
     step.capture_step shows a real model step response).
 
+Rev 6 fast turn-off: fastoff_stop (OPEN_RAMP -> IDLE) and fastoff_zero
+(ZERO_OPEN while the setpoint is zero) open the bridge; the current then
+falls at the bridge-open rate.
 Not simulated: flips (polarity stays 0, no TIMEOUT_HOLD), the heartbeat-
 latch board, the DIO5 fault input, sigma-delta dither in captures
 (approximated by its average). The raw 125 MS/s capture (capture_sel = 0)
@@ -198,7 +201,7 @@ class SimBoard(Board):
 
     def _target_amps(self, t: float) -> float:
         c = self._c
-        if self.state != "RUN":
+        if self.state not in ("RUN", "ZERO_OPEN"):
             return 0.0
         counts = c["setpoint"] if c["sp_source"] else self._in2_counts(t)
         return counts * self.m.amps_per_lsb
@@ -208,6 +211,8 @@ class SimBoard(Board):
         snap_enable, the requested setpoint within snap_thresh of zero
         (no tick averaging or hysteresis here)."""
         c = self._c
+        if self.state == "ZERO_OPEN":
+            return True
         if not c.get("snap_enable") or self.state != "RUN" or c["open_loop"]:
             return False
         req = self._target_amps(self._clock()) / self.m.amps_per_lsb
@@ -236,8 +241,14 @@ class SimBoard(Board):
         if new["trip_ack"] and not old["trip_ack"] and self.state == "TRIPPED":
             self.state = "IDLE"
         if old["servo_enable"] and not new["servo_enable"] \
-                and self.state == "RUN":
-            self.state = "RAMP_DOWN"
+                and self.state in ("RUN", "ZERO_OPEN"):
+            if new.get("fastoff_stop") or self.state == "ZERO_OPEN":
+                # rev 6 fast stop: bridge opened at current (TVS), or
+                # already open with a zero setpoint
+                self.state = "OPEN_RAMP"
+                self.bridge_en = False
+            else:
+                self.state = "RAMP_DOWN"
         self._arm_edge(self._armed(old), self._armed(new), new)
 
     def _advance(self) -> None:
@@ -302,6 +313,18 @@ class SimBoard(Board):
                     and self.I < zero_win:
                 self.state = "IDLE"
                 self.bridge_en = False
+            # rev 6 fast turn-off (no flips here: polarity stays 0)
+            zero_req = abs(target) <= c["snap_thresh"] * m.amps_per_lsb
+            if self.state == "RUN" and c.get("fastoff_zero") \
+                    and c.get("snap_enable") and not c["open_loop"] \
+                    and zero_req:
+                self.state = "ZERO_OPEN"
+                self.bridge_en = False
+            elif self.state == "ZERO_OPEN" and not zero_req:
+                self.state = "RUN"
+                self.bridge_en = True
+            if self.state == "OPEN_RAMP" and self.I < zero_win:
+                self.state = "IDLE"
 
         # OUT1 command: what the pass bank needs for this current
         if self.state in ("RUN", "RAMP_DOWN") and c["open_loop"]:
