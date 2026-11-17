@@ -15,12 +15,12 @@ import os
 import sys
 import time
 
-from build_project import AEDT_VERSION, COMMON_VARS, CONFIGS, PROJECT, HERE
+from build_project import AEDT_VERSION, COMMON_VARS, CONFIGS, HERE, project_of
 
 RESULTS = os.path.join(HERE, "results")
 
 # nets saved for every scenario
-NETS = ["i_meas", "u_kcounts", "in1", "in2", "out1", "gate_bus", "ret", "rail", "sup_p", "A", "B",
+NETS = ["i_meas", "u_kcounts", "in1", "in2", "out1", "gate_bus", "ret", "rail", "rail_in", "sup_p", "A", "B",
         "coil_a", "coil_m", "dmp2", "lem_m", "g1", "g2", "g3", "g4", "dis", "hb_ok", "latch_trip", "pg1", "ps1", "ps4",
         "dio0", "dio1", "dio6", "run", "ol"]
 
@@ -111,6 +111,18 @@ SCENARIOS = {
     "mot_turnoff_100A": ("mot", "Tran_3ms", "3ms", {"ol_kcounts": "6.04", "trip_amps": "150", "t_run_off": "600us"}, "PREDICTION: OUT1 -> 0 from ~100 A, bridge closed, proposed damper"),
     "mot_bridge_open_100A": ("mot", "Tran_3ms", "3ms", {"ol_kcounts": "6.04", "trip_amps": "150", "t_en_off": "600us"}, "PREDICTION: bridge opened at ~100 A (safety-board cut-off)"),
     "in1_lost": ("bench", "Tran_3ms", "3ms", {**HOLD_2A, "t_in1_off": "1.5ms"}, "IN1 cable loses contact during a 2 A hold (the 5 A surge hypothesis)"),
+    # --- fast turn-off parts (coil_servo_fast_turnoff.aedt): 5KP30A rail bar <-> return bar, DSS2X101-015A in the
+    #     supply + lead. NOT fitted yet -- all of these are PREDICTIONS. Same settings as the runs they are compared with.
+    "ft_step_2A": ("bench_ft", "Tran_3ms", "3ms", {"sp_amps": "2", "V_opamp": "5.184V"}, "PREDICTION: closed loop 0 -> 2 A with the blocking diode in the supply lead"),
+    "ft_turnoff": ("bench_ft", "Tran_600us", "600us", {"ol_kcounts": "3.950", "V_opamp": "5.184V", "t_run_off": "200us"}, "PREDICTION: OUT1 -> 0 from 2 A, bridge closed (should not change)"),
+    "ft_bridge_open": ("bench_ft", "Tran_600us", "600us", {"ol_kcounts": "3.950", "V_opamp": "5.184V", "t_en_off": "200us"}, "PREDICTION: bridge opened at 2 A, damper fitted"),
+    "ft_bridge_open_nodamper": ("bench_ft", "Tran_600us", "600us", {"ol_kcounts": "3.950", "V_opamp": "5.184V", "t_en_off": "200us", **NO_DAMPER}, "PREDICTION: bridge opened at 2 A, no damper"),
+    "mot_ft_turnoff_100A": ("mot_ft", "Tran_3ms", "3ms", {"ol_kcounts": "6.04", "trip_amps": "150", "t_run_off": "600us"}, "PREDICTION: OUT1 -> 0 from ~100 A, bridge closed"),
+    "mot_ft_bridge_open_100A": ("mot_ft", "Tran_3ms", "3ms", {"ol_kcounts": "6.04", "trip_amps": "150", "t_en_off": "600us"}, "PREDICTION: bridge opened at ~100 A, proposed damper fitted"),
+    # what the blocking diode costs: slow OUT1 sweep, largest current the 5 V supply can push, without and with the diode
+    "mot_scan": ("mot", "Tran_12ms", "12ms", {"ol_kcounts": "4", "ol_step": "4", "t_ol_step": "200us", "t_ol_ramp": "11ms", "trip_amps": "200"}, "PREDICTION: current against OUT1 up to the supply's limit, as planned for Test 4"),
+    "mot_ft_scan": ("mot_ft", "Tran_12ms", "12ms", {"ol_kcounts": "4", "ol_step": "4", "t_ol_step": "200us", "t_ol_ramp": "11ms", "trip_amps": "200"}, "PREDICTION: the same with the blocking diode"),
+    "mot_ft_bridge_open_100A_nodamper": ("mot_ft", "Tran_3ms", "3ms", {"ol_kcounts": "6.04", "trip_amps": "150", "t_en_off": "600us", **NO_DAMPER}, "PREDICTION: bridge opened at ~100 A, no damper"),
 }
 
 
@@ -136,7 +148,9 @@ def run(names):
                     for k, v in defaults(cir.design_name).items():
                         if str(cir[k]) != v:
                             cir[k] = v
-                cir = Circuit(project=PROJECT, design=design, version=AEDT_VERSION, non_graphical=True,
+                if cir is not None and project_of(design) != project_of(cir.design_name):
+                    cir.save_project()      # going on to the other project file
+                cir = Circuit(project=project_of(design), design=design, version=AEDT_VERSION, non_graphical=True,
                               new_desktop=cir is None, student_version=True)
             base = defaults(design)
             for k, v in {**base, **over}.items():
@@ -178,4 +192,5 @@ if __name__ == "__main__":
         for k, v in SCENARIOS.items():
             print(f"{k:22s} {v[4]}")
         sys.exit(0)
-    run(args or list(SCENARIOS))
+    # default: the scenarios of the as-built project; name the ft_ ones to run those
+    run(args or [n for n, v in SCENARIOS.items() if not v[0].endswith("_ft")])

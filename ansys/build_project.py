@@ -11,6 +11,16 @@ Student 2025 R2) with one "Circuit" design per configuration:
     mot    the same electronics on the SE-600-5 with the two MOT coils
            (planned Test 4 wiring -- NOT built yet, values provisional)
 
+A second project file, ansys/coil_servo_fast_turnoff.aedt, holds the same two
+circuits with the planned fast turn-off parts added (NOT fitted yet):
+
+    bench_ft, mot_ft   + Littelfuse 5KP30A between rail bar and return bar
+                       + IXYS DSS2X101-015A blocking diode in the supply + lead
+
+    ansys\\.venv\\Scripts\\python.exe ansys\\build_project.py bench_ft mot_ft
+
+(only the project files of the designs you name are rebuilt).
+
 The circuit is described once, in PARTS below, as a table of
 (group, name, kind, pins -> net names, values): that table is the electrical
 truth. layout.py says where each part sits and how the wires are drawn; the
@@ -28,7 +38,21 @@ import layout
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LIB = os.path.join(HERE, "models", "coil_servo_parts.lib")
+# project file -> the designs in it
+PROJECTS = {
+    "coil_servo.aedt": ["bench", "mot"],                          # as built / as planned for Test 4
+    "coil_servo_fast_turnoff.aedt": ["bench_ft", "mot_ft"],       # + 5KP30A and DSS2X101-015A (not fitted yet)
+}
 PROJECT = os.path.join(HERE, "coil_servo.aedt")
+
+
+def project_of(design: str) -> str:
+    """Full path of the project file a design lives in."""
+    for fname, designs in PROJECTS.items():
+        if design in designs:
+            return os.path.join(HERE, fname)
+    raise KeyError(design)
+
 AEDT_VERSION = "2025.2"
 
 G = 0.00254  # schematic grid, 100 mil
@@ -85,6 +109,7 @@ CONFIGS = {
             "V_sup": ("5.06", "bench supply open-circuit voltage (measured)"),
             "I_lim": ("3", "bench supply current limit, amps"),
             "C_sup": ("100e-6", "supply output capacitance, farads (INFERRED from the surge trace)"),
+            "R_reg": ("20mOhm", "how much the supply voltage sags per amp (ASSUMED)"),
             "R_lead": ("0.2ohm", "supply leads, both ways (measured 0.17-0.24 ohm)"),
             "L_lead": ("3.6uH", "supply leads (fitted to the supply ripple)"),
             "R_lead_ac": ("20ohm", "AC loss across the lead inductance (ASSUMED: tuned so lead ringing dies in ~10 us)"),
@@ -100,6 +125,7 @@ CONFIGS = {
             "V_sup": ("5.0", "SE-600-5"),
             "I_lim": ("110", "SE-600-5 current limit, amps (ASSUMED)"),
             "C_sup": ("10e-3", "SE-600-5 output capacitance, farads (ASSUMED, unknown)"),
+            "R_reg": ("0.5mOhm", "SE-600-5 sag per amp: 1 % load regulation = 50 mV at 100 A (ASSUMED from the datasheet figure)"),
             "R_lead": ("1.5mOhm", "4/0 supply cabling (ASSUMED)"),
             "L_lead": ("1uH", "supply cabling loop (ASSUMED)"),
             "R_lead_ac": ("20ohm", "AC loss across the lead inductance (ASSUMED)"),
@@ -120,20 +146,37 @@ CONFIGS = {
 }
 
 
+# The fast turn-off designs use the same values as the designs they are built on.
+for _c in ("bench", "mot"):
+    CONFIGS[_c + "_ft"] = {"vars": dict(CONFIGS[_c]["vars"])}
+del CONFIGS["mot_ft"]["vars"]["R_damp2"]      # that design has one damper resistor, see parts()
+
+
 def parts(config: str) -> list[tuple]:
     """The circuit as a table: (group, name, kind, {pin: net}, {property: value})."""
     P: list[tuple] = []
+    ft, config = layout.fast(config), layout.base(config)
+    lead_end = "rail_in" if ft else "rail"      # with the blocking diode the lead no longer ends on the rail bar
 
     # ---- supply and leads ------------------------------------------------
     grp = "1 SUPPLY: bench supply 5 V / 3 A + leads" if config == "bench" else "1 SUPPLY: Mean Well SE-600-5 + 4/0 cable"
     P += [
-        (grp, "PSU", "DC_SUPPLY", {"p": "sup_p", "n": "0"}, {"VSET": "V_sup", "ILIM": "I_lim", "COUT": "C_sup"}),
+        (grp, "PSU", "DC_SUPPLY", {"p": "sup_p", "n": "0"}, {"VSET": "V_sup", "ILIM": "I_lim", "COUT": "C_sup", "RREG": "R_reg"}),
         (grp, "R_lead", "R", {"1": "sup_p", "2": "lead_m"}, {"R": "R_lead"}),
-        (grp, "L_lead", "L", {"1": "lead_m", "2": "rail"}, {"L": "L_lead"}),
+        (grp, "L_lead", "L", {"1": "lead_m", "2": lead_end}, {"L": "L_lead"}),
         # not a part: high-frequency loss of the leads (skin effect), so lead ringing dies in ~10 us as on the bench
-        (grp, "R_lead_ac", "R", {"1": "lead_m", "2": "rail"}, {"R": "R_lead_ac"}),
+        (grp, "R_lead_ac", "R", {"1": "lead_m", "2": lead_end}, {"R": "R_lead_ac"}),
         (grp, "V_logic5", "VDC", {"positive": "v5", "negative": "0"}, {"DC": "5V"}),
     ]
+
+    if ft:
+        grp = "1b FAST TURN-OFF PARTS (planned, not fitted): DSS2X101-015A blocking diode, 5KP30A across the bridge input"
+        P += [
+            # both halves of the dual Schottky in parallel, supply side -> rail bar
+            (grp, "D_block", "SCHOTTKY_DSS2X101", {"a": "rail_in", "k": "rail"}, {}),
+            # cathode on the rail bar, anode on the return bar
+            (grp, "D_clamp", "TVS_5KP30A", {"k": "rail", "a": "ret"}, {}),
+        ]
 
     # ---- H-bridge: 4 x IXFN420N10T, each with UCC5350 + RO-0515S ---------
     grp = "2 H-BRIDGE: 4 x IXFN420N10T, UCC5350SB drivers, RO-0515S supplies"
@@ -171,6 +214,11 @@ def parts(config: str) -> list[tuple]:
             (grp, "R_coil", "R", {"1": "coil_m", "2": "B"}, {"R": "R_coil"}),
             (grp, "RV2", "VARISTOR_S20K20", {"a": "coil_a", "b": "B"}, {}),
         ]
+        if ft:
+            # The Student licence allows 50 components and mot + 2 would be 51: the proposed
+            # MOT damper is ONE resistor, so its 1 mOhm placeholder twin is left out here.
+            P = [p for p in P if p[1] != "R_damp2"]
+            P = [(g, n, k, {"1": "A", "2": "dmp2"}, v) if n == "R_damp1" else (g, n, k, pins, v) for g, n, k, pins, v in P]
 
     # ---- pass bank ------------------------------------------------------
     grp = "4 PASS BANK: 6 x IXTN200N10L2, 24.9 ohm gate, 47 k pull-down, MP930 0.03 ohm ballast, 5KP12CA"
@@ -399,31 +447,36 @@ def build_design(cir, config: str, first: bool = True) -> dict:
 
 def open_project(new: bool, design: str, non_graphical: bool = True):
     from ansys.aedt.core import Circuit
+    project = project_of(design)
     if new:
         for ext in ("", ".lock"):
-            if os.path.exists(PROJECT + ext):
-                os.remove(PROJECT + ext)
-    return Circuit(project=PROJECT, design=design, version=AEDT_VERSION, non_graphical=non_graphical,
+            if os.path.exists(project + ext):
+                os.remove(project + ext)
+    return Circuit(project=project, design=design, version=AEDT_VERSION, non_graphical=non_graphical,
                    new_desktop=True, student_version=True)
 
 
 def main(argv):
-    configs = argv or ["bench", "mot"]
-    cir = None
-    try:
-        for i, config in enumerate(configs):
-            if cir is None:
-                cir = open_project(new=True, design=config)
-            else:
-                from ansys.aedt.core import Circuit
-                cir = Circuit(project=PROJECT, design=config, version=AEDT_VERSION, non_graphical=True,
-                              new_desktop=False, student_version=True)
-            build_design(cir, config, first=(i == 0))
-            cir.save_project()
-    finally:
-        if cir is not None:
-            cir.release_desktop(close_projects=True, close_desktop=True)
-    print("wrote", PROJECT)
+    configs = argv or [d for designs in PROJECTS.values() for d in designs]
+    # one Ansys session per project file; a project is rebuilt from scratch with the designs named
+    for fname in PROJECTS:
+        mine = [c for c in configs if project_of(c) == os.path.join(HERE, fname)]
+        cir = None
+        try:
+            for i, config in enumerate(mine):
+                if cir is None:
+                    cir = open_project(new=True, design=config)
+                else:
+                    from ansys.aedt.core import Circuit
+                    cir = Circuit(project=project_of(config), design=config, version=AEDT_VERSION, non_graphical=True,
+                                  new_desktop=False, student_version=True)
+                build_design(cir, config, first=(i == 0))
+                cir.save_project()
+        finally:
+            if cir is not None:
+                cir.release_desktop(close_projects=True, close_desktop=True)
+        if mine:
+            print("wrote", os.path.join(HERE, fname), mine)
 
 
 if __name__ == "__main__":

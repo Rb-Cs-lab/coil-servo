@@ -28,6 +28,8 @@ SYMBOLS = {
     "DC_SUPPLY": (6, 8, {"p": (3, 10, "T"), "n": (3, -2, "B")}),
     "VARISTOR_S20K20": (4, 2, {"a": (-2, 1, "L"), "b": (6, 1, "R")}),
     "TVS_5KP12CA": (2, 4, {"a": (1, 6, "T"), "b": (1, -2, "B")}),
+    "TVS_5KP30A": (2, 4, {"k": (1, 6, "T"), "a": (1, -2, "B")}),
+    "SCHOTTKY_DSS2X101": (4, 2, {"a": (-2, 1, "L"), "k": (6, 1, "R")}),
     "LEM_LF310S": (6, 4, {"in": (-2, 2, "L"), "ip": (8, 2, "R"), "m": (3, -2, "B")}),
     "AD8421": (6, 6, {"inn": (-2, 4, "L"), "inp": (-2, 2, "L"), "out": (8, 3, "R"), "ref": (3, -2, "B")}),
     "OPA994": (6, 6, {"inp": (-2, 4, "L"), "inn": (-2, 2, "L"), "out": (8, 3, "R"), "vcc": (3, 8, "T"), "vee": (3, -2, "B")}),
@@ -42,13 +44,24 @@ SOURCES = ["V_setpoint", "V_run", "V_openloop", "V_dio0_pol", "V_dio1_en", "V_di
 LEG_X = [46, 60, 74, 88, 102, 116]   # left edge of each pass-bank leg block (room for the probe labels between legs)
 
 
+def base(config):
+    """'bench_ft' -> 'bench': the design this one is a variant of."""
+    return config.split("_")[0]
+
+
+def fast(config):
+    """True for the designs with the fast turn-off parts (5KP30A + DSS2X101-015A)."""
+    return config.endswith("_ft")
+
+
 def x_b(config):
     """x of the bridge's right leg (node B); the MOT pair needs a wider coil row."""
-    return 77 if config == "bench" else 99
+    return 77 if base(config) == "bench" else 99
 
 
 def place(config):
     xb = x_b(config)
+    ft, config = fast(config), base(config)
     P = {
         # supply and leads (top left)
         "PSU": (0, 62, 0), "R_lead": (12, 84, 0), "L_lead": (22, 84, 0), "R_lead_ac": (22, 90, 0),
@@ -75,11 +88,15 @@ def place(config):
     for k, name in enumerate(SOURCES):
         P[name] = (-86 + 12 * k, -24, 0)
     P["V_setpoint2"] = (-86, -18, 0)      # in series on top of V_setpoint
+    if ft:
+        P["D_block"] = (32, 83, 0)            # in the supply + lead, just before the rail bar
+        P["D_clamp"] = (xb + 18, 56, 0)       # rail bar (top) to return bar (bottom), right of the bridge
     return P
 
 
 def wires(config):
     xb = x_b(config)
+    ft, config = fast(config), base(config)
     W = {
         # ---- supply -> rail bar -------------------------------------------
         "sup_p": [["PSU.p", ("y", 84), "R_lead.1"]],
@@ -120,14 +137,24 @@ def wires(config):
         W["c1"] = [["L_coil1.2", "R_coil1.1"]]
         W["mid_a"] = [["R_coil1.2", "LEM.in"], ["RV1.b", ("x", 60), ("y", 50)]]
         W["coil_a"] += [["RV2.a", ("x", 73), ("y", 50)]]
+    if ft:
+        # the lead now ends at the blocking diode; the rail bar starts behind it
+        W["rail_in"] = [["L_lead.2", "D_block.a"], ["R_lead_ac.2", ("x", 27), ("y", 84)]]
+        W["rail"] = [["D_block.k", ("x", xb), "Q2.d"], ["Q1.d", ("y", 84)], ["D_clamp.k", ("y", 84), ("x", xb)]]
+        W["ret"] += [["D_clamp.a", ("y", 30), ("x", xb)]]
+        if config == "mot":       # one damper resistor (frees a part for the 50-component limit)
+            del W["dmp1"]
+            W["dmp2"] = [["R_damp1.2", "C_damp.1"]]
     return W
 
 
 def texts(config):
     xb = x_b(config)
+    ft, config = fast(config), base(config)
+    extra = [(27, 80, "DSS2X101-015A"), (xb + 22, 58, "5KP30A")] if ft else []
     supply = "SUPPLY: bench supply 5 V / 3 A and its leads" if config == "bench" else "SUPPLY: Mean Well SE-600-5 and 4/0 cable"
     coil = "COIL: test coil, RC damper, varistor, LEM" if config == "bench" else "MOT COILS: varistor per coil, LEM between, PROPOSED damper"
-    return [
+    return extra + [
         (0, 96, supply),
         (40, 96, "RAIL BAR"),
         (40, 88, "H-BRIDGE: Q1-Q4 = IXFN420N10T + UCC5350SB driver + RO-0515S supply"),

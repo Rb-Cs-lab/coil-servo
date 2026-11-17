@@ -115,5 +115,5 @@ def draw(config):
 
 
 if __name__ == "__main__":
-    for c in (sys.argv[1:] or ["bench", "mot"]):
+    for c in (sys.argv[1:] or ["bench", "mot", "bench_ft", "mot_ft"]):
         print("wrote", draw(c))

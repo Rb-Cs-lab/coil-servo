@@ -329,3 +329,45 @@ Rb p n 10k
 Rctl ctl 0 1Meg
 Glink a b cur='v(a,b)*(1e-9+(0.5+0.5*tanh(20*(v(ctl)-0.5)))*10)'
 .ends TEST_LINK
+
+
+* ======================================================================
+* FAST TURN-OFF PARTS (docs/future_upgrades.md section 6). Planned, NOT
+* fitted on the bench yet. Used only by coil_servo_fast_turnoff.aedt.
+* ======================================================================
+
+* ----------------------------------------------------------------------
+* Littelfuse 5KP30A unidirectional TVS, rail bar (k, cathode) to return
+* bar (a, anode). Stands off 30 V; breakdown 33.3-36.8 V at the test
+* current (taken as 35 V at 5 mA); clamps 48.4 V at 103 A (10/1000 us
+* pulse) -- DATASHEET, typed from memory: check against the PDF.
+* Same smooth power law as the 5KP12CA: I = 5 mA (V/35)^31.
+* Forward direction (return bar above rail bar) it is an ordinary diode,
+* ~2 V at 100 A (ASSUMED). Capacitance ASSUMED.
+* ----------------------------------------------------------------------
+.subckt TVS_5KP30A k a CJ=5n
+Gt k a cur='5e-3*pow(max(v(k,a),0)/35.0,31)'
+Dfwd a k DTVS30F
+Cj k a CJ
+Rp k a 100Meg
+.model DTVS30F d is=1n n=1.5 rs=10m
+.ends TVS_5KP30A
+
+
+* ----------------------------------------------------------------------
+* IXYS DSS2X101-015A dual Schottky diode (2 x 100 A, 150 V, SOT-227),
+* both halves in parallel, in the supply's + lead: a = supply side,
+* k = rail bar. Lets supply current through, stops coil current from
+* flowing back into the supply.
+* Forward drop per half: 0.31 V at 1 A, 0.67 V at 50 A, 0.94 V at 100 A
+* (DATASHEET-like: 0.77 V at 100 A hot, more when cold -- typed from
+* memory, check against the PDF). So ~0.67 V and ~67 W at 100 A total.
+* Capacitance and reverse leakage ASSUMED.
+* ----------------------------------------------------------------------
+.subckt SCHOTTKY_DSS2X101 a k CJ=1n RLEAK=200k
+D1 a k DSCH101
+D2 a k DSCH101
+Cj a k '2*CJ'
+Rl a k RLEAK
+.model DSCH101 d is=20u n=1.1 rs=5m bv=170 ibv=1m
+.ends SCHOTTKY_DSS2X101

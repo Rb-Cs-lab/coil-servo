@@ -99,10 +99,10 @@ p.cap { color: #444; margin-top: 2px; }
 <tr><td></td><td>OUT1 afterwards</td><td>winds up to 4100 counts</td><td>4100 (the clamp)</td><td>the firmware cannot see the safety board</td></tr>
 <tr><td>IN1 signal lost at a 2 A hold</td><td>peak coil current</td><td>4.4 A</td><td>4.7-5 A (11-12 surge)</td><td>supports the lost-IN1 explanation</td></tr>
 <tr><td></td><td>rail sag</td><td>4.6 -&gt; 0.0 V</td><td>4.3 -&gt; 1.9 V</td><td>bench supply in current limit</td></tr>
-<tr><td>MOT PREDICTION: OUT1 -&gt; 0, bridge closed</td><td>start current / time to zero</td><td>86 A / 1.56 ms</td><td>(not built) repo model ~1.3 ms from 100 A</td><td>bank law extrapolated</td></tr>
-<tr><td></td><td>drain bar peak</td><td>19.1 V</td><td>-</td><td>5KP12CA clamps</td></tr>
-<tr><td>MOT PREDICTION: bridge opened at current</td><td>start current / time to zero</td><td>86 A / 175 us</td><td>(not built) offline estimate 182 us</td><td></td></tr>
-<tr><td></td><td>rail bar peak</td><td class='bad'>170 V</td><td>(not built) offline estimate 111-113 V</td><td>do not trust: the same model over-predicts this spike on the bench</td></tr>
+<tr><td>MOT PREDICTION: OUT1 -&gt; 0, bridge closed</td><td>start current / time to zero</td><td>101 A / 1.73 ms</td><td>(not built) repo model ~1.3 ms from 100 A</td><td>bank law extrapolated</td></tr>
+<tr><td></td><td>drain bar peak</td><td>19.2 V</td><td>-</td><td>5KP12CA clamps</td></tr>
+<tr><td>MOT PREDICTION: bridge opened at current</td><td>start current / time to zero</td><td>101 A / 178 us</td><td>(not built) offline estimate 182 us</td><td></td></tr>
+<tr><td></td><td>rail bar peak</td><td class='bad'>171 V</td><td>(not built) offline estimate 111-113 V</td><td>do not trust: the same model over-predicts this spike on the bench</td></tr>
 </table>
 <h2>Which bench tests are simulated</h2><table><tr><th>Log section</th><th>Bench test</th><th>In the model?</th><th>Remark</th></tr>
 <tr><td>0a</td><td>Transistor thresholds</td><td>no</td><td>single-transistor bench measurement; its results are inputs of the model</td></tr>

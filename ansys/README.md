@@ -12,13 +12,15 @@ represented by a simple stand-in (see "What is and is not modelled").
 | File | What it is |
 |---|---|
 | `coil_servo.aedt` | The Ansys project. Two circuit designs: **bench** (as built) and **mot** (the two MOT coils on the SE-600-5 — planned, not built) |
+| `coil_servo_fast_turnoff.aedt` | A separate project: the same two circuits **plus the planned fast turn-off parts** (5KP30A surge protector and DSS2X101-015A blocking diode — not fitted yet). Designs **bench_ft** and **mot_ft**. See "The fast turn-off version" below |
 | `models/coil_servo_parts.lib` | One model per purchased part (text file, readable) |
-| `build_project.py` | Rebuilds `coil_servo.aedt` from the parts table inside it |
+| `build_project.py` | Rebuilds the project files from the parts table inside it |
 | `layout.py` | Where each part sits on the sheet and how the wires run |
 | `preview_layout.py` | Draws `results/schematic_*.png`, a picture of the schematic, without Ansys |
 | `run_sims.py` | Runs the test scenarios and saves the waveforms |
 | `compare.py` | Plots model against bench and writes `results/comparison.html` |
 | `results/comparison.html` | **Start here**: table and plots, model vs bench |
+| `compare_fast_turnoff.py`, `results/fast_turnoff.html` | The fast turn-off version against the circuit as built (predictions only) |
 
 ## Opening the project
 
@@ -146,6 +148,7 @@ Rectangular Plot, pick e.g. `V(i_meas)`.
 | `vt_pass` | Pass-transistor threshold: 3.892 cold, 3.868 warm | 3.892 |
 | `V_opamp` | Gate amplifier supply (12.01 V now, 5.18 V before 11-13) | 12.01 V |
 | `V_sup`, `I_lim`, `C_sup`, `R_lead`, `L_lead` | Supply and its leads | bench values |
+| `R_reg` | How much the supply voltage sags per amp | 20 mΩ bench, 0.5 mΩ SE-600-5 (both ASSUMED) |
 | `sp2_amps`, `t_sp2_on`, `slew2` | A second setpoint step added to the first (step down, or sign change for a reversal) | 0 = not used |
 | `snap_amps` | Zero-setpoint snap threshold; −1 = snap off (firmware before rev 5) | 0.1 |
 | `ol_step`, `t_ol_step`, `t_ol_ramp` | A step (or slow sweep) of the fixed OUT1 command | 0 = not used |
@@ -200,6 +203,68 @@ Does **not** match, or only partly:
   model's does not.
 - Smaller points: swing below zero after switch-off (−0.09 A against
   −0.2 A), drain bar with the bridge open (0 V against −0.5 V).
+
+## The fast turn-off version (`coil_servo_fast_turnoff.aedt`)
+
+A second project file, kept apart from the as-built one so the two can be
+compared. It is the same circuit with the two parts planned in
+[docs/future_upgrades.md](../docs/future_upgrades.md) section 6 added.
+**Neither part is fitted yet: everything this file gives is a prediction.**
+
+| Part | Name on the sheet | Where it is wired |
+|---|---|---|
+| IXYS DSS2X101-015A, a double Schottky diode (a diode with a low forward voltage), both halves in parallel | `D_block` | In the supply's + lead, just before the rail bar: lead → diode → rail bar. Supply current passes; coil current cannot flow back into the supply |
+| Littelfuse 5KP30A, a surge protector (TVS diode: conducts only above about 35 V) | `D_clamp` | Between the rail bar (cathode, the marked end) and the return bar (anode) |
+
+What they are for: when the bridge is opened while current flows, the coil
+current goes through two bridge diodes onto the rail bar. Today it then
+flows back into the supply at about 7 V, which is slow. With the diode
+blocking that way, the rail bar rises until the 5KP30A conducts, so the
+coil works against 35–48 V and the current falls several times faster.
+
+Designs: **bench_ft** (bench supply, test coil) and **mot_ft** (SE-600-5,
+both MOT coils). In mot_ft the damper is drawn with one resistor instead
+of two, because the Student licence allows only 50 parts per design (the
+proposed MOT damper has one resistor anyway).
+
+Build and run:
+
+    ansys\.venv\Scripts\python.exe ansys\build_project.py bench_ft mot_ft
+    ansys\.venv\Scripts\python.exe ansys\run_sims.py ft_step_2A ft_turnoff ft_bridge_open ft_bridge_open_nodamper mot_ft_turnoff_100A mot_ft_bridge_open_100A mot_ft_bridge_open_100A_nodamper
+
+(`build_project.py` rebuilds only the project files of the designs named;
+`run_sims.py` with no names runs only the as-built scenarios.)
+
+Then `ansys\.venv\Scripts\python.exe ansys\compare_fast_turnoff.py` writes
+`results/fast_turnoff.html` (table and three plots). What the model
+predicts (2026-11-17):
+
+- **MOT pair, bridge opened from ~92 A:** current below 10 % after about
+  30 µs, against 1.4 ms with today's switch-off (bridge kept closed). The
+  bridge sees about 50 V.
+- **The damper works against it.** With the proposed damper (1.6 Ω +
+  22 µF) the damper capacitor charges to about 50 V and pushes about 12 A
+  back through the coils in the wrong direction; the current is within 2 %
+  only after 108 µs. With no damper the fall is clean (30 µs) but a fast
+  ringing of about 1 A remains. The damper needs to be chosen again for
+  this version. (The model has no losses at those frequencies, so real
+  ringing will die sooner.)
+- **Cost of the blocking diode:** 0.64 V at ~90 A (about 60 W of heat).
+  100 A is still reached at the same OUT1 command; the voltage left across
+  the pass bank at 100 A falls from 3.1 V to 2.5 V, and the rise to 90 A
+  at a fixed command takes 0.56 ms instead of 0.46 ms.
+- **The bench coil with its damper cannot show the effect:** at 2 A the
+  damper takes the whole current at about 6 V and the 5KP30A never
+  conducts. Without the damper the 2 A is gone in 2 µs, followed by a
+  ±0.9 A ringing at about 170 kHz that the model does not damp.
+- **The rail bar stays charged** (about 30 V, falling slowly) after the
+  bridge has been opened, because the diode stops it emptying into the
+  supply.
+- With the bridge kept closed, nothing changes.
+
+Numbers used: 5KP30A 35 V at 5 mA, 48.4 V at 103 A; DSS2X101-015A 0.67 V
+at 100 A through both halves — both DATASHEET, typed from memory, to be
+checked against the PDFs. Capacitances and leakage ASSUMED.
 
 ## Where each part is, and where its numbers come from
 
