@@ -280,5 +280,8 @@ BENCH_CHANNELS = {
         # V_th's thermal drift, and could block the first open-loop
         # measurement. On the bench the supply's CC limit bounds the current.
         out_clamp_counts=4000,
+        # blocking diode + 5KP30A fitted on the bench 2026-11-17
+        # (docs/fast_turnoff.md; meter checks F0 passed)
+        fastoff_fitted=True,
     ),
 }
