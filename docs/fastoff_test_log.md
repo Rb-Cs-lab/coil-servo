@@ -28,7 +28,10 @@
 | P7 Noise on the current reading | Repeat of the zero-current noise reference | [passed] | Unchanged in all three conditions; no new tones |
 | P8 Fastest full reversal | Repeat of the 11-13 test | [passed] | Same curves; within 2 % after 0.99 ms (before 0.95 ms) |
 | P9 Steps | Repeat of the step responses | [passed, open finding] | Steps up unchanged; a 7 kHz wobble grows above 2 A (0.1 A at 2.2 A) |
-| F3 / F4 Bridge opened at current on the old firmware | First fast switch-off, damper on / off | [skipped] | Went straight to the new firmware (decided 11-17); F4 (seeing the TVS clamp) still open |
+| F3 Bridge opened at current on the old firmware | First fast switch-off | [skipped] | Went straight to the new firmware (decided 11-17) |
+| F4 The TVS clamp (damper disconnected) | Does the TVS work? | [passed, one finding] | Clamp 45–50 V for ≈ 1 µs; current below 2 % in ≈ 19 µs; the rail bar stays at ≈ 22 V afterwards (small charge; re-close pulse 0.7–1 A for 16 µs) — fit a bleeder |
+| Sensor lost its supply | Supply switched off while rewiring | [incident] | LEM powered from the coil supply: IN1 at −5 V for minutes; trip caught it; repaired, IN1 fine |
+| Circuit model: MOT damper | The reversed current after a fast switch-off at 100 A | [for Test 4] | Proposed damper: −12.5 A for 90 µs; none: ≈ 1 A; try no damper first |
 | Rev 6 loaded (11-17) | New firmware with the fast switch-off options | [done] | Build met timing (+0.084 ns); board reports map rev 6, commit 92d4f15 |
 | Switch-off burst on the current reading | Why the first switch-off on rev 6 tripped | [open finding] | Pickup at the switch-off edge now up to ±5 A for 1–2 samples (once 4 in a row with the scope fully wired → trip); not real current |
 | IN1 lost during rewiring | A run with the current reading disconnected | [incident] | The controller drove the transistors fully on; the supply's 3 A limit held the current. Reconnected and checked |
@@ -38,15 +41,17 @@
 | F5 New firmware: fast switch-off | Fast flips, fast stops, bridge opened on a zero setpoint | [passed] | 2 A → 0 in 27–35 µs with the bridge opened (154 µs closed); every case ends correctly, no trips |
 | F6 Safety-board cut-off at current | Repeat of 3h: energy now into the TVS, not the supply | [planned] | — |
 
-## At a glance: switching times, old setup vs new [5–9× faster]
+## At a glance: switching times, old setup vs new [faster to zero, not much faster to settle]
 
-**Why.** The point of the blocking diode, the TVS and firmware rev 6 is faster switching. This compares every kind of switch-off measured on the bench, old setup against new, all measured the same way from the board's own recordings: the time from the current leaving 90 % of 2 A until it is below 2 % (40 mA), using 16 µs averages.
+**Why.** The point of the blocking diode, the TVS and firmware rev 6 is faster switching. This compares every kind of switch-off measured on the bench, old setup against new, all measured the same way from the board's own recordings: the time from the current leaving 90 % of 2 A until it is first below 2 % (40 mA), using 16 µs averages.
+
+**Correction (11-17, after a remark from the user):** "first below 2 %" overstates the gain. With the bridge opened the current then swings ≈ −0.3 A below zero (the coil ringing with the damper's capacitor) and only comes back ≈ 0.13 ms later. Measured as **"stays within ±5 % of zero"** (64 µs averages): bridge closed 206–215 µs, bridge opened 130–136 µs — **≈ 1.6× faster, not 5–9×**; within ±2 % there is no clear gain on the bench (the damper's slow tail and pickup on the reading). Without the damper (F4 below) there is no slow swing, but the reading carries pickup for ≈ 80 µs. On the MOT coils the picture differs (see the circuit-model results below).
 
 ![Switching times old vs new, bar chart](img/fastoff/compare_switching_bars.png)
 
 *Median times (log scale). Grey: old setup (bridge closed while the current falls). Blue: new setup, bridge opened at current. For the shot sequence: median of 50 shots each.*
 
-| Event (bench, 2 A, damper on) | Old setup | New: bridge opened | Faster by |
+| Event (bench, 2 A, damper on) | Old setup | New: bridge opened | Faster to first reach zero by |
 |---|---|---|---|
 | Setpoint 2 A → 0 | 1306 µs before the zero snap (11-12); 158–207 µs with it (bridge closed) | **28 µs** (`fastoff_zero`) | 6–7× (47× vs before the snap) |
 | Stop | 270 µs (11-13); 144 µs (11-17, bridge closed) | **30 µs** (`fastoff_stop`) | 5–9× |
@@ -285,12 +290,58 @@ Straight across the bridge, banded end (cathode) on the rail bar, other end on t
 
 **Why it matters at 100 A.** On the MOT coils the TVS holds the coils at ≈ −40 V while the current falls, so the damper's capacitor charges to that voltage and then rings back through the coils: a rough estimate gives a reversed current of the order of 10–20 A for a few tens of µs — a brief reversed MOT field after every fast switch-off. Requested from the circuit-model session (11-17): simulate this for the bench (check against these measurements) and for the MOT pair with the proposed damper, without a damper, and with other R/C values or damper types that limit the ring-back while still damping the 10–20 kHz hold ringing. If the MOT coils do not ring during a hold (Test 4), the damper may not be needed at all.
 
+## F4 · The TVS clamp itself (damper disconnected) [passed, one finding]
+
+**Why.** With the damper connected the TVS never conducts at bench currents (the damper takes the coil's current at ≈ 6 V; the TVS needs ≈ 35 V). The TVS is what matters at 100 A, so it was checked here once at low energy with the damper removed.
+
+**How.** Damper disconnected; 2 A (and 1 A) hold, then `fastoff_zero` opens the bridge. Scope: rail bar and return bar (grounds on the source bar), trigger on the rail bar rising. (Before this run the sensor chain failed — see the incident below — and was repaired; IN1 re-zeroed, 0.5 A check 0.499 A.)
+
+![F4: TVS clamp with the damper disconnected](img/fastoff/f4_tvs_clamp.png)
+
+*Top: the first 45 µs (5 µs/div). Middle: the same at 200 µs/div. Rail bar (red), return bar (blue), the difference = the voltage across the TVS (green), and IN1 on the scope (grey, mostly pickup). Bottom: the board's own current reading.*
+
+**The TVS works.** The voltage across it jumps to **45–50 V for ≈ 1 µs**, rings around 30 V at ≈ 400 kHz for a few µs, then drops below its 33 V threshold. That is above the 34–36 V expected at 2 A (the fast edge plus the wiring's inductance) and half the transistors' 100 V rating; watch it at 100 A (datasheet clamp ≤ 48.4 V at 103 A, plus the overshoot).
+
+**The current** is below 2 % in ≈ 19 µs (board, 1 µs samples; the sensor and sampling are too slow to show the ≈ 3 µs the circuit model predicts), with no slow negative swing (lowest −0.15 A in 16 µs averages). The reading carries a strong ≈ 400 kHz ring for ≈ 80 µs — pickup from the ringing rail bar (a real 1 A swing at 400 kHz in this coil would need > 100 V).
+
+**Finding: the rail bar stays charged.** After the clamp it sits at **20–23 V for at least 1.8 ms**, falling only slowly: the blocking diode keeps the charge from draining back into the supply. The circuit model shows this is a small charge (≈ 1 µC) on the parts' own capacitance (tens of nF: TVS, transistors, diode), not a capacitor storing the coil's energy — the coil's energy (0.1 mJ) goes into the TVS. Why it holds at ≈ 23 V rather than the TVS's ≈ 33 V is not explained yet (best guess: reverse recovery of the bridge transistors' built-in diodes during the 400 kHz ring).
+
+**Re-close check.** With the rail bar charged to 22 V, the bridge was closed again with OUT1 at zero (by switching `fastoff_zero` off while the setpoint stayed zero). The rail bar dropped to the supply voltage within ≈ 2 µs and a current pulse of **0.7–1.0 A for ≈ 16 µs** went through the coil. The circuit model predicted ≈ 0.7–0.9 A for tens of nF and 1.8 A for 136 µs if 0.3 µF were there: the measurement confirms the small capacitance. Harmless, but not the state the controller expects; a **1 kΩ, ¼ W bleeder across the blocking diode** (model: rail bar back at the supply in ≈ 40 µs, pulse 0.2 A on the bench) is cheap and carries nothing in normal running.
+
+## Incident: the current sensor lost its supply [incident]
+
+**What happened.** While the damper was being disconnected the bench supply was switched off. The current sensor (LEM) is powered from that same supply, so its amplifier went to its negative limit: IN1 sat at **−5 V** (five times the Red Pitaya's ±1 V input range) for several minutes and the board read its range limit. The firmware's over-current trip caught the bogus reading at once; no current was driven. The sensor chain needed repair after the supply came back; a Red Pitaya power cycle and firmware reload were done along the way (not needed in the end). The Red Pitaya's IN1 survived: it reads normally again, re-zeroed (+7 steps), 0.5 A check 0.499 A.
+
+**Lessons.** (1) Power the LEM and its amplifier from their own supply, so switching the coil supply off cannot put −5 V on IN1 — and so the switch-off edge on the coil supply cannot reach the sensor (possibly part of the larger switch-off burst). (2) A firmware check for "current reading stuck at its limit" (with the stall-detection item already listed). (3) On the PC side: a scope reading taken at a sensitive scale clips silently — two clipped readings (−22 / −34 mV for a real −5 V) briefly misled us; always check a channel's range before trusting it.
+
+## Circuit model: the negative swing and the MOT damper (Ansys session, 11-17) [for Test 4]
+
+**Why.** The negative swing after a fast switch-off is a ring of the coil with the damper's capacitor. On the bench it is −0.3 A; at 100 A on the MOT coils it could be large. The circuit-model session simulated the bench (to check against these measurements) and the MOT pair with and without dampers. Full report: `ansys/results/damper_study.html`.
+
+![Circuit model: MOT damper options](img/fastoff/ansys_damper_options.png)
+
+*Circuit model, MOT pair, bridge opened at 100 A: current after the switch-off for the damper options.*
+
+| MOT pair, bridge opened at 100 A (model) | Current below 10 % | Reversed current |
+|---|---|---|
+| Proposed damper 1.6 Ω + 22 µF | 32 µs | **−12.5 A** for ≈ 90 µs |
+| No damper | 30 µs | ≈ 1 A of fast ringing |
+| 1.6 Ω + 100 µF | 33 µs | −4.3 A, long tail (≈ 0.4 ms to within 0.5 A) |
+| 1.6 Ω + 22 µF, plus a ≈ 6 V two-way TVS across the capacitor | 32 µs | −3.4 A, gone in ≈ 0.12 ms |
+
+- **Bench check:** the model reproduces the −0.3 A depth; its timing matches if the test coil and damper capacitor are about twice their listed values (≈ 57 µH, ≈ 17 µF) — worth an LCR meter on both.
+- **The resistor sets the reversed current** (not the capacitor); a bigger resistor damps the hold ringing less. A one-way (diode) damper is not useful.
+- **TVS current at 100 A** peaks at 160–190 A for ≈ 2 µs (the supply cable's current must stop too) — scope it in Test 4.
+- **Recommendation:** in Test 4, first look for ringing during holds with **no damper** (at 5–20 A as well as 100 A); if there is none, fit none — cleanest switch-off, no reversed field. If one is needed: 1.6 Ω + 22 µF with a ≈ 6 V two-way TVS across the capacitor, or 1.6 Ω + 100 µF. Parts: pulse-rated resistor (20–40 mJ, ≈ 1.6 kW for ≈ 30 µs), film capacitor ≥ 63 V.
+
 ## Next
 
 - **To-do for the 100 A version (Test 4):** measure the switch-off burst on the current reading at 100 A (with and without the bridge opened), then set `trip_ticks` for `[mot]` (now 4; the bench uses 6). Each extra reading lets a real over-current rise ≈ 0.3 A further on the MOT coils.
-- **F4:** the TVS clamp itself, with the damper disconnected: ≈ 33–36 V between the rail bar and the return bar for a few µs, current gone in ≈ 3 µs.
 - **F6:** safety-board cut-off at 2 A (pull the heartbeat): energy into the TVS / damper, no supply jump.
 - Repeat the 50-shot sequence with `fastoff_zero` on (the way a MOT sequence would use it).
 - Choose which options to use in production; then merge `rev6-test` into main (until then the PC software on main cannot write to this board).
 - The 7 kHz wobble above 2 A on the bench.
-- MOT damper: decide from the circuit-model results (reversed current after a fast switch-off) and from whether the MOT coils ring during a hold in Test 4.
+- MOT damper (Test 4): look for hold ringing with no damper at 5–20 A and 100 A first; fit none if there is none, otherwise 1.6 Ω + 22 µF with a ≈ 6 V two-way TVS across the capacitor (circuit model).
+- Fit a 1 kΩ, ¼ W bleeder across the blocking diode (the rail bar otherwise stays at ≈ 20–30 V after a fast switch-off).
+- Power the LEM and its amplifier from their own supply (not the coil supply).
+- LCR-meter the test coil and the damper's 10 µF capacitor (the model fits ≈ 57 µH and ≈ 17 µF).
