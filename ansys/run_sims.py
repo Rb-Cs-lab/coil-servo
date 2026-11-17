@@ -125,6 +125,72 @@ SCENARIOS = {
     "mot_ft_bridge_open_100A_nodamper": ("mot_ft", "Tran_3ms", "3ms", {"ol_kcounts": "6.04", "trip_amps": "150", "t_en_off": "600us", **NO_DAMPER}, "PREDICTION: bridge opened at ~100 A, no damper"),
 }
 
+# --- the reversed current after a bridge-opened switch-off, and the damper (2026-11-17, parts now fitted) ---
+# Bench: the measured case (logs/fastoff/f5_rev6_cases.json): 2 A hold, the bridge opened and OUT1 zeroed together.
+FASTOFF_BENCH = {**HOLD_2A, "t_en_off": "1500us", "t_run_off": "1500us"}
+# MOT pair: ~100 A reached and steady, then the same at 2 ms.
+FASTOFF_MOT = {"ol_kcounts": "6.04", "trip_amps": "150", "t_en_off": "2ms", "t_run_off": "2ms"}
+SWEEP_C_UF = (0.47, 1, 2.2, 4.7, 10, 22, 47, 100, 220)      # damper capacitor values tried on the MOT pair
+SWEEP_K = (0.5, 1, 2, 4)                    # damper resistor as a multiple of 2*sqrt(L/C) (1 = critical damping), L = 16 uH
+RING_COUNTS = {5: "4.1405", 20: "4.6406", 100: "6.0404"}      # OUT1 (thousands of counts) for these currents, from mot_ft_scan
+
+
+def sweep_r(c_uf, k):
+    return k * 2 * (16e-6 / (c_uf * 1e-6)) ** 0.5
+
+
+def _kick(counts):
+    return {"ol_kcounts": counts, "ol_step": "0.010", "t_ol_step": "1.5ms", "cgd_pass": "17e-9"}
+
+
+def _tag(c_uf, k):
+    return f"C{c_uf:g}_k{k:g}".replace(".", "p")
+
+
+SCENARIOS.update({
+    "ft_fastoff_2A": ("bench_ft", "Tran_3ms", "3ms", dict(FASTOFF_BENCH), "bridge opened at a 2 A hold, damper fitted (measured 11-17: tests R3, R4)"),
+    "ft_fastoff_2A_L45": ("bench_ft", "Tran_3ms", "3ms", {**FASTOFF_BENCH, "L_coil": "45uH"}, "the same with the coil taken as 45 uH"),
+    "ft_fastoff_2A_fit": ("bench_ft", "Tran_3ms", "3ms", {**FASTOFF_BENCH, "L_coil": "57uH", "C_damp": "17uF"}, "the same with the coil and capacitor values that fit the measured swing (57 uH, 17 uF)"),
+    # the same kick test on the bench circuit, to see how much damping "cured on the bench" is in this model
+    "ft_ring_kick_nodamper": ("bench_ft", "Tran_3ms", "3ms", {**_kick("3.935"), "trip_amps": "10", **NO_DAMPER}, "ringing after a small OUT1 step at ~1.9 A on the bench coil, no damper"),
+    "ft_ring_kick_damper": ("bench_ft", "Tran_3ms", "3ms", {**_kick("3.935"), "trip_amps": "10"}, "the same with the bench damper 3.2 ohm + 10 uF"),
+    "ft_fastoff_2A_nodamper": ("bench_ft", "Tran_3ms", "3ms", {**FASTOFF_BENCH, **NO_DAMPER}, "PREDICTION for test F4: the same with the damper removed"),
+    "mot_ft_off_damper": ("mot_ft", "Tran_3ms", "3ms", dict(FASTOFF_MOT), "PREDICTION: bridge opened at 100 A, proposed damper 1.6 ohm + 22 uF"),
+    "mot_ft_off_nodamper": ("mot_ft", "Tran_3ms", "3ms", {**FASTOFF_MOT, **NO_DAMPER}, "PREDICTION: bridge opened at 100 A, no damper"),
+})
+# --- what is left on the rail bar after a bridge-opened switch-off, and closing the bridge onto it (test F4, 11-17) ---
+_F4 = {**FASTOFF_BENCH, **NO_DAMPER}
+_RECLOSE = {"en_gap": "300us"}              # bridge enabled again 300 us after it opened; OUT1 stays at zero
+_BLEED = {"R_bleed": "1kOhm"}               # 1 kOhm across the blocking diode
+_C03 = {"C_rail": "0.3e-6"}                 # as if 0.3 uF sat between rail bar and return bar
+for _name, _design, _base, _what in (("ft_f4", "bench_ft", _F4, "bench, 2 A, no damper"),
+                                     ("mot_ft_rail_nodamper", "mot_ft", {**FASTOFF_MOT, **NO_DAMPER}, "MOT, 100 A, no damper"),
+                                     ("mot_ft_rail_damper", "mot_ft", dict(FASTOFF_MOT), "MOT, 100 A, proposed damper")):
+    for _sfx, _extra, _txt in (("", {}, "bridge stays open"), ("_reclose", _RECLOSE, "bridge closed again after 300 us"),
+                               ("_reclose_bleed", {**_RECLOSE, **_BLEED}, "the same with 1 kOhm across the blocking diode"),
+                               ("_c0p3", _C03, "with 0.3 uF on the rail bar"), ("_c0p3_reclose", {**_C03, **_RECLOSE}, "0.3 uF on the rail bar, bridge closed again after 300 us"),
+                               ("_c0p3_reclose_bleed", {**_C03, **_RECLOSE, **_BLEED}, "0.3 uF, closed again after 300 us, 1 kOhm across the blocking diode")):
+        SCENARIOS[_name + _sfx] = (_design, "Tran_3ms", "3ms", {**_base, **_extra}, f"rail bar after a fast switch-off: {_what}, {_txt}")
+SCENARIOS["ft_f4_L57"] = ("bench_ft", "Tran_3ms", "3ms", {**_F4, "L_coil": "57uH"}, "test F4 with the coil taken as 57 uH")
+
+for _c in SWEEP_C_UF:
+    for _k in SWEEP_K:
+        _rc = {"R_damp1": f"{sweep_r(_c, _k):.3f}ohm", "C_damp": f"{_c:g}uF"}
+        SCENARIOS[f"mot_ft_off_{_tag(_c, _k)}"] = ("mot_ft", "Tran_3ms", "3ms", {**FASTOFF_MOT, **_rc},
+                                                  f"PREDICTION: bridge opened at 100 A, damper {sweep_r(_c, _k):.2f} ohm + {_c:g} uF")
+        # does this damper still stop the hold ringing? Fixed OUT1 at ~5 A and ~20 A (where the model rings most),
+        # 17 nF drain-gate capacitance as in the bench ringing runs, a +10 count step at 1.5 ms as the kick
+        for _a in (5, 20):
+            SCENARIOS[f"mot_ft_ring{_a}_{_tag(_c, _k)}"] = ("mot_ft", "Tran_3ms", "3ms", {**_kick(RING_COUNTS[_a]), "trip_amps": "150", **_rc},
+                                                           f"PREDICTION: ringing after a small OUT1 step at ~{_a} A, damper {sweep_r(_c, _k):.2f} ohm + {_c:g} uF")
+for _a, _u in RING_COUNTS.items():
+    SCENARIOS[f"mot_ft_ring_nodamper_{_a}A"] = ("mot_ft", "Tran_3ms", "3ms",
+                                                {"ol_kcounts": _u, "ol_step": "0.010", "t_ol_step": "1.5ms", "cgd_pass": "17e-9", "trip_amps": "150", **NO_DAMPER},
+                                                f"PREDICTION: ringing after a small OUT1 step at ~{_a} A, no damper")
+    SCENARIOS[f"mot_ft_ring_damper_{_a}A"] = ("mot_ft", "Tran_3ms", "3ms",
+                                              {"ol_kcounts": _u, "ol_step": "0.010", "t_ol_step": "1.5ms", "cgd_pass": "17e-9", "trip_amps": "150"},
+                                              f"PREDICTION: the same with the proposed damper")
+
 
 def defaults(config):
     v = {k: val for k, (val, _) in COMMON_VARS.items()}

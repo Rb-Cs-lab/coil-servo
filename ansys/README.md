@@ -21,6 +21,7 @@ represented by a simple stand-in (see "What is and is not modelled").
 | `compare.py` | Plots model against bench and writes `results/comparison.html` |
 | `results/comparison.html` | **Start here**: table and plots, model vs bench |
 | `compare_fast_turnoff.py`, `results/fast_turnoff.html` | The fast turn-off version against the circuit as built (predictions only) |
+| `damper_study.py`, `damper_model.py`, `results/damper_study.html` | The reversed current after a bridge-opened switch-off: bench measurement against the model, and MOT damper options |
 
 ## Opening the project
 
@@ -209,7 +210,7 @@ Does **not** match, or only partly:
 A second project file, kept apart from the as-built one so the two can be
 compared. It is the same circuit with the two parts planned in
 [docs/future_upgrades.md](../docs/future_upgrades.md) section 6 added.
-**Neither part is fitted yet: everything this file gives is a prediction.**
+**The parts were fitted on the bench on 2026-11-17; the first comparison with a measurement is in the damper section below. Everything about the MOT pair is still a prediction.**
 
 | Part | Name on the sheet | Where it is wired |
 |---|---|---|
@@ -261,6 +262,59 @@ predicts (2026-11-17):
   bridge has been opened, because the diode stops it emptying into the
   supply.
 - With the bridge kept closed, nothing changes.
+
+### The reversed current after a fast switch-off, and the damper
+
+Both parts were fitted on the bench on 2026-11-17. Opening the bridge at
+2 A gave a fast fall followed by a swing to −0.3 A: the damper's capacitor,
+charged during the fall, empties back through the coil. `damper_study.py`
+compares the model with that measurement and looks for a better MOT damper:
+
+    ansys\.venv\Scripts\python.exe ansys\run_sims.py ft_fastoff_2A ft_fastoff_2A_L45 ft_fastoff_2A_fit ft_fastoff_2A_nodamper ft_ring_kick_nodamper ft_ring_kick_damper mot_ft_off_damper mot_ft_off_nodamper
+    ansys\.venv\Scripts\python.exe ansys\damper_study.py
+
+(The damper sweep is 108 more short runs, named `mot_ft_off_C…`,
+`mot_ft_ring5_C…`, `mot_ft_ring20_C…` and `mot_ft_ring_…`; list them with
+`run_sims.py --list`.) It writes `results/damper_study.html` with three
+plots. `damper_model.py` is a small stand-alone model (coil, damper, bridge
+diodes, 5KP30A only) used for damper circuits that are not drawn in the
+Ansys project; it agrees with the Ansys circuit to within 0.2 A on the
+cases both can do.
+
+- **Bench, measured against model:** the depth of the swing is reproduced
+  (−0.33 A against −0.31 / −0.34 A measured), but with the values in the
+  project (37 µH, 3.2 Ω, 10 µF) the model's swing is about a third faster.
+  It matches with 57 µH and 17 µF: the measured swing implies a product of
+  inductance and capacitance about twice the nominal one. Worth an LCR
+  meter on the coil and on the 10 µF capacitor.
+- **Bench with the damper removed (not yet measured):** current at zero in
+  about 3 µs, 5KP30A clamping at about 42 V, then ±0.9 A ringing at
+  170 kHz that the model does not damp.
+- **MOT pair at 100 A, proposed damper 1.6 Ω + 22 µF:** 12.5 A reversed,
+  for about 90 µs. No damper: 30 µs fall and a fast ringing of about 1.4 A.
+- **Plain resistor + capacitor:** the reversed current is set by the
+  resistor in units of the critical value 2√(L/C) (12 A at 1×, 4 A at 2×,
+  1.2 A at 4×); a larger capacitor wins back the damping. 1.6 Ω + 100 µF
+  damps the model's hold ringing as well as the proposal with 4.3 A
+  reversed, but with a tail of about 0.4 ms.
+- **Other circuits (small model only):** a two-way 6 V limiter across the
+  22 µF capacitor gives 3.4 A, gone after 0.12 ms; the damper moved to
+  rail bar – return bar gives none, but leaves its capacitor charged.
+- **5KP30A:** 45–85 mJ per switch-off; peak 160–190 A for the first 2 µs,
+  because the current in the supply cable also has to stop.
+
+- **Test F4 (damper removed), measured later on 11-17:** the clamp is as
+  predicted (49 V peak, about 3 µs; model 42 V, 2.6 µs). Afterwards the
+  rail bar stays charged at 23 V (model 33 V; the difference is not
+  explained by the model). The fast rise shows the rail bar carries only
+  tens of nanofarads. Closing the bridge again onto it gives a short
+  current pulse (model: 0.9 A on the bench, 1.1 A on the MOT pair with no
+  damper); a 1 kΩ bleeder removes most of it. Two new variables in the
+  `_ft` designs: `C_rail` (capacitance rail bar – return bar) and
+  `R_bleed` (resistance across the blocking diode).
+
+The model's hold ringing dies by itself and the bench's did not, so the
+ringing test ranks dampers but does not prove one is enough.
 
 Numbers used: 5KP30A 35 V at 5 mA, 48.4 V at 103 A; DSS2X101-015A 0.67 V
 at 100 A through both halves — both DATASHEET, typed from memory, to be

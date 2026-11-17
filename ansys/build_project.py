@@ -149,6 +149,10 @@ CONFIGS = {
 # The fast turn-off designs use the same values as the designs they are built on.
 for _c in ("bench", "mot"):
     CONFIGS[_c + "_ft"] = {"vars": dict(CONFIGS[_c]["vars"])}
+    CONFIGS[_c + "_ft"]["vars"].update({
+        "C_rail": ("5e-9", "capacitance between rail bar and return bar, farads: the 5KP30A itself (5 nF ASSUMED); larger = a capacitor fitted there"),
+        "R_bleed": ("200kOhm", "resistance across the blocking diode: 200 kOhm = its own leakage (ASSUMED); 1 kOhm = a bleeder resistor fitted across it"),
+    })
 del CONFIGS["mot_ft"]["vars"]["R_damp2"]      # that design has one damper resistor, see parts()
 
 
@@ -173,9 +177,9 @@ def parts(config: str) -> list[tuple]:
         grp = "1b FAST TURN-OFF PARTS (planned, not fitted): DSS2X101-015A blocking diode, 5KP30A across the bridge input"
         P += [
             # both halves of the dual Schottky in parallel, supply side -> rail bar
-            (grp, "D_block", "SCHOTTKY_DSS2X101", {"a": "rail_in", "k": "rail"}, {}),
+            (grp, "D_block", "SCHOTTKY_DSS2X101", {"a": "rail_in", "k": "rail"}, {"RLEAK": "R_bleed"}),
             # cathode on the rail bar, anode on the return bar
-            (grp, "D_clamp", "TVS_5KP30A", {"k": "rail", "a": "ret"}, {}),
+            (grp, "D_clamp", "TVS_5KP30A", {"k": "rail", "a": "ret"}, {"CJ": "C_rail"}),
         ]
 
     # ---- H-bridge: 4 x IXFN420N10T, each with UCC5350 + RO-0515S ---------
