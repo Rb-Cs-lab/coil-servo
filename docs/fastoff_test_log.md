@@ -32,8 +32,33 @@
 | Rev 6 loaded (11-17) | New firmware with the fast switch-off options | [done] | Build met timing (+0.084 ns); board reports map rev 6, commit 92d4f15 |
 | Switch-off burst on the current reading | Why the first switch-off on rev 6 tripped | [open finding] | Pickup at the switch-off edge now up to ±5 A for 1–2 samples (once 4 in a row with the scope fully wired → trip); not real current |
 | IN1 lost during rewiring | A run with the current reading disconnected | [incident] | The controller drove the transistors fully on; the supply's 3 A limit held the current. Reconnected and checked |
+| 50 shots with `fastoff_zero` | The shot sequence with the bridge opening at the final zero | [passed] | 50 of 50; final switch-off 31 µs (bridge closed: 145 µs); holds unchanged; the edge burst reached 3 in a row above the trip level in 11 shots (trip now needs 6) |
 | F5 New firmware: fast switch-off | Fast flips, fast stops, bridge opened on a zero setpoint | [passed] | 2 A → 0 in 27–35 µs with the bridge opened (154 µs closed); every case ends correctly, no trips |
 | F6 Safety-board cut-off at current | Repeat of 3h: energy now into the TVS, not the supply | [planned] | — |
+
+## At a glance: switching times, old setup vs new [5–9× faster]
+
+**Why.** The point of the blocking diode, the TVS and firmware rev 6 is faster switching. This compares every kind of switch-off measured on the bench, old setup against new, all measured the same way from the board's own recordings: the time from the current leaving 90 % of 2 A until it is below 2 % (40 mA), using 16 µs averages.
+
+![Switching times old vs new, bar chart](img/fastoff/compare_switching_bars.png)
+
+*Median times (log scale). Grey: old setup (bridge closed while the current falls). Blue: new setup, bridge opened at current. For the shot sequence: median of 50 shots each.*
+
+| Event (bench, 2 A, damper on) | Old setup | New: bridge opened | Faster by |
+|---|---|---|---|
+| Setpoint 2 A → 0 | 1306 µs before the zero snap (11-12); 158–207 µs with it (bridge closed) | **28 µs** (`fastoff_zero`) | 6–7× (47× vs before the snap) |
+| Stop | 270 µs (11-13); 144 µs (11-17, bridge closed) | **30 µs** (`fastoff_stop`) | 5–9× |
+| Flip request first: current to zero | 143 µs (11-13) | **36 µs** (`fastoff_flip`) | 4× |
+| MOT-like shot: final 2 A → 0 (50 shots each) | 145 µs (135–150) | **31 µs** (28–40) | 4.7× |
+| Full reversal ±2 A (flip first) | 1.86 ms | 1.82 ms | same: after zero, the time is the wait for the setpoint sign change, the settle wait and the controller's rise, not the switch-off |
+| Steps up, holds, noise | unchanged (P1–P9) |
+| *MOT coils, 100 A (computer model)* | *≈ 1.3 ms (bridge closed)* | *≈ 40 µs (into the TVS)* | *≈ 30×* |
+
+![Switching traces old vs new](img/fastoff/compare_switching.png)
+
+*The traces behind the table. With the bridge opened the current drops almost straight down and then swings ≈ −0.3 A for ≈ 0.1 ms (the coil ringing with the damper's capacitor). The 11-12 bridge-closed trace (dark grey) swings further below zero. Bottom: in a full reversal the new switch-off reaches zero sooner, but the rest of the reversal is set by the wait for the second command and the settle time.*
+
+**Why the bench gain is 5–9× and the MOT gain ≈ 30×.** On the bench the coil's current goes mostly into the damper's capacitor when the bridge opens, so the damper sets the speed (≈ 25 µs). On the MOT coils at 100 A the TVS takes the current at ≈ 35–48 V and sets the speed: L·I / V ≈ 16 µH × 100 A / 40 V ≈ 40 µs, against ≈ 1.3 ms freewheeling through the bridge.
 
 ## The change: blocking diode and TVS (11-17)
 
