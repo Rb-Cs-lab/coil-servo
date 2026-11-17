@@ -4,6 +4,8 @@
 
 2026-11-02 to 2026-11-13 · Tests 0–3 of the bring-up (docs/test_campaign.md), all at low power on the bench · Test 3 uses a small bench power supply (5 V, at most 3 A) instead of the big 100 A supply, settings profile `mot_bench`, and one temporary test coil (12 turns) · firmware rev 4 (commit 103a127) until the evening of 11-12, then rev 5 (commit 275081b)
 
+**Continued in Benchtop Test Log 2** (from 11-17): the same bench after fitting the blocking diode and the TVS, with every repeated test compared to this log.
+
 ## Words used in this log
 
 - **Setpoint:** the current we ask for. **Controller:** the part of the firmware that compares the measured current with the setpoint and adjusts the output until they match ("closed loop"). "Open loop" means the output is set by hand and the controller is off.
@@ -803,7 +805,7 @@ Grouped by when they are needed. Items that have been dealt with are in the "Res
 
 - **Settings:** set the MOT's OUT1 limit from measured current (the 12 V amplifier supply no longer limits the drive); start the controller at kp ≈ 3, ki ≈ 90 per ms (Q7) and retune at the highest current that will be used; set the settle wait after a flip from the measured chamber eddy currents.
 - **Re-zero the current sensor** once the board has warmed up (day 4: zero at 8.5 counts, stored 9).
-- **Scope:** the drain bar at switch-off (surge protector level at 100 A); the spikes when the bridge opens; the switch-off spikes on the current reading (keep the trip at 4 samples in a row or more); the 200–400 kHz pickup lines with the real supply; ringing at low currents on the real coils.
+- **Scope:** the drain bar at switch-off (surge protector level at 100 A); the spikes when the bridge opens; the switch-off spikes on the current reading, then set the 100 A trip's samples-in-a-row (`trip_ticks`; 4 now, the bench uses 6 since 11-17, see Benchtop Test Log 2); the 200–400 kHz pickup lines with the real supply; ringing at low currents on the real coils.
 - **Heating without cooling water (3j)** at 100 A, to set the duty limit for the first test round.
 
 ### To understand, not blocking
