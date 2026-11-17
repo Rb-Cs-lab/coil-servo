@@ -32,6 +32,8 @@
 | Rev 6 loaded (11-17) | New firmware with the fast switch-off options | [done] | Build met timing (+0.084 ns); board reports map rev 6, commit 92d4f15 |
 | Switch-off burst on the current reading | Why the first switch-off on rev 6 tripped | [open finding] | Pickup at the switch-off edge now up to ±5 A for 1–2 samples (once 4 in a row with the scope fully wired → trip); not real current |
 | IN1 lost during rewiring | A run with the current reading disconnected | [incident] | The controller drove the transistors fully on; the supply's 3 A limit held the current. Reconnected and checked |
+| F5b Fastest reversal, bridge opened | Sign change + flip in one write, `fastoff_flip` | [passed] | 12 of 12; within 2 % of −2 A in 0.89 ms (bridge closed: 0.95–0.99 ms); now limited by the controller's rise |
+| Negative swing after a fast switch-off | Is the −0.3 A dip real? | [open finding] | Yes: the coil ringing with the damper's capacitor; at 100 A it could be 10–20 A — being simulated |
 | 50 shots with `fastoff_zero` | The shot sequence with the bridge opening at the final zero | [passed] | 50 of 50; final switch-off 31 µs (bridge closed: 145 µs); holds unchanged; the edge burst reached 3 in a row above the trip level in 11 shots (trip now needs 6) |
 | F5 New firmware: fast switch-off | Fast flips, fast stops, bridge opened on a zero setpoint | [passed] | 2 A → 0 in 27–35 µs with the bridge opened (154 µs closed); every case ends correctly, no trips |
 | F6 Safety-board cut-off at current | Repeat of 3h: energy now into the TVS, not the supply | [planned] | — |
@@ -260,6 +262,29 @@ Straight across the bridge, banded end (cathode) on the rail bar, other end on t
 
 **Result:** with the bridge opened the current falls from 2 A to zero **5–6 times faster** (27–35 µs instead of 154 µs). On the bench the damper sets this speed (the coil's current goes into the damper's capacitor; expected ≈ 25 µs); on the MOT coils at 100 A the TVS sets it (model: ≈ 40 µs instead of ≈ 1.3 ms, about 30 times faster). Every case ended in the right state, the right direction and the right current; no trips. The burst at the edge was 1–2 samples in a row above the trip level in every case.
 
+## F5b · Fastest full reversal with the bridge opened at once [passed]
+
+**Why.** In the earlier reversals the PC sent the setpoint sign change and the flip as two commands ≈ 0.7 ms apart, so the current sat at zero waiting for the second one. The control computer will send both at the same moment (flip on the DIO3 wire, setpoint on IN2). Here both go in one write, as in the 11-13 "fastest reversal" test, now with `fastoff_flip` on.
+
+![One-write reversal: bridge closed vs opened](img/fastoff/fo_reversal_fastflip.png)
+
+*±2 A reversals, sign change and flip in one write, six runs each. Grey (11-13) is hidden under orange (11-17, same behaviour). Blue: the bridge opens at once and the current reaches zero in ≈ 35 µs, then swings ≈ −0.35 A (the damper ring, see below) before the controller drives it to −2 A.*
+
+| Settings | Bridge closed until zero (11-13 / 11-17) | Bridge opened (`fastoff_flip`) |
+|---|---|---|
+| Current (zero check 64 µs, settle wait 100 µs) | zero 141 µs · 90 % of −2 A 738 / 734 µs · within 2 % 954 / 987 µs | zero **33 µs** · 90 % of −2 A **642 µs** · within 2 % **890 µs** |
+| Trimmed (zero check 8 µs, no settle wait) | zero 130 µs · 582 / 580 µs · 821 / 912 µs | zero **40 µs** · **506 µs** · **771 µs** |
+
+**Result:** all 12 reversals ended at the new current with the bridge the right way round. Opening the bridge saves the ≈ 100 µs of the fall to zero, so a full reversal is ≈ 10–15 % faster (0.89 instead of 0.95–0.99 ms). The rest is now set by the controller bringing the current up the other way (≈ 450 µs from zero to 90 %) plus the zero check and settle waits. To go faster: higher controller gains (log 1, Q1: margin ×2–3 at 2 A) and shorter waits once the chamber's eddy currents are measured.
+
+## The current goes briefly negative after a bridge-opened switch-off [open finding]
+
+**What.** After every switch-off with the bridge opened, the coil current crosses zero and swings to ≈ −0.31 to −0.34 A (−16 %), lowest ≈ 34 µs after the zero crossing, gone ≈ 135 µs after it.
+
+**Why — it is real current, not a reading error.** With the bridge open, the coil and its damper (3.2 Ω + 10 µF across the coil) form a closed loop of their own. The coil's current charges the damper's capacitor; when the coil current reaches zero, the charged capacitor pushes current back through the coil the other way, and the resistor damps it out after about one swing (a damped ring of the coil with the capacitor). The current sensor sits between the damper and the coil, so it reads this true coil current. A hand calculation (all the current into the damper) gives −19 % at 23 µs after zero, gone by ≈ 90 µs: close to what is measured.
+
+**Why it matters at 100 A.** On the MOT coils the TVS holds the coils at ≈ −40 V while the current falls, so the damper's capacitor charges to that voltage and then rings back through the coils: a rough estimate gives a reversed current of the order of 10–20 A for a few tens of µs — a brief reversed MOT field after every fast switch-off. Requested from the circuit-model session (11-17): simulate this for the bench (check against these measurements) and for the MOT pair with the proposed damper, without a damper, and with other R/C values or damper types that limit the ring-back while still damping the 10–20 kHz hold ringing. If the MOT coils do not ring during a hold (Test 4), the damper may not be needed at all.
+
 ## Next
 
 - **To-do for the 100 A version (Test 4):** measure the switch-off burst on the current reading at 100 A (with and without the bridge opened), then set `trip_ticks` for `[mot]` (now 4; the bench uses 6). Each extra reading lets a real over-current rise ≈ 0.3 A further on the MOT coils.
@@ -268,3 +293,4 @@ Straight across the bridge, banded end (cathode) on the rail bar, other end on t
 - Repeat the 50-shot sequence with `fastoff_zero` on (the way a MOT sequence would use it).
 - Choose which options to use in production; then merge `rev6-test` into main (until then the PC software on main cannot write to this board).
 - The 7 kHz wobble above 2 A on the bench.
+- MOT damper: decide from the circuit-model results (reversed current after a fast switch-off) and from whether the MOT coils ring during a hold in Test 4.
