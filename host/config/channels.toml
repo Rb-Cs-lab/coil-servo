@@ -294,6 +294,8 @@ boost_mode = 0
 in1_offset_amps = 0.1963        # measured 2026-11-17 (coil_servo_host.zero)
                                 # (zero tool had read ~0.21 A)
 in2_offset_amps = 0.1731        # measured 2026-11-17 (coil_servo_host.zero)
+ff_curve_amps = [0.22, 0.33, 0.44, 0.66, 0.88, 1.1, 1.32, 1.54, 1.76, 1.98, 2.2]  # measured 2026-11-18 14:26 (coil_servo_host.ffcal)
+ff_curve_counts = [3657, 3702, 3735, 3783, 3819, 3847, 3872, 3893, 3912, 3929, 3946]  # measured 2026-11-18 14:26 (coil_servo_host.ffcal)
 
 [z_shim]
 board_host = "rp-zshim.local"   # PLACEHOLDER

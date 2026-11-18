@@ -93,7 +93,11 @@ def measure(b: Board, ch: dict, fractions=FRACTIONS, settle_s: float = 0.15,
     of both passes), up / down counts, measured currents, and the scan's
     duration."""
     i_rated = ch["i_rated"]
-    amps = [round(f * i_rated, 4) for f in fractions]
+    # stay well clear of the zero-setpoint snap threshold: at or near it the
+    # board treats the setpoint as "off" (OUT1 = 0, or the bridge opens)
+    snap_amps = ch["cfg"]["snap_thresh"] * ch["model"].amps_per_lsb         if ch["cfg"].get("snap_enable") else 0.0
+    amps = [round(f * i_rated, 4) for f in fractions
+            if f * i_rated > 1.5 * snap_amps + ch["model"].amps_per_lsb]
     t0 = time.monotonic()
     _start(b, ch)
     up, down, i_up, i_down = [], [], [], []
