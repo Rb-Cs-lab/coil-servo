@@ -106,7 +106,9 @@ def enable_and_arm(c, profile="mot"):
                confirm=True).status_code == 200
     assert act(c, "enable", profile=profile, confirm=True).status_code == 200
     assert act(c, "sim_arm", level=True).status_code == 200
-    wait_for(lambda: state(c)["state"] == "RUN")
+    # mot_bench has fastoff_zero on (11-18): at a zero setpoint the running
+    # board sits in ZERO_OPEN (bridge open) instead of RUN
+    wait_for(lambda: state(c)["state"] in ("RUN", "ZERO_OPEN"))
 
 
 def mock_channel(port, **kw):

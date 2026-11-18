@@ -201,8 +201,15 @@ floor_frac = 0.9                # floor at 90 % of the dead zone (decided)
 # 1.04 ms; 2 A: 0.65 ms, +1 % overshoot); 62.4/1884 OSCILLATES at 21 kHz
 # at a 1 A hold. Set at half the oscillation limit (gain margin ~2 at
 # 1-2 A; the bank's gain rises with current, so re-check at 2.5 A).
-kp_counts_per_amp = 31.2
-ki_counts_per_amp_ms = 942.0
+# RE-TUNED 11-18 (damper connected): 31.2/942 oscillated at ~7 kHz (the
+# coil-damper resonance) above ~1.85 A. Sweep at a 2.2 A hold
+# (logs/fastoff/gain_opt.json): the limit is set by ki, not kp -- ki ~470-530
+# counts/(A ms) for ki/kp 10..30 per ms (kp x0.5 at ratio 30, x0.85 at 20,
+# x1.05 at 15, > x1.6 at 10). Chosen: ratio 20 per ms at 0.6 x 31.2 --
+# margin ~x1.4 at 2.2 A, ~x1.9 at 2.0 A; 0.5 -> 2 A reaches 90 % in
+# 0.70 ms (31.2/942 at x0.7: 0.42 ms but oscillates at 2.2 A).
+kp_counts_per_amp = 18.7
+ki_counts_per_amp_ms = 374.0
 deadband_counts = 8             # PROVISIONAL
 dither_enable = 1               # OUT1 dither: one OUT1 count is ~0.14 A,
                                 # ~6 % of a 2.5 A hold
@@ -236,9 +243,9 @@ snap_zero_amps = 0.1            # PROVISIONAL, as [mot] (~4 counts at G=1)
 # bridge closed (~1.3 ms). Off until the hardware tests (docs/fast_turnoff.md
 # section 3) pass.
 fastoff_fitted = true           # fitted 2026-11-17, meter checks F0 passed
-fastoff_flip = 0                # flips
-fastoff_stop = 0                # graceful stops (servo_enable 1 -> 0)
-fastoff_zero = 0                # a zero setpoint (needs snap_zero_enable = 1)
+fastoff_flip = 1                # flips            (bench: on since 11-18, the
+fastoff_stop = 1                # graceful stops    new-setup repeat of the
+fastoff_zero = 1                # a zero setpoint   old test list; needs snap)
 
 # --- flip / stop ---
 zero_win_amps = 0.5             # flip zero window -- PROVISIONAL, suits both

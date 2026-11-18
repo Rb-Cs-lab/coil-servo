@@ -389,7 +389,10 @@ def test_fast_turnoff_settings(tmp_path):
     assert c["fastoff_flip"] == c["fastoff_stop"] == c["fastoff_zero"] == 1
     assert m.fastoff_fitted and m.V_rail_eff < m.V_rail
     assert 20e-6 < m.fastoff_time < 60e-6
-    for name in ("mot", "mot_bench"):
-        c = load_channel(name)["cfg"]
-        assert not any(c[k] for k in ("fastoff_flip", "fastoff_stop",
-                                      "fastoff_zero"))
+    # [mot] keeps them off until Test 4; the bench (parts fitted 11-17,
+    # repeat of the old test list 11-18) uses all three
+    c = load_channel("mot")["cfg"]
+    assert not any(c[k] for k in ("fastoff_flip", "fastoff_stop",
+                                  "fastoff_zero"))
+    c = load_channel("mot_bench")["cfg"]
+    assert c["fastoff_flip"] == c["fastoff_stop"] == c["fastoff_zero"] == 1
