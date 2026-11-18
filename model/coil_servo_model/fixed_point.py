@@ -90,6 +90,12 @@ class FixedPI:
     the output at the floor. If that shift would not fit s48 (ki_shift > 26
     with a large floor) the integrator bound falls back to 0 -- the output
     floor still applies. servo_pi.v implements exactly this.
+
+    Feedforward (rev 7): step(..., ff=n) adds n OUT1 counts before rounding
+    and the bounds (u24 = sat24(p + i + n * 128)); the integrator bound
+    becomes (floor - n) << (7 + ki_shift), negative when the table asks for
+    more than the floor (a negative bound that does not fit s48 saturates
+    to the s48 minimum). ff=0 is exactly the rev-6 behaviour.
     """
 
     ACC_MAX = (1 << 47) - 1
@@ -108,25 +114,33 @@ class FixedPI:
         self.p = self.i = self.u24 = self.u14 = self.u_pre = 0
         self.resid = 0      # rounding residual for the dither, [-64, 63]
         self.out_sat = self.at_floor = False
+        self.ff = 0
 
-    def acc_floor(self) -> int:
-        """Integrator lower bound for the current floor (see class doc)."""
+    def acc_floor(self, ff: int = 0) -> int:
+        """Integrator lower bound for the current floor and feedforward
+        (see class doc)."""
         if self.floor < 0:
             return -(1 << 47)          # no bound beyond s48 saturation
-        w = self.floor << (7 + self.ki_shift)
-        return w if w <= self.ACC_MAX else 0
+        v = self.floor - ff
+        mag = abs(v) << (7 + self.ki_shift)
+        if v < 0:
+            return -mag if mag <= self.ACC_MAX else -(1 << 47)
+        return mag if mag <= self.ACC_MAX else 0
 
     def clear(self):
         self.acc = 0
 
-    def step(self, e22: int, hold: bool = False) -> int:
-        """e22 = decimated drive-frame error, s22 Q2.20. Returns u14, the
-        bounded output in DAC counts (s14 Q1.13)."""
+    def step(self, e22: int, hold: bool = False, ff: int = 0) -> int:
+        """e22 = decimated drive-frame error, s22 Q2.20; ff = feedforward,
+        OUT1 counts 0..8191 (rev 7). Returns u14, the bounded output in DAC
+        counts (s14 Q1.13)."""
         assert -(1 << 21) <= e22 < (1 << 21), "error exceeds s22"
+        assert 0 <= ff <= 8191, "ff exceeds u13"
+        self.ff = ff
 
         self.p = sat((e22 * self.kp_mant) >> self.kp_shift, 24)   # sat #1
         self.i = sat(self.acc >> self.ki_shift, 24)
-        self.u24 = sat(self.p + self.i, 24)                        # sat #3
+        self.u24 = sat(self.p + self.i + (ff << 7), 24)            # sat #3
 
         # Q3.20 -> Q1.13: round to nearest on the 7 dropped bits, then the
         # output bounds (sat #4/#5; design.md Node E).
@@ -145,8 +159,73 @@ class FixedPI:
                 (u_pre < self.floor and e22 < 0))
         if not hold:
             acc = self.acc if skip else sat(self.acc + e22 * self.ki_mant, 48)
-            self.acc = max(acc, self.acc_floor())                  # sat #2
+            self.acc = max(acc, self.acc_floor(ff))                # sat #2
         return self.u14
+
+
+FF_POINTS = 16
+
+
+def ff_interp(sp_drive: int, table, shift: int, enable: bool = True) -> int:
+    """Setpoint feedforward (rev 7): bit-exact mirror of modules/servo_ff.v.
+
+    sp_drive = drive-frame setpoint, counts (s14); table = 16 OUT1 values
+    (u14) at setpoint counts k << shift; linear interpolation between
+    points, the last value held above the table, result limited to 0..8191.
+    """
+    if not enable:
+        return 0
+    assert len(table) == FF_POINTS and 0 <= shift <= 15
+    x = max(sp_drive, 0) & 0x1FFF
+    k = x >> shift
+    if k >= FF_POINTS - 1:
+        v = table[FF_POINTS - 1]
+    else:
+        f = x & ((1 << shift) - 1)
+        v = table[k] + (((table[k + 1] - table[k]) * f) >> shift)
+    return min(max(v, 0), 8191)
+
+
+def ff_shift_for(top_counts: int) -> int:
+    """Smallest breakpoint spacing 2^shift whose 16-point table (last point
+    at 15 << shift) reaches top_counts setpoint counts."""
+    for shift in range(16):
+        if (FF_POINTS - 1) << shift >= top_counts:
+            return shift
+    return 15
+
+
+def ff_table_from_curve(amps, counts, i_fs: float, shift: int, floor: int,
+                        clamp: int, margin: int = 0) -> list:
+    """The 16 feedforward table values (OUT1 counts) from a measured curve:
+    `counts` = the OUT1 command that holds `amps` (increasing lists, e.g.
+    from coil_servo_host.ffcal). Point k sits at setpoint (k << shift)
+    counts = (k << shift) * i_fs / 8192 amps.
+
+    Point 0 (zero current) is the floor. Below the first measured current
+    the value runs straight from the floor to the first point; between
+    measured points it is interpolated; above the last measured current the
+    last value is HELD (never extrapolated: an over-estimate overshoots).
+    `margin` counts are taken off every point above zero -- the bank needs
+    fewer counts warm than cold (bench Q5: 25-35), so a table measured cold
+    overshoots once warm unless it aims a little low; the PI adds the rest.
+    Every value is limited to floor .. clamp."""
+    assert len(amps) == len(counts) >= 2
+    pts_a = [0.0] + [float(a) for a in amps]
+    pts_c = [float(floor)] + [float(c) for c in counts]
+    out = []
+    for k in range(FF_POINTS):
+        i = (k << shift) * i_fs / 8192
+        if k == 0:
+            v = floor
+        elif i >= pts_a[-1]:
+            v = round(pts_c[-1]) - margin
+        else:
+            j = max(n for n in range(len(pts_a) - 1) if pts_a[n] <= i)
+            a0, a1, c0, c1 = pts_a[j], pts_a[j + 1], pts_c[j], pts_c[j + 1]
+            v = round(c0 + (c1 - c0) * (i - a0) / (a1 - a0)) - margin
+        out.append(int(min(max(v, floor), clamp)))
+    return out
 
 
 def output_mux_fixed(u14: int, deadband_counts: int, out2_enable: bool = True):

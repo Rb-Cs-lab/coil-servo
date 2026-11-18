@@ -94,8 +94,12 @@ def _bench_gains():
     return dict(kp_mant=kp_m, kp_shift=kp_s, ki_mant=ki_m, ki_shift=ki_s)
 
 
+# The fast turn-off options (rev 6) are on in the file since 11-18; the
+# bench-profile tests here check the rev-5 behaviour with the bridge closed,
+# and the fast turn-off has its own tests (MOT_FAST) -> off here.
 BENCH_REGS = dict(BENCH_FILE_REGS, in1_offset=0, in2_offset=0,
-                  u_floor=round(0.9 * BENCH.dead_zone * 8192), **_bench_gains())
+                  u_floor=round(0.9 * BENCH.dead_zone * 8192), **_bench_gains(),
+                  fastoff_flip=0, fastoff_stop=0, fastoff_zero=0)
 
 
 def bench_cfg(**over):
@@ -228,7 +232,7 @@ async def build_id_and_map_revision(dut):
     0x1ABCDEF); the map revision is the one the host expects."""
     await setup(dut, cfg=0)
     assert int(dut.build_id_o.value) == 0x1ABCDEF
-    assert sts(dut)["map_rev"] == MAP_REV == 6
+    assert sts(dut)["map_rev"] == MAP_REV == 7
 
 
 @cocotb.test()
@@ -1125,3 +1129,144 @@ async def fast_stop_opens_the_bridge_at_current(dut):
     else:
         raise AssertionError("fast stop never reached IDLE")
     assert k * T_S < 30e-6 and world.plant.I == 0.0
+
+
+# ----------------------------------------------------------------------
+# Setpoint feedforward (register map rev 7)
+# ----------------------------------------------------------------------
+
+def _ff_regs(ch, top_amps, floor, clamp, margin=0):
+    """Feedforward registers from the model plant's own OUT1-vs-current
+    curve, built exactly as the host does from a measured curve."""
+    from coil_servo_model import ff_shift_for, ff_table_from_curve
+    from coil_servo_model.registers import FF_TABLE_FIELDS
+    amps = [top_amps * k / 12 for k in range(1, 13)]
+    cnts = [min(round(ch.out1_for_current(a) * 8192), clamp) for a in amps]
+    shift = ff_shift_for(round(top_amps / ch.amps_per_lsb))
+    table = ff_table_from_curve(amps, cnts, ch.I_FS, shift, floor, clamp, margin)
+    return dict(ff_enable=1, ff_shift=shift, **dict(zip(FF_TABLE_FIELDS, table))), table
+
+
+@cocotb.test()
+async def feedforward_table_unpacks_in_the_drive_frame(dut):
+    """P and I gains zero: OUT1 is then the feedforward alone. For setpoints
+    across the table (and above it) u14 equals ff_interp of the drive-frame
+    setpoint, bounded by floor and clamp -- the 16 table halves of words
+    24-31 land where the model expects. After a flip (polarity 1) the
+    negated setpoint gives the same OUT1; a setpoint of the wrong sign gets
+    point 0. STS ff_on is set in closed-loop RUN only."""
+    from coil_servo_model import ff_interp
+    regs, table = _ff_regs(MOT, 100.0, FLOOR, MOT.clamp_counts)
+    base = dict(kp_mant=0, ki_mant=0, **regs)
+    await setup(dut, run_cfg(setpoint=0, **base))
+    assert sts(dut)["ff_on"] == 0, "feedforward on in IDLE"
+    await arm(dut)
+    assert sts(dut)["fsm_state_name"] == "RUN" and sts(dut)["ff_on"] == 1
+
+    async def u_at(sp):
+        dut.cfg_data.value = run_cfg(setpoint=sp, **base)
+        # slew limits: 200 A/ms away from zero, 50 A/ms toward it
+        for _ in range(4000):
+            await ClockCycles(dut.aclk, 128)
+            if sts(dut)["sp_active"] == sp:
+                break
+        else:
+            raise AssertionError(f"setpoint never reached {sp}")
+        await ClockCycles(dut.aclk, 128 * 3)
+        return sts(dut)["u14"]
+
+    def expect(sp_drive):
+        return min(max(ff_interp(sp_drive, table, regs["ff_shift"]), FLOOR),
+                   MOT.clamp_counts)
+
+    for amps in (3.0, 17.0, 50.0, 99.0, 104.0):
+        sp = counts(amps)
+        assert await u_at(sp) == expect(sp), f"{amps} A"
+    assert await u_at(-counts(20.0)) == expect(0), "wrong-sign setpoint"
+
+    # open loop: no feedforward (the setpoint drives OUT1 directly)
+    dut.cfg_data.value = run_cfg(setpoint=0, open_loop=1, **base)
+    await ClockCycles(dut.aclk, 20)
+    assert sts(dut)["ff_on"] == 0, "feedforward on in open loop"
+
+
+@cocotb.test()
+async def feedforward_after_a_flip_uses_the_drive_frame(dut):
+    """Through a flip at 20 A with P and I gains zero (OUT1 = feedforward
+    alone, which holds the model plant near 20 A): in polarity 1 the board-frame setpoint is negative and the
+    feedforward must still be the table value of +20 A."""
+    from coil_servo_model import ff_interp
+    regs, table = _ff_regs(MOT, 100.0, FLOOR, MOT.clamp_counts)
+    await setup(dut, run_cfg(setpoint=0, **regs))
+    await arm(dut)
+    world = World(dut, sp_amps=20.0, cfg_extra=regs)
+    await _hold(world, 20.0, 800, tol=0.3)
+    pol = int(dut.bridge_polarity_o.value)
+    dut.flip_req_i.value = 1
+    await ClockCycles(dut.aclk, 10)
+    dut.flip_req_i.value = 0
+    for _ in range(4000):
+        await world.tick()
+        if int(dut.bridge_polarity_o.value) != pol and \
+                sts(dut)["fsm_state_name"] == "RUN":
+            break
+    else:
+        raise AssertionError("flip never completed")
+    await _hold(world, 20.0, 800, tol=0.3)
+    s = sts(dut)
+    assert s["sp_active"] < 0 and s["ff_on"] == 1
+    assert int(dut.ff_0.ff.value) == ff_interp(-s["sp_active"], table,
+                                               regs["ff_shift"])
+
+
+@cocotb.test()
+async def feedforward_makes_a_slow_loop_fast(dut):
+    """The bench case that motivated rev 7: with gains low enough to stay
+    stable at the top of the range (here 1/4 of the model's suggested
+    gains) a 0 -> 2 A step on the bench plant crawls up through the bank's
+    turn-on region (here: from the 90 % floor through ~340 counts of dead
+    zone -- it does not get there within the 6 ms window). With a
+    feedforward table built from the plant's curve, aimed 3 counts low
+    (~0.18 A: the model bank is ~8x steeper per count than the real one,
+    so this is about the real bench's 30-count warm/cold difference as a
+    fraction of the current), it reaches 98 % in well under a millisecond,
+    overshoots by less than 3 %, and ends on the setpoint (the integrator
+    takes the margin up)."""
+    floor = BENCH_REGS["u_floor"]
+    clamp = BENCH_FILE_REGS["out_clamp"]
+    g = _bench_gains()
+    slow = dict(kp_mant=g["kp_mant"] // 4, ki_mant=g["ki_mant"] // 4)
+    regs, _ = _ff_regs(BENCH, 2.8, floor, clamp, margin=3)
+    results = {}
+    await setup(dut, bench_cfg(setpoint=0, **slow))
+    for name, extra in (("pi", dict(slow)), ("ff", dict(slow, **regs))):
+        dut.cfg_data.value = bench_cfg(setpoint=0, **extra)
+        await arm(dut)
+        assert sts(dut)["fsm_state_name"] in ("RUN", "ZERO_OPEN")
+        world = World(dut, sp_amps=2.0, ch=BENCH, cfg_fn=bench_cfg,
+                      cfg_extra=extra, average=True)
+        tr = []
+        for _ in range(6000):
+            await world.tick()
+            tr.append(world.plant.I)
+        k98 = next((k for k, i in enumerate(tr) if i >= 0.98 * 2.0), None)
+        t98 = math.inf if k98 is None else (k98 + 1) * T_S
+        tail = tr[-300:]
+        results[name] = (t98, max(tr), sum(tail) / len(tail))
+        # graceful stop, back to IDLE for the next run
+        world.sp_amps = 0.0
+        world.cfg_extra = dict(extra, servo_enable=0)
+        for _ in range(3000):
+            await world.tick()
+            if sts(dut)["fsm_state_name"] == "IDLE" and world.plant.I == 0.0:
+                break
+        else:
+            raise AssertionError(f"no clean stop: {sts(dut)['fsm_state_name']}")
+        dut.cfg_data.value = bench_cfg(setpoint=0, **extra)
+    (t_pi, _, end_pi), (t_ff, peak_ff, end_ff) = results["pi"], results["ff"]
+    cocotb.log.info(f"0 -> 2 A to 98 %: PI alone {t_pi * 1e3:.2f} ms, "
+                    f"with feedforward {t_ff * 1e3:.2f} ms; peak {peak_ff:.3f} A")
+    cocotb.log.info(f"ends at {end_pi:.4f} A (PI) / {end_ff:.4f} A (ff)")
+    assert t_ff < 1e-3 and t_ff < t_pi / 3, f"feedforward {t_ff} s vs PI {t_pi} s"
+    assert peak_ff < 2.0 * 1.03
+    assert abs(end_ff - 2.0) < BENCH.amps_per_lsb, f"ends at {end_ff:.4f} A"

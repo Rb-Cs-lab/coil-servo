@@ -396,3 +396,54 @@ def test_fast_turnoff_settings(tmp_path):
                                   "fastoff_zero"))
     c = load_channel("mot_bench")["cfg"]
     assert c["fastoff_flip"] == c["fastoff_stop"] == c["fastoff_zero"] == 1
+
+
+# --- setpoint feedforward (register map rev 7) ---
+
+FF_BENCH = ("out_clamp_counts = 4100\nu_floor_counts = 3450\n"
+            "ff_curve_amps = [0.25, 0.5, 1.0, 1.5, 2.0, 2.3]\n"
+            "ff_curve_counts = [3560, 3640, 3730, 3810, 3870, 3900]\n")
+
+
+def test_ff_table_from_the_measured_curve(tmp_path):
+    from coil_servo_model import ff_interp
+    from coil_servo_model.registers import FF_TABLE_FIELDS
+    ch = load_channel("mot_bench", path=bench_toml(
+        tmp_path, extra=FF_BENCH + "ff_enable = 1\nff_margin_counts = 10\n"))
+    c, lsb = ch["cfg"], ch["model"].amps_per_lsb
+    assert c["ff_enable"] == 1
+    # spacing: the 16-point table reaches the 2.8 A trip, and is the finest
+    # that does
+    top = round(2.8 / lsb)
+    assert 15 << c["ff_shift"] >= top > 15 << (c["ff_shift"] - 1)
+    t = [c[f] for f in FF_TABLE_FIELDS]
+    assert t[0] == 3450                       # zero current: the floor
+    assert t == sorted(t) and t[-1] == 3900 - 10   # held, not extrapolated
+    # a table point at 1.0 A sits on the curve minus the margin
+    sp = round(1.0 / lsb)
+    assert abs(ff_interp(sp, t, c["ff_shift"]) - (3730 - 10)) <= 4
+
+
+def test_ff_off_without_a_curve(tmp_path):
+    from coil_servo_model.registers import FF_TABLE_FIELDS
+    ch = load_channel("mot_bench", path=bench_toml(tmp_path))
+    assert ch["cfg"]["ff_enable"] == 0
+    assert all(ch["cfg"][f] == 0 for f in FF_TABLE_FIELDS)
+
+
+@pytest.mark.parametrize("extra", [
+    "ff_enable = 1\n",                                  # no curve
+    "ff_enable = 2\n" + FF_BENCH,                       # not a switch
+    FF_BENCH.replace("3870, 3900", "3800, 3900"),       # decreasing OUT1
+    FF_BENCH.replace("[0.25,", "[0.0,"),                # a 0 A point
+    FF_BENCH.replace(", 2.3]", "]"),                    # lengths differ
+    FF_BENCH.replace("[3560,", "[3400,"),               # below the floor
+    FF_BENCH.replace("3900]", "4200]"),                 # above the clamp
+    FF_BENCH + "ff_margin_counts = -5\n",
+])
+def test_ff_rejects_bad_curves(tmp_path, extra):
+    base = "out_clamp_counts = 4100\nu_floor_counts = 3450\n"
+    if not extra.startswith("out_clamp"):
+        extra = extra if "out_clamp" in extra else base + extra
+    with pytest.raises(ValueError):
+        load_channel("mot_bench", path=bench_toml(tmp_path, extra=extra))

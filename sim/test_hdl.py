@@ -36,6 +36,10 @@ def test_servo_pi():
     run_bench("servo_pi", "tb_servo_pi")
 
 
+def test_servo_ff():
+    run_bench("servo_ff", "tb_servo_ff")
+
+
 def test_servo_output_mux():
     run_bench("servo_output_mux", "tb_servo_output_mux")
 

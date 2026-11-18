@@ -92,6 +92,17 @@ fastoff_flip = 0                # flips
 fastoff_stop = 0                # graceful stops (servo_enable 1 -> 0)
 fastoff_zero = 0                # a zero setpoint (needs snap_zero_enable = 1)
 
+# --- setpoint feedforward (register map rev 7) ---
+# OUT1 for the requested current looked up in a table and added to the PI
+# output, so a step does not wait for the integrator to find the pass
+# bank's turn-on point and gain. The table is built from a curve MEASURED
+# on this hardware: python -m coil_servo_host.ffcal mot --write (closed
+# loop, holds a series of currents up to I_rated and records the OUT1 each
+# needs) -- for the MOT in Test 4, with the cooling water on. Off until then.
+ff_enable = 0
+ff_margin_counts = 0            # counts taken off every table point (aim low:
+                                # the transistors need fewer counts warm)
+
 # --- flip / stop ---
 zero_win_amps = 0.5             # flip zero window -- PROVISIONAL (calibrate
                                 # the ~0.3 A IN1 offset first)
@@ -246,6 +257,13 @@ fastoff_fitted = true           # fitted 2026-11-17, meter checks F0 passed
 fastoff_flip = 1                # flips            (bench: on since 11-18, the
 fastoff_stop = 1                # graceful stops    new-setup repeat of the
 fastoff_zero = 1                # a zero setpoint   old test list; needs snap)
+
+# --- setpoint feedforward (register map rev 7) ---
+# See [mot]. Bench: measure with python -m coil_servo_host.ffcal mot_bench
+# --write after the transistors have warmed up (a 2 A hold for a few
+# minutes); Q5 (11-13): warm needs 25-35 counts less than cold.
+ff_enable = 0
+ff_margin_counts = 10           # PROVISIONAL: aim slightly low, the PI adds the rest
 
 # --- flip / stop ---
 zero_win_amps = 0.5             # flip zero window -- PROVISIONAL, suits both

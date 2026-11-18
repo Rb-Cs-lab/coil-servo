@@ -56,7 +56,8 @@ import time
 
 import numpy as np
 
-from coil_servo_model.fixed_point import FixedPI
+from coil_servo_model.fixed_point import FixedPI, ff_interp
+from coil_servo_model.registers import FF_TABLE_FIELDS
 from coil_servo_model.loop import T_S
 from coil_servo_model.plant import Plant
 from coil_servo_model.registers import (CFG_BASE, CFG_WORDS, FSM_STATES,
@@ -356,6 +357,8 @@ class SimBoard(Board):
             u_floor=int(self.state == "RUN" and not c["open_loop"]
                         and self.u14 <= c["u_floor"]),
             snapped=int(self._snapped()),
+            ff_on=int(self.state == "RUN" and not c["open_loop"]
+                      and bool(c.get("ff_enable", 0))),
             tripped=int(self.state in ("TRIP", "TRIPPED")),
             map_rev=self.map_rev,
             i_meas=max(-(1 << 21), min((1 << 21) - 1,
@@ -402,7 +405,13 @@ class SimBoard(Board):
                          floor_counts=c["u_floor"] if f["state"] == "RUN" else 0)
             u0 = m.out1_for_current(f["I"]) * 8192 if f["I"] > 0.05 \
                 else c["u_floor"]
-            pi.acc = int(round(u0)) << (7 + c["ki_shift"])
+            ff_on = (f["state"] == "RUN" and not c["open_loop"]
+                     and bool(c.get("ff_enable", 0)))
+            ff_tab = [c.get(name, 0) for name in FF_TABLE_FIELDS]
+
+            def ff_of(sp_counts):
+                return ff_interp(sp_counts, ff_tab, c.get("ff_shift", 0), ff_on)
+            pi.acc = (int(round(u0)) - ff_of(round(f["sp"] / lsb)))                 << (7 + c["ki_shift"])
             plant = Plant(m, i0=f["I"])
             # setpoint ramp per tick, in counts (the fabric's slew
             # limiter, servo_slew.v / SlewLimiter, averaged over the 128
@@ -440,7 +449,8 @@ class SimBoard(Board):
             if c["open_loop"]:
                 v1 = min(max(sp, 0), c["out_clamp"]) / 8192
             else:
-                u14 = pi.step(max(-(1 << 21), min((1 << 21) - 1, e15 << 7)))
+                u14 = pi.step(max(-(1 << 21), min((1 << 21) - 1, e15 << 7)),
+                              ff=ff_of(sp))
                 # dither: the gate sees the average, u14 + resid/128
                 v1 = (u14 + (pi.resid / 128 if c["dither_enable"] else 0)) / 8192
             plant.step(v1, 0.0, False, T_S, substeps=2)

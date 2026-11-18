@@ -26,6 +26,15 @@
 // acc >= floor << (7 + ki_shift) after every non-held tick, so the
 // integral term alone holds the output on the floor (falls back to 0 if
 // that shift does not fit s48). clamp must be <= 8191.
+//
+// Feedforward (rev 7, servo_ff.v): ff (OUT1 counts, >= 0) is sampled with
+// the tick and added before rounding and the output bounds:
+// u24 = sat24(p + i + ff * 128). The integrator floor generalises to
+// "ff plus the integral term never sits below the floor":
+// acc >= (floor - ff) << (7 + ki_shift), which may be negative (the table
+// asks for more than the floor, so the integrator may take some back).
+// ff = 0 reproduces rev 6 exactly. A negative bound that does not fit s48
+// saturates to the s48 minimum; a positive one falls back to 0 as before.
 
 module servo_pi
 (
@@ -41,6 +50,7 @@ module servo_pi
   input  wire        [5:0]  ki_shift,
   input  wire        [13:0] clamp,      // hard output clamp, counts
   input  wire signed [13:0] floor,      // lower output bound, counts
+  input  wire        [13:0] ff,         // feedforward, counts (sampled at tick)
 
   input  wire               int_hold,   // freeze accumulator (safety core)
   input  wire               int_clear,  // zero accumulator (FSM / host)
@@ -58,6 +68,7 @@ module servo_pi
 
   reg [2:0] state;
   reg signed [21:0] e_r;
+  reg        [13:0] ff_r;
   reg signed [39:0] p_full, ki_prod;
   reg signed [23:0] p_term, i_term, u24;
   reg signed [47:0] acc;
@@ -83,7 +94,7 @@ module servo_pi
   endfunction
 
   // widened intermediates so no addition can overflow before saturating
-  wire signed [24:0] sum_pi   = p_term + i_term;
+  wire signed [25:0] sum_pi   = p_term + i_term + $signed({5'd0, ff_r, 7'd0});
   wire signed [48:0] acc_next = acc + ki_prod;
 
   // Q3.20 -> Q1.13: round to nearest, then the hard clamp (Node E)
@@ -99,17 +110,29 @@ module servo_pi
   wire windup_skip = ((u14_pre > clamp_s) && (e_r > 0)) ||
                      ((u14_pre < floor_s) && (e_r < 0));
 
-  // Integrator lower bound for a non-negative floor, two registered stages
-  // (CFG and FSM state change rarely; the tick period is 128 clocks):
-  // floor << (7 + ki_shift); 0 if that overflows s48 (any bit >= 47 set).
-  wire [83:0] lo_wide = {63'd0, floor[13:0], 7'd0} << ki_shift;
+  // Integrator lower bound for a non-negative floor, three registered
+  // stages (CFG and FSM state change rarely; ff_r changes at the tick and
+  // the bound is ready by S_PRE, three clocks later):
+  // v = floor - ff_r; (|v| << (7 + ki_shift)) with v's sign; if that
+  // overflows s48 (any magnitude bit >= 47 set): 0 for v > 0, the s48
+  // minimum for v < 0. A negative floor (full architecture) = no bound.
+  reg  signed [14:0] v_r;
+  reg         floor_neg_r, floor_neg_r2, v_neg_r2;
   reg  [83:0] lo_wide_r;
-  reg         floor_neg_r;
   reg signed [47:0] acc_lo;
+  wire signed [14:0] v_w = $signed({floor[13], floor}) - $signed({1'b0, ff_r});
   always @(posedge aclk) begin
-    lo_wide_r   <= lo_wide;
+    // stage 1
+    v_r         <= v_w;
     floor_neg_r <= floor[13];
-    acc_lo <= floor_neg_r ? 48'sh800000000000 :
+    // stage 2
+    lo_wide_r    <= {70'd0, (v_r[14] ? -v_r[13:0] : v_r[13:0])} << (7 + ki_shift);
+    v_neg_r2     <= v_r[14];
+    floor_neg_r2 <= floor_neg_r;
+    // stage 3
+    acc_lo <= floor_neg_r2 ? 48'sh800000000000 :
+              v_neg_r2 ? ((|lo_wide_r[83:47]) ? 48'sh800000000000
+                                              : -$signed(lo_wide_r[47:0])) :
               (|lo_wide_r[83:47]) ? 48'sd0 : lo_wide_r[47:0];
   end
 
@@ -122,6 +145,7 @@ module servo_pi
       at_floor <= 1'b0;
       resid <= 7'sd0;
       e_r <= 22'sd0;
+      ff_r <= 14'd0;
       p_full <= 40'sd0;
       ki_prod <= 40'sd0;
       p_term <= 24'sd0;
@@ -144,6 +168,7 @@ module servo_pi
       case (state)
         S_IDLE: if (tick) begin
           e_r <= e;
+          ff_r <= ff;
           clr_seen <= int_clear;    // a new tick starts its own record
           state <= S_MUL;
         end
