@@ -14,7 +14,46 @@ rest of the repo in line is [docs/mvp_rewrite_brief.md](docs/mvp_rewrite_brief.m
 §11 — work it in order, one step per session. This file is the
 quick-reference facts; if they conflict, flag it — don't silently pick one.
 
-**Status (2026-11-13).** Rewrite steps 1–6 done: model, fixed-point
+**Status (2026-11-19).** **Register map rev 7 is deployed on the bench**
+(build ID `6bf3e93`, 2026-11-18, timing met: WNS +0.215 ns; branch
+`rev7-ff`, built on `rev6-test`; **neither branch is merged to main yet**;
+the image is on the Drive, not yet in bitstreams/).
+- **Rev 6 = fast turn-off with the bridge opened at current** (ctrl b22
+  `fastoff_flip`, b23 `fastoff_stop`, b24 `fastoff_zero`; FSM states 10
+  OPEN_RAMP, 11 ZERO_OPEN; [docs/fast_turnoff.md](docs/fast_turnoff.md)).
+  It needs the blocking diode (DSS2x101-015A, supply + lead) and the TVS
+  (5KP30A, across the bridge); both were fitted on the bench 11-17
+  (`fastoff_fitted = true` in `[mot_bench]`, all three options on there).
+  Bench: 2 A → 0 in 33 µs instead of ≈ 140 µs.
+- **Rev 7 = setpoint feedforward** (ctrl b25 `ff_enable`, b29:26
+  `ff_shift`, CFG W24–31 a 16-point table "OUT1 for this current", STS b15
+  `ff_on`; [docs/feedforward.md](docs/feedforward.md)). The table is measured
+  with `python -m coil_servo_host.ffcal <channel> --write` (servo IDLE, arm
+  low), and channels.toml carries `ff_enable` / `ff_margin_counts` /
+  `ff_curve_*`.
+  - **Bench since 11-19:** on, margin 10, **`slew_up` 5 A/ms**. The pass
+    transistors overshoot by themselves when OUT1 jumps: +75–80 % at
+    200 A/ms, 2 A tripped.
+  - **Bench results:** 0 → 2 A within 5 % after 0.39 ms (1.29 ms without);
+    ±2 A reversal reaches 90 % at 0.55 ms (1.30 ms); holds, noise and 50/50
+    shots unchanged. After a 10 min warm hold the overshoot is +7–12 %
+    (OUT1 needs 17 counts less): measure the MOT table at operating
+    temperature, and check the overshoot at 100 A.
+- **Bench controller (11-18):** kp 18.7 / ki 374. The old 31.2 / 942 oscillate
+  (7–8.4 kHz coil–damper resonance), even with the damper changed to
+  **8.2 Ω + 10 µF** (11-18 evening, was 3.2 Ω). `[mot_bench]` `trip_ticks` = 6.
+- **229 kHz burst on IN1** (open finding): ±2 A-equivalent (±12 mV at IN1),
+  1–2 ms long. Single readings exceed the trip level; `trip_ticks` prevents
+  false trips.
+  - Trigger: the bridge closing again from ZERO_OPEN followed by a slow PI
+    climb from zero (6/10 pulses). None with the bridge kept closed, none
+    from 0.25 A, none in 83 re-closes with feedforward. Not coil current.
+  - Next: scope on the driver supplies and on IN1, triggered on DIO1 rising.
+- Test Log 2 (rev 6 / rev 7, side by side with log 1):
+  [docs/fastoff_test_log.md](docs/fastoff_test_log.md). Dashboard told about
+  feedforward 11-19.
+
+**Status (2026-11-13, rev 5 — history).** Rewrite steps 1–6 done: model, fixed-point
 mirror, HDL, cocotb benches, host tools and docs describe the MVP. **Register
 map rev 5 is on main and deployed** (`bitstreams/coil_servo.bit.bin`, build
 ID commit `583e877`, 2026-11-13, timing met: WNS +0.251 ns; the snap now
@@ -101,7 +140,8 @@ with both MOT coils, water, `mot` profile.** Key results (11-11/13):
   coil** (3.2 Ω + 10 µF on the 45 µH test coil). **The MOT pair needs its own
   damper** (sized for 16 µH, pulse-rated at 100 A) — check for ringing at
   low currents in Test 4. Mechanism not yet understood.
-- Bench PI gains tuned on hardware: kp 31.2 counts/A, ki 942 counts/(A·ms)
+- Bench PI gains tuned on hardware (11-13; **superseded 11-18 by 18.7 / 374**,
+  see the status above): kp 31.2 counts/A, ki 942 counts/(A·ms)
   (the "×2 oscillates at 21 kHz" of 11-12 was the undamped power-stage
   ringing; with the damper the margin is ×8–20 at 1 A, ×2–3.3 at 2 A —
   Q1, 11-13 — so the bench gains could be raised); bench `I_rated` 2.2 A. Dither makes no
@@ -135,8 +175,8 @@ OUT1 clamp and the floor (overridable by measured counts) and refuses unsafe
 files; `python -m coil_servo_host.config mot` prints the derived values.
 Still queued: shot-synchronous capture (proposal in docs/dashboard.md);
 ~~"snap OUT1 to zero"~~ done as rev 5 (set `snap_zero_amps` from the
-measured IN2 noise once the control computer drives IN2); bridge-open fast turn-off (needs the
-TVS + blocking diode, waits for parts); latch visibility (latch → DIO5,
+measured IN2 noise once the control computer drives IN2); ~~bridge-open fast turn-off~~ done as rev 6 (parts fitted on the bench
+11-17); latch visibility (latch → DIO5,
 stall detection); level-sensitive latch trip review; dashboard "hold arm"
 mode for software flips; **temperature + cooling-water interlock** (user,
 2026-11-13 — remind them): flow / over-temperature switches tripping the
@@ -361,8 +401,8 @@ Each of these must be a named, commented-provisional parameter
 - Chamber eddy-current settling time (limits post-flip field settling; FSM
   delay constants are placeholders)
 - Uncooled duty-cycle limit for the first test round
-- PI gains for the 100 A plant (bench gains are tuned: kp 31.2 counts/A,
-  ki 942 counts/(A·ms); the MOT plant has ~17× more gain per count — tune
+- PI gains for the 100 A plant (bench gains are tuned: kp 18.7 counts/A,
+  ki 374 counts/(A·ms) since 11-18, with feedforward; the MOT plant has ~17× more gain per count — tune
   from measured steps in Test 4). Starting points (Q7 bank model, 11-13):
   kp ≈ 3, ki ≈ 90 per ms if the bench square law holds, kp ≈ 1.6, ki ≈ 48
   if the linear model does; current `[mot]` 3.7 / 111 is between. Tune at
