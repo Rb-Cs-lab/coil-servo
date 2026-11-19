@@ -20,6 +20,7 @@ const FLAG_INFO = {
   tripped: ["tripped", "over-current trip (TRIP or TRIPPED)", true],
   out_sat: ["OUT1 at clamp", "the PI asks for more than the command clamp", true],
   u_floor: ["OUT1 at floor", "PI output on its lower bound: current can only decay", false],
+  ff_on: ["feedforward acting", "setpoint feedforward (rev 7): OUT1 = the measured table's value for the setpoint, plus the PI's correction. On in RUN, closed loop, with ff_enable set", false],
   snapped: ["snapped (OUT1 = 0)", "zero-setpoint snap: the setpoint is within the snap threshold of zero, so the firmware holds OUT1 at exactly 0 and the integrator cleared; the coil freewheels. The PI command (u14) shown is not what the DAC outputs", false],
   int_railed: ["integrator railed", "the integrator hit its limit", true],
   sp_sign_mismatch: ["sign mismatch", "setpoint sign disagrees with the bridge polarity", true],
@@ -350,6 +351,16 @@ function renderDetail(card) {
         and the zero window see the true current. Measure every new sensor;
         re-measure after changing the LEM, burden, in-amp gain or cabling.</p>
         <div id="zero"></div><div id="zero-ctl"></div></div>
+      <div class="panel"><h2>Setpoint feedforward</h2>
+        <p class="small muted">The pass transistors need a certain OUT1
+        voltage for each current (nothing flows below about 0.44 V, then
+        the current rises steeply). With feedforward on, the FPGA looks the
+        setpoint up in a 16-point table of these voltages, measured on the
+        hardware, and jumps OUT1 straight there; the PI controller only adds
+        the small correction. Steps and reversals get 2–4× faster; holds
+        and noise are unchanged. Re-measure after the transistors, the gate
+        stage or the coil change. Register map rev 7.</p>
+        <div id="ff"></div><div id="ff-ctl"></div></div>
       <div class="panel"><h2>Configuration</h2><div id="cfg"></div></div>
     </div>
   </div>`;
@@ -380,6 +391,7 @@ function renderDetail(card) {
 
   renderControls(card, sim);
   renderZeroControls(card);
+  renderFFControls(card);
   loadHistory();
   loadInfo();
   D.infoTimer = setInterval(loadInfo, 5000);
@@ -607,6 +619,154 @@ function renderZeroControls(card) {
   };
 }
 
+function renderFFControls(card) {
+  const dev = card.device;
+  const fc = $("#ff-ctl");
+  if (!S.who.control) { fc.innerHTML = ""; return; }
+  fc.innerHTML = `<div class="row" style="margin-top:8px">
+      <button class="btn" id="b-ffcal">Measure curve…</button>
+      <button class="btn" id="b-ff-store">Store in channels.toml</button></div>
+    <div class="small muted">Lab PC only. On/off and the margin are profile
+      settings (<span class="mono">ff_enable</span>,
+      <span class="mono">ff_margin_counts</span> in channels.toml, then Apply
+      profile).</div>`;
+  $("#b-ffcal").onclick = async () => {
+    const prof = profileInfo(S.devices[dev].state, card.profile);
+    if (await confirmDialog(`Measure the feedforward curve — ${card.title}`,
+      `<p>As <span class="mono">python -m coil_servo_host.ffcal</span>:
+       applies profile <b>[${esc(card.profile)}]</b>, arms in software and
+       holds 5 %, 10 %, … 100 % of its rated current
+       (${prof && prof.i_rated != null ? prof.i_rated + " A" : "I_rated"}) in
+       closed loop with feedforward off — up the list and back down — and
+       records the OUT1 command at each. About 10 s, then it stops and puts
+       the profile back. Nothing is stored until you press Store.</p>
+       <p><b>Conditions</b> (the first two are checked):</p>
+       <ul><li>servo stopped (IDLE)</li>
+       <li>arm input (DIO4) low or unplugged</li>
+       <li>bridge power on; the coil may carry the rated current for ~10 s</li>
+       <li>transistors at their working temperature (they drift as they
+       warm: the scan reports the drift)</li></ul>`,
+      "Measure curve"))
+      post(dev, "ff_cal", {profile: card.profile, confirm: true});
+  };
+  $("#b-ff-store").onclick = async () => {
+    const r = S.devices[dev].state.ff;
+    if (!r) return;
+    if (await confirmDialog(`Store the feedforward curve in channels.toml [${r.profile}]?`,
+      `<p>Writes <span class="mono">ff_curve_amps</span> and
+       <span class="mono">ff_curve_counts</span> (${r.amps.length} points, with
+       today's date as a comment) into <b>[${esc(r.profile)}]</b>;
+       <span class="mono">ff_enable</span> and the margin stay as they
+       are.</p><p>The board gets the new table with <b>Apply profile</b>.
+       channels.toml is in git: commit the change.</p>`, "Store"))
+      post(dev, "ff_store", {confirm: true});
+  };
+}
+
+// OUT1 table (lines) and measured curve (dots) as a small inline SVG
+function ffPlot(ff, scan) {
+  const W = 380, H = 190, L = 46, Rm = 8, T = 8, B = 30;
+  const tabs = [ff.profile, ff.board].filter((t) => t);
+  const pts = [];
+  tabs.forEach((t) => t.amps.forEach((a, k) => pts.push([a, t.counts[k]])));
+  const curve = (ff.curve_amps || []).map((a, k) => [a, ff.curve_counts[k]]);
+  const sc = scan ? scan.amps.map((a, k) => [a, (scan.up[k] + scan.down[k]) / 2]) : [];
+  const all = pts.concat(curve, sc).filter((p) => p[1] > 0);
+  if (!all.length) return "";
+  const xmax = Math.max(...all.map((p) => p[0])) || 1;
+  let ylo = Math.min(...all.map((p) => p[1])), yhi = Math.max(...all.map((p) => p[1]));
+  const pad = Math.max((yhi - ylo) * 0.08, 5); ylo -= pad; yhi += pad;
+  const X = (a) => L + (a / xmax) * (W - L - Rm);
+  const Y = (c) => T + (1 - (c - ylo) / (yhi - ylo)) * (H - T - B);
+  const line = (t, style) => `<polyline fill="none" style="${style}" points="${
+    t.amps.map((a, k) => `${X(a).toFixed(1)},${Y(t.counts[k]).toFixed(1)}`).join(" ")}"/>`;
+  let g = "";
+  for (const v of linTicks(ylo, yhi, 4))
+    g += `<line x1="${L}" x2="${W - Rm}" y1="${Y(v)}" y2="${Y(v)}" style="stroke:var(--grid)"/>
+      <text x="${L - 4}" y="${Y(v) + 4}" text-anchor="end">${v}</text>`;
+  for (const v of linTicks(0, xmax, 5))
+    g += `<text x="${X(v)}" y="${H - B + 14}" text-anchor="middle">${fmtTick(v, xmax / 5)}</text>`;
+  g += `<text x="${(L + W) / 2}" y="${H - 3}" text-anchor="middle">current (A)</text>
+    <text x="10" y="${(T + H - B) / 2}" text-anchor="middle" transform="rotate(-90 10 ${(T + H - B) / 2})">OUT1 (counts)</text>`;
+  const same = ff.board && ff.profile && ff.board.counts.join() === ff.profile.counts.join()
+    && ff.board.step_amps === ff.profile.step_amps;
+  if (ff.profile) g += line(ff.profile, "stroke:var(--c-u);stroke-width:2");
+  if (ff.board && !same) g += line(ff.board, "stroke:var(--bad);stroke-width:1.5;stroke-dasharray:4 3");
+  g += curve.map(([a, c]) => `<circle cx="${X(a)}" cy="${Y(c)}" r="3" style="fill:var(--c-i)"/>`).join("");
+  g += sc.map(([a, c]) => `<circle cx="${X(a)}" cy="${Y(c)}" r="4" style="fill:none;stroke:var(--c-sp);stroke-width:1.5"/>`).join("");
+  const key = [`<span style="color:var(--c-u)">━</span> table [profile]`,
+    ff.board && !same ? `<span style="color:var(--bad)">┅</span> table on the board (differs)` : "",
+    curve.length ? `<span style="color:var(--c-i)">●</span> stored curve` : "",
+    sc.length ? `<span style="color:var(--c-sp)">○</span> last scan (not stored)` : ""]
+    .filter((s) => s).join(" &nbsp; ");
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:520px;font-size:10px;fill:var(--muted)">${g}</svg>
+    <div class="small muted">${key}</div>`;
+}
+
+const fmtRate = (r) => `${r >= 10 ? r.toFixed(0) : r.toPrecision(3)} A/ms`;
+
+function updateFF(card, st, ctlOk) {
+  const el = $("#ff");
+  if (!el) return;
+  const ff = S.detail?.info?.ff;
+  const r = st.ff && st.ff.profile === card.profile ? st.ff : null;
+  let h = "";
+  if (st.map_ok === false)
+    h += `<p class="small muted">The board's firmware has no feedforward
+      (register map rev ${st.map_rev}; rev 7 needed).</p>`;
+  if (ff) {
+    // the board's table only means something when it holds this profile
+    const held = (st.held || []).includes(card.profile);
+    const p = ff.profile, b = held ? ff.board : null;
+    const onoff = (t) => t ? (t.enable ? "<b>on</b>" : "off") : "—";
+    const match = p && b ? (p.enable === b.enable
+      && p.counts.join() === b.counts.join() ? "✓" : "✗ differs") : "";
+    h += `<div class="kv small">
+      <span class="k">[${esc(card.profile)}]</span><span>${onoff(p)}${p
+        ? ` · margin ${ff.margin} counts · points every ${p.step_amps.toFixed(3)} A` : ""}</span>
+      <span class="k">board</span><span>${held ? onoff(b) + " " + match
+        : "holds another profile"}${(st.flags || {}).ff_on
+        ? ' · <b style="color:var(--ok)">acting now</b>' : ""}</span>
+      <span class="k">curve measured</span><span>${ff.measured ? esc(ff.measured)
+        : ff.curve_amps ? "(no date)" : "never — no curve in channels.toml"}</span>
+      <span class="k">up-ramp</span><span>${p ? fmtRate(p.up_amps_per_ms) : "—"}${b
+        && p && b.up_amps_per_ms !== p.up_amps_per_ms ? ` (board: ${fmtRate(b.up_amps_per_ms)})` : ""} — kept slow with
+        feedforward: the transistors overshoot when OUT1 jumps</span></div>`;
+    if (p && !p.enable && p.counts.some((c) => c))
+      h += `<div class="small muted" style="margin-top:4px">Table loaded, but
+        ff_enable = 0 in [${esc(card.profile)}].</div>`;
+    h += `<div style="margin-top:8px">${ffPlot(Object.assign({}, ff, {board: b}),
+      r && !r.stored ? r : null)}</div>`;
+  }
+  const lj = st.last_job && st.last_job.name === "ffcal" ? st.last_job : null;
+  if (st.job && st.job.name === "ffcal")
+    h += `<div class="pending" style="margin-top:6px">curve scan: ${esc(st.job.phase)}</div>`;
+  else if (lj && lj.error)
+    h += `<div class="notice error" style="margin-top:6px">curve scan failed:
+      ${esc(lj.error)}</div>`;
+  if (r) {
+    const when = new Date(r.t * 1000).toLocaleTimeString();
+    h += `<div style="margin-top:8px"><b>Last scan</b> at ${esc(when)}
+      (${r.seconds} s) · down minus up ${r.drift_min >= 0 ? "+" : ""}${r.drift_min}
+      … ${r.drift_max >= 0 ? "+" : ""}${r.drift_max} counts (warming during
+      the scan: the table's uncertainty) · stored: ${r.stored ? "yes" : "no"}
+      <table class="small" style="margin-top:4px"><tr><th class="num">current (A)</th>
+      <th class="num">OUT1 up</th><th class="num">down</th><th class="num">stored as</th></tr>`
+      + r.amps.map((a, k) => `<tr><td class="num">${a}</td><td class="num">${r.up[k].toFixed(1)}</td>
+        <td class="num">${r.down[k].toFixed(1)}</td><td class="num">${r.counts[k]}</td></tr>`).join("")
+      + "</table></div>";
+  }
+  el.innerHTML = h;
+  if (!$("#b-ffcal")) return;
+  const idle = st.state === "IDLE" && !(st.flags || {}).bridge_en;
+  const busy = !!st.job || !!st.pending;
+  const armed = !!(st.flags || {}).armed;
+  $("#b-ffcal").disabled = !(ctlOk && idle && !busy && !armed && st.map_ok !== false);
+  $("#b-ffcal").title = !idle ? "only with the servo stopped (IDLE)"
+    : armed ? "the arm input (DIO4) is high: lower or unplug it" : "";
+  $("#b-ff-store").disabled = !(ctlOk && r && !r.stored && !(st.job && st.job.name === "ffcal"));
+}
+
 function updateZero(card, st, ctlOk) {
   const prof = profileInfo(st, card.profile);
   const cfg = prof.offsets, brd = st.offsets_board;
@@ -818,6 +978,7 @@ function updateDetail() {
   $("#b-stop").title = !S.who.stop ? "Stop is accepted only from the lab PC"
     : st.stop_block ? st.stop_block : "servo_enable = 0: graceful ramp to zero";
   updateZero(card, st, ctlOk);
+  updateFF(card, st, ctlOk);
   const capOk = S.who.capture && !st.control_block && !st.job;
   $("#b-cap").disabled = $("#b-auto").disabled = $("#cap-n").disabled = !capOk;
 

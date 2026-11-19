@@ -22,12 +22,16 @@ request at a time per connection).
 
 import csv
 import json
+import re
 import threading
 import time
+import tomllib
 from collections import deque
 
-from coil_servo_model.registers import CFG_FIELDS, MAP_REV, build_id_text
+from coil_servo_model.registers import (CFG_FIELDS, FF_TABLE_FIELDS, MAP_REV,
+                                        build_id_text)
 
+from .. import ffcal as ffcal_tool
 from .. import step as step_tool
 from .. import sweep as sweep_tool
 from .. import zero as zero_tool
@@ -39,7 +43,7 @@ from .device import ActionError, ActionSpec, Device
 from .logs import StatusLog, capture_path, prune_auto_captures
 
 FLAG_NAMES = ("armed", "bridge_en", "polarity", "tripped", "out_sat",
-              "u_floor", "snapped", "int_railed", "sp_sign_mismatch",
+              "u_floor", "snapped", "ff_on", "int_railed", "sp_sign_mismatch",
               "timeout_hold", "fault")
 # FSM states in which the servo is running: ZERO_OPEN (rev 6) is RUN with
 # a zero setpoint and the bridge opened (fastoff_zero) -- normal, and what
@@ -73,6 +77,11 @@ ZERO_REFUSE_FRAC = 0.1
 ZERO_CONDITIONS = ("servo stopped (IDLE, bridge disabled: no coil current); "
                    "LEM powered (+-15 V) and warmed up; the control "
                    "computer's setpoint output (IN2) at 0 V")
+
+# setpoint feedforward curve (coil_servo_host.ffcal, register map rev 7)
+FF_CONDITIONS = ("servo stopped (IDLE); arm input (DIO4) low or unplugged "
+                 "(the scan arms in software); bridge power on; the coil "
+                 "may carry up to the profile's rated current for ~10 s")
 
 PROFILE_PARAM = {"profile": "channels.toml profile to act as (default: the "
                             "one the board holds)"}
@@ -144,6 +153,19 @@ ACTIONS = {a.name: a for a in [
                "in2_offset now; the FPGA subtracts them from every IN1/IN2 "
                "sample. Only in IDLE. Not stored: Apply profile puts "
                "channels.toml's values back."),
+    ActionSpec("ff_cal", "Measure feedforward curve", "control", True,
+               "As `python -m coil_servo_host.ffcal`: apply the profile, "
+               "arm in software and hold 5 %, 10 %, ... 100 % of the rated "
+               "current in closed loop (feedforward off), up and back down, "
+               "averaging the OUT1 command at each; ~10 s; then stop and "
+               "put the profile back. Conditions: " + FF_CONDITIONS + ". "
+               "Stores nothing by itself.", dict(PROFILE_PARAM)),
+    ActionSpec("ff_store", "Store feedforward curve in channels.toml",
+               "control", True,
+               "Write the last measured curve into the profile's "
+               "ff_curve_amps / ff_curve_counts in channels.toml (comments "
+               "kept, ff_enable and ff_margin_counts unchanged). The board "
+               "gets the new table with Apply profile."),
     ActionSpec("capture", "Capture now", "capture", False,
                "Record 16.8 ms of measured current and setpoint "
                "(976.6 kS/s) and save it as CSV. Does not touch the loop."),
@@ -244,6 +266,41 @@ class _LockedBoard:
             return self._dev.board.capture(decimated=decimated)
 
 
+class _JobBoard:
+    """Board for a tool that drives the board itself (ffcal): every call
+    under the device's board lock, so the status poll runs between them.
+    Setpoint writes are reported as job phases (progress)."""
+
+    def __init__(self, dev, on_setpoint=None):
+        self._dev = dev
+        self._on_setpoint = on_setpoint
+
+    def __getattr__(self, attr):
+        fn = getattr(self._dev.board, attr)
+        if not callable(fn):
+            return fn
+
+        def call(*a, **kw):
+            if attr == "write_cfg" and "setpoint" in kw and self._on_setpoint:
+                self._on_setpoint(kw["setpoint"])
+            with self._dev._io:
+                return fn(*a, **kw)
+        return call
+
+
+def ff_curve_stamp(text: str, name: str) -> str | None:
+    """The 'measured YYYY-MM-DD HH:MM' comment ffcal --write puts after
+    ff_curve_counts in the [name] section of channels.toml."""
+    m = re.search(rf"^\[{re.escape(name)}\]\s*$", text, re.M)
+    if not m:
+        return None
+    nxt = re.search(r"^\[", text[m.end():], re.M)
+    sec = text[m.end():m.end() + nxt.start() if nxt else len(text)]
+    d = re.search(r"^ff_curve_counts\s*=.*#\s*measured\s+([0-9-]+(?: [0-9:]+)?)",
+                  sec, re.M)
+    return d.group(1) if d else None
+
+
 class CoilServoChannel(Device):
     """One board. profiles: name -> load_channel() result, or None for a
     profile the loader refused (its message in profile_errors). models:
@@ -303,6 +360,7 @@ class CoilServoChannel(Device):
         self._finish_stop = False             # see _stop_now / _maybe_finish_stop
         self._out1 = (0, "off")               # (counts, mode), out1_actual
         self.zero_result = None               # the last zero calibration
+        self.ff_result = None                 # the last feedforward curve
         self._capture_lock = threading.Lock()
         self.capture = None
         self.capture_seq = 0
@@ -676,6 +734,8 @@ class CoilServoChannel(Device):
                 "auto_capture_s": self.auto_capture_s,
                 "zero": self.zero_result,
                 "zero_conditions": ZERO_CONDITIONS,
+                "ff": self.ff_result,
+                "ff_conditions": FF_CONDITIONS,
                 "fastoff_board": self._fastoff_board(),
             }
             if self.pending:
@@ -765,7 +825,40 @@ class CoilServoChannel(Device):
             out["live"] = {k: rb[k] for k in LIVE_FIELDS if k in rb}
             out["other"] = {k: rb[k] for k in CFG_FIELDS
                             if k not in cfg and k not in LIVE_FIELDS}
+        if ch:
+            out["ff"] = self._ff_info(name, ch, rb, out["map_ok"])
         return out
+
+    def _ff_info(self, name: str, ch: dict, rb: dict | None,
+                 map_ok) -> dict:
+        """Setpoint feedforward (rev 7) of one profile and of the board, for
+        the Feedforward panel: the measured curve, the 16-point tables
+        (amps, OUT1 counts) and the up-ramp rate."""
+        m, c = ch["model"], ch["cfg"]
+        lsb = m.amps_per_lsb
+
+        def tab(src):
+            if not src or "ff_shift" not in src:
+                return None
+            step = (1 << src["ff_shift"]) * lsb
+            return {"enable": bool(src.get("ff_enable")),
+                    "step_amps": _f(step, 5),
+                    "amps": [_f(k * step, 5) for k in range(16)],
+                    "counts": [src.get(f, 0) for f in FF_TABLE_FIELDS],
+                    "up_amps_per_ms": _f(src["slew_up"] / 2**14 * lsb
+                                         * 125e6 / 1e3, 3)}
+        try:
+            text = self.config_path.read_text(encoding="utf-8")
+            raw = tomllib.loads(text).get(name, {})
+        except (OSError, tomllib.TOMLDecodeError):
+            text, raw = "", {}
+        return {"profile": tab(c),
+                "board": tab(rb) if rb is not None and map_ok else None,
+                "curve_amps": raw.get("ff_curve_amps"),
+                "curve_counts": raw.get("ff_curve_counts"),
+                "margin": raw.get("ff_margin_counts", 0),
+                "measured": ff_curve_stamp(text, name),
+                "floor": c["u_floor"], "clamp": c["out_clamp"]}
 
     def latest_capture(self) -> dict | None:
         with self._lock:
@@ -1167,6 +1260,73 @@ class CoilServoChannel(Device):
         return (f"loaded into the board: in1_offset = {r['in1_offset']:+d}, "
                 f"in2_offset = {r['in2_offset']:+d} counts"
                 + ("" if r["stored"] else " (not stored in channels.toml)"))
+
+    # ---- setpoint feedforward curve (rev 7) ---------------------------------
+    def _act_ff_cal(self, params) -> str:
+        name, ch = self._profile(params, must_be_held=False)
+        self._need_idle("measuring the feedforward curve")
+        with self._lock:
+            s = self.sts
+        if s is None or s["map_rev"] != MAP_REV:
+            raise ActionError("the board's firmware has no feedforward "
+                              "(register map rev 7 needed)")
+        if s["armed"]:
+            raise ActionError("the arm input (DIO4) is high: lower or unplug "
+                              "it -- the scan makes its own arm edge")
+        if s["bridge_en"]:
+            raise ActionError("the bridge is enabled: stop first")
+        self._start_job("ffcal", self._job_ffcal, name, ch)
+        return (f"feedforward curve scan started as [{name}]: up to "
+                f"{ch['i_rated']:g} A and back, ~10 s; nothing is stored yet")
+
+    def _job_ffcal(self, name: str, ch: dict) -> None:
+        i_fs = ch["i_fs"]
+
+        def progress(counts):
+            self._job_phase(f"holding {abs(counts) * i_fs / 8192:.3f} A")
+        self._job_phase("starting: apply profile, software arm")
+        r = ffcal_tool.measure(_JobBoard(self, progress), ch)
+        drift = [d - u for u, d in zip(r["up"], r["down"])]
+        r = {"profile": name, "t": time.time(), "stored": False,
+             "amps": r["amps"], "counts": r["counts"],
+             "up": [_f(x, 1) for x in r["up"]],
+             "down": [_f(x, 1) for x in r["down"]],
+             "i_up": [_f(x, 4) for x in r["i_up"]],
+             "i_down": [_f(x, 4) for x in r["i_down"]],
+             "seconds": _f(r["minutes"] * 60, 1),
+             "drift_min": _f(min(drift), 1), "drift_max": _f(max(drift), 1)}
+        with self._lock:
+            self.ff_result = r
+        self._job_phase(f"done: {len(r['amps'])} points, OUT1 "
+                        f"{r['counts'][0]} ... {r['counts'][-1]}; down minus "
+                        f"up {r['drift_min']:+.1f} .. {r['drift_max']:+.1f} "
+                        f"counts", result=r)
+        self._event("ffcal_done", json.dumps(
+            {k: r[k] for k in ("profile", "amps", "counts", "drift_min",
+                               "drift_max")}))
+
+    def _act_ff_store(self, params) -> str:
+        with self._lock:
+            r = self.ff_result
+            running = bool(self.job and self.job["name"] == "ffcal")
+        if running:
+            raise ActionError("the feedforward scan is still running")
+        if r is None:
+            raise ActionError("no feedforward curve measured yet: run one "
+                              "first")
+        name = r["profile"]
+        ffcal_tool.write_curve(name, r["amps"], r["counts"], self.config_path)
+        try:
+            ch = load_channel(name, self.config_path)
+        except (KeyError, ValueError, TypeError) as exc:
+            raise ActionError(f"written to {self.config_path.name}, but the "
+                              f"config loader now refuses [{name}]: {exc}")
+        with self._lock:
+            self.profiles[name] = ch
+            self.models[name] = ch["model"]
+            r["stored"] = True
+        return (f"stored in {self.config_path.name} [{name}]: "
+                f"{len(r['amps'])} points (on the board with Apply profile)")
 
     def _act_trip_ack(self, params) -> str:
         if self._state() != "TRIPPED":

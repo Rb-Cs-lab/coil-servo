@@ -963,3 +963,41 @@ def test_lan_address_and_port_check():
         s.bind(("127.0.0.1", 0))
         s.listen(1)
         assert not port_free("127.0.0.1", s.getsockname()[1])
+
+
+def test_feedforward_info_and_curve_scan(sim):
+    """Rev 7: the Feedforward panel's data (profile and board tables, the
+    stored curve and its date), the ff_on flag, and the curve scan (ffcal)
+    run as a job and stored into the (scratch) channels.toml."""
+    c, devices, tmp = sim
+    dev = devices["mot"]
+    ffb = dev.info("mot_bench")["ff"]
+    assert len(ffb["profile"]["counts"]) == 16 and any(ffb["profile"]["counts"])
+    assert ffb["curve_amps"] and ffb["measured"]
+    assert dev.info("mot")["ff"]["curve_amps"] is None
+    assert "ff_on" in state(c)["flags"]
+    # refused while running or armed; store refused without a scan
+    enable_and_arm(c)
+    r = act(c, "ff_cal", confirm=True, **MOT)
+    assert r.status_code == 409 and "IDLE" in r.json()["error"]
+    assert act(c, "ff_store", confirm=True).status_code == 409
+    assert act(c, "stop").status_code == 200
+    wait_for(lambda: state(c)["state"] == "IDLE")
+    r = act(c, "ff_cal", confirm=True, **MOT)
+    assert r.status_code == 409 and "DIO4" in r.json()["error"]
+    assert act(c, "sim_arm", level=False).status_code == 200
+    wait_for(lambda: not state(c)["flags"]["armed"])
+    assert act(c, "ff_cal", confirm=True, **MOT).status_code == 200
+    wait_for(lambda: state(c)["job"] is None, timeout=60)
+    s = state(c)
+    assert s["last_job"]["name"] == "ffcal" and not s["last_job"]["error"]
+    r = s["ff"]
+    assert r["profile"] == "mot" and len(r["amps"]) == len(r["counts"]) >= 3
+    assert r["counts"] == sorted(r["counts"]) and not r["stored"]
+    wait_for(lambda: state(c)["state"] == "IDLE")    # poll catches up
+    assert not state(c)["flags"]["bridge_en"]
+    assert act(c, "ff_store", confirm=True).status_code == 200
+    assert state(c)["ff"]["stored"]
+    ff = dev.info("mot")["ff"]
+    assert ff["curve_amps"] == r["amps"] and ff["measured"]
+    assert any(ff["profile"]["counts"])          # table built from the curve
