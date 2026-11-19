@@ -106,7 +106,9 @@ def enable_and_arm(c, profile="mot"):
                confirm=True).status_code == 200
     assert act(c, "enable", profile=profile, confirm=True).status_code == 200
     assert act(c, "sim_arm", level=True).status_code == 200
-    wait_for(lambda: state(c)["state"] == "RUN")
+    # mot_bench has fastoff_zero on (11-18): at a zero setpoint the running
+    # board sits in ZERO_OPEN (bridge open) instead of RUN
+    wait_for(lambda: state(c)["state"] in ("RUN", "ZERO_OPEN"))
 
 
 def mock_channel(port, **kw):
@@ -293,6 +295,65 @@ def test_zero_setpoint_snap_shown(sim):
     assert act(c, "stop").status_code == 200
 
 
+def _fastoff_app(tmp_path):
+    """[mot] with the rev-6 fast turn-off hardware stated as fitted and
+    fast stops + zero-setpoint opening on (the real file has them off)."""
+    import re
+    text = _sim_config_text()
+    head, sep, rest = text.partition("[mot_bench]")
+    head = re.sub(r"(?m)^fastoff_fitted = false", "fastoff_fitted = true", head)
+    head = re.sub(r"(?m)^(fastoff_(stop|zero)) = 0", r"\1 = 1", head)
+    cfg = tmp_path / "channels_fastoff.toml"
+    cfg.write_text(head + sep + rest, encoding="utf-8")
+    return make_app(tmp_path, config_path=cfg)
+
+
+def test_fast_turnoff_states(tmp_path):
+    """Rev 6: Enable at 0 A with fastoff_zero goes straight to ZERO_OPEN --
+    the dashboard must count that as running (not time out and disable);
+    a setpoint re-closes the bridge, a fast stop goes through OPEN_RAMP."""
+    app, devices = _fastoff_app(tmp_path)
+    with TestClient(app, client=LOCAL, base_url="http://localhost") as c:
+        wait_for(lambda: state(c).get("state"))
+        rows = dict(devices["mot"].info("mot")["summary"])
+        assert rows["fast turn-off (bridge opened at current)"].startswith(
+            "hardware fitted")
+        prof = [p for p in state(c)["profiles"] if p["name"] == "mot"][0]
+        assert prof["fastoff_fitted"] is True
+        enable_and_arm_zero_open(c)
+        s = state(c)
+        assert s["pending"] is None                    # counted as running
+        assert s["out1_mode"] == "bridge_open" and s["flags"]["snapped"]
+        assert set(s["fastoff_board"]) == {"stops", "a zero setpoint"}
+        assert not s["alarms"]
+        assert act(c, "setpoint", amps=20, confirm=True, **MOT).status_code \
+            == 200
+        wait_for(lambda: state(c)["state"] == "RUN")
+        wait_for(lambda: abs(state(c)["i_amps"] - 20) < 0.5)
+        assert act(c, "stop").status_code == 200
+        wait_for(lambda: state(c)["state"] in ("OPEN_RAMP", "IDLE"))
+        wait_for(lambda: state(c)["state"] == "IDLE")
+
+
+def enable_and_arm_zero_open(c):
+    assert act(c, "apply_profile", confirm=True, **MOT).status_code == 200
+    assert act(c, "enable", confirm=True, **MOT).status_code == 200
+    assert act(c, "sim_arm", level=True).status_code == 200
+    wait_for(lambda: state(c)["state"] == "ZERO_OPEN")
+    wait_for(lambda: state(c)["pending"] is None)
+
+
+def test_fast_turnoff_without_hardware_is_red(sim):
+    """Bits written by hand while the profile says not fitted: red alarm."""
+    c, devices, _ = sim
+    assert act(c, "apply_profile", confirm=True, **MOT).status_code == 200
+    with devices["mot"]._io:
+        devices["mot"].board.sync_shadow()
+        devices["mot"].board.write_cfg(fastoff_flip=1)
+    wait_for(lambda: any("FAST TURN-OFF ON" in a for a in state(c)["alarms"]))
+    assert state(c)["fastoff_board"] == ["flips"]
+
+
 def test_out1_actual_is_not_the_pi_output():
     """OUT1 per coil_servo_top.v / servo_output_mux.v, not STS u14."""
     from coil_servo_host.dashboard.servo_channel import out1_actual
@@ -304,6 +365,8 @@ def test_out1_actual_is_not_the_pi_output():
     assert out1_actual(dict(run, bridge_en=0, fsm_state_name="IDLE"),
                        cl) == (0, "off")
     assert out1_actual(dict(run, snapped=1), cl) == (0, "snapped")
+    assert out1_actual(dict(run, bridge_en=0, fsm_state_name="ZERO_OPEN",
+                            snapped=1), cl) == (0, "bridge_open")
     for st in ("TRIP", "TRIPPED"):          # out_kill, bridge still closed
         assert out1_actual(dict(run, fsm_state_name=st), cl) == (0, "off")
     assert out1_actual(run, cl) == (2263, "closed")

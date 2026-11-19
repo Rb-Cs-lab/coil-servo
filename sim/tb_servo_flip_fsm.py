@@ -6,9 +6,13 @@ A concurrent invariant monitor runs under every test:
   * in TRIP/TRIPPED the DAC outputs are killed, the bridge never re-closes,
     and in TRIPPED it is open
   * the bridge never closes without a preceding arm edge (IDLE -> RUN)
+  * (rev 6) in OPEN_RAMP / ZERO_OPEN the bridge is open and the DACs are
+    killed; a bridge drop into either happens with out_kill on the same clock
 Directed tests walk the full flip sequence, window qualification, timeout
-hold + acknowledge, graceful stop, arm gating (edge, not level), and the
-over-current trip (persistence, freewheel-then-open, timeout, latch, ack).
+hold + acknowledge, graceful stop, arm gating (edge, not level), the
+over-current trip (persistence, freewheel-then-open, timeout, latch, ack),
+and the rev-6 fast turn-off (bridge opened at current for a flip, a stop
+or a zero requested setpoint).
 """
 
 import cocotb
@@ -27,7 +31,7 @@ TRIP_TICKS = 3
 TRIP_TIMEOUT = 400    # clocks
 
 (S_IDLE, S_RUN, S_RAMP, S_DIS, S_FLIP, S_EN, S_SETTLE, S_THOLD,
- S_TRIP, S_TRIPPED) = range(10)
+ S_TRIP, S_TRIPPED, S_OPEN, S_ZOPEN) = range(12)
 
 I_BIG = 200000        # well outside the window, below the trip
 I_SMALL = 1000        # inside the window
@@ -38,8 +42,13 @@ def state(dut):
     return int(dut.fsm_state.value)
 
 
-async def setup(dut, armed_at_load=0, trip_timeout=TRIP_TIMEOUT):
+async def setup(dut, armed_at_load=0, trip_timeout=TRIP_TIMEOUT,
+                fastoff_flip=0, fastoff_stop=0, fastoff_zero=0):
     cocotb.start_soon(start_clock(dut))
+    dut.fastoff_flip.value = fastoff_flip
+    dut.fastoff_stop.value = fastoff_stop
+    dut.fastoff_zero.value = fastoff_zero
+    dut.snap_req.value = 0
     dut.servo_enable.value = 0
     dut.armed.value = armed_at_load
     dut.flip_req.value = 0
@@ -77,6 +86,12 @@ async def invariant_monitor(dut):
             assert not (ben and not prev_ben), "bridge re-closed during a trip"
         if st == S_TRIPPED:
             assert ben == 0, "bridge closed in TRIPPED"
+        if st in (S_OPEN, S_ZOPEN):
+            assert ben == 0 and int(dut.out_kill.value) == 1, \
+                f"state {st}: bridge must be open and the DACs killed"
+        if prev_ben and not ben:
+            assert int(dut.out_kill.value) == 1 or st in (S_DIS, S_TRIPPED), \
+                f"bridge dropped in state {st} without the DACs killed"
         if prev_st == S_IDLE and st == S_RUN:
             assert arm_edge_seen, "left IDLE without an arm edge"
         if st == S_IDLE and prev_st != S_IDLE:
@@ -430,3 +445,185 @@ async def flip_request_ignored_outside_run(dut):
     await idle(dut, 10)
     assert state(dut) == S_IDLE
     assert dut.bridge_en.value == 0
+
+
+# ---------------------------------------------------------------------------
+# rev 6: fast turn-off with the bridge opened at current
+# ---------------------------------------------------------------------------
+
+async def pulse_flip(dut):
+    dut.flip_req.value = 1
+    await RisingEdge(dut.aclk)
+    dut.flip_req.value = 0
+
+
+@cocotb.test()
+async def fastoff_bits_clear_is_rev5_behaviour(dut):
+    """All fastoff bits 0: a flip ramps down with the bridge closed, a zero
+    requested setpoint does not open the bridge."""
+    await setup(dut)
+    await arm_and_run(dut)
+    dut.snap_req.value = 1
+    await idle(dut, 20)
+    assert state(dut) == S_RUN and dut.bridge_en.value == 1
+    await pulse_flip(dut)
+    await wait_state(dut, S_RAMP, 5)
+    assert dut.bridge_en.value == 1
+
+
+@cocotb.test()
+async def fast_flip_opens_at_current_then_flips(dut):
+    await setup(dut, fastoff_flip=1)
+    await arm_and_run(dut)
+    await dtick(dut, I_BIG)
+    pol = int(dut.polarity.value)
+    await pulse_flip(dut)
+    await wait_state(dut, S_OPEN, 3, "fast flip")
+    assert dut.bridge_en.value == 0 and dut.out_kill.value == 1
+    assert dut.sp_force_zero.value == 1 and dut.int_hold.value == 1
+    # current still decaying: no flip yet, however long
+    for _ in range(10):
+        await dtick(dut, I_BIG)
+    assert state(dut) == S_OPEN and int(dut.polarity.value) == pol
+    for _ in range(HOLDOFF):
+        await dtick(dut, I_SMALL)
+    await wait_state(dut, S_FLIP, DEADTIME + 5, "dead time after open")
+    assert int(dut.polarity.value) == 1 - pol
+    await wait_state(dut, S_SETTLE, DEADTIME + 10)
+    assert dut.bridge_en.value == 1 and dut.out_kill.value == 0
+    await wait_state(dut, S_RUN, SETTLE + 10)
+    assert dut.sp_force_zero.value == 0
+
+
+@cocotb.test()
+async def fast_flip_needs_arm_level(dut):
+    await setup(dut, fastoff_flip=1)
+    await arm_and_run(dut)
+    dut.armed.value = 0
+    await idle(dut, 3)
+    await pulse_flip(dut)
+    await idle(dut, 10)
+    assert state(dut) == S_RUN and dut.bridge_en.value == 1
+
+
+@cocotb.test()
+async def fast_stop_opens_at_current(dut):
+    await setup(dut, fastoff_stop=1)
+    await arm_and_run(dut)
+    await dtick(dut, I_BIG)
+    pol = int(dut.polarity.value)
+    dut.servo_enable.value = 0
+    await wait_state(dut, S_OPEN, 3, "fast stop")
+    assert dut.bridge_en.value == 0 and dut.out_kill.value == 1
+    for _ in range(HOLDOFF):
+        await dtick(dut, I_SMALL)
+    await wait_state(dut, S_IDLE, DEADTIME + 10, "stop ends in IDLE")
+    assert dut.bridge_en.value == 0 and dut.out_kill.value == 0
+    assert int(dut.polarity.value) == pol
+
+
+@cocotb.test()
+async def open_ramp_timeout_latches_tripped(dut):
+    """Bridge open but the sensor never reads zero (bad zero offset, or the
+    TVS / blocking diode missing): latch in TRIPPED, never flip."""
+    await setup(dut, fastoff_flip=1)
+    await arm_and_run(dut)
+    pol = int(dut.polarity.value)
+    await pulse_flip(dut)
+    await wait_state(dut, S_OPEN, 3)
+    for _ in range(TIMEOUT // 5 + 10):
+        await dtick(dut, I_BIG)
+        if state(dut) == S_TRIPPED:
+            break
+    assert state(dut) == S_TRIPPED and dut.bridge_en.value == 0
+    assert int(dut.polarity.value) == pol
+
+
+async def run_to_zero_open(dut):
+    await arm_and_run(dut)
+    await dtick(dut, I_BIG)
+    dut.snap_req.value = 1
+    await wait_state(dut, S_ZOPEN, 3, "zero setpoint opens the bridge")
+    assert dut.bridge_en.value == 0 and dut.out_kill.value == 1
+    assert dut.run_state.value == 1, "the snap must keep evaluating"
+    assert dut.sp_force_zero.value == 0
+
+
+@cocotb.test()
+async def zero_open_recloses_only_after_window(dut):
+    await setup(dut, fastoff_zero=1)
+    pol = int(dut.polarity.value)
+    await run_to_zero_open(dut)
+    # setpoint leaves zero before the current has qualified the window:
+    # the bridge must stay open
+    await dtick(dut, I_BIG)
+    dut.snap_req.value = 0
+    for _ in range(5):
+        await dtick(dut, I_BIG)
+    assert state(dut) == S_ZOPEN and dut.bridge_en.value == 0
+    for _ in range(HOLDOFF):
+        await dtick(dut, I_SMALL)
+    await wait_state(dut, S_RUN, DEADTIME + 10, "re-close")
+    assert dut.bridge_en.value == 1 and dut.out_kill.value == 0
+    assert dut.int_hold.value == 0
+    assert int(dut.polarity.value) == pol, "zero-open never flips"
+
+
+@cocotb.test()
+async def zero_open_waits_while_setpoint_is_zero(dut):
+    await setup(dut, fastoff_zero=1)
+    await run_to_zero_open(dut)
+    for _ in range(3 * HOLDOFF):
+        await dtick(dut, I_SMALL)
+    await idle(dut, 2 * DEADTIME)
+    assert state(dut) == S_ZOPEN, "must stay open while the setpoint is zero"
+    seen_clear = False
+    dut.snap_req.value = 0
+    for _ in range(DEADTIME + 10):
+        await RisingEdge(dut.aclk)
+        seen_clear |= int(dut.int_clear.value) == 1
+        if state(dut) == S_RUN:
+            break
+    assert state(dut) == S_RUN and seen_clear, "integrator restarts clean"
+
+
+@cocotb.test()
+async def zero_open_flip(dut):
+    await setup(dut, fastoff_zero=1)
+    pol = int(dut.polarity.value)
+    await run_to_zero_open(dut)
+    await pulse_flip(dut)
+    await wait_state(dut, S_OPEN, 3, "flip from zero-open")
+    for _ in range(HOLDOFF):
+        await dtick(dut, I_SMALL)
+    await wait_state(dut, S_FLIP, DEADTIME + 5)
+    assert int(dut.polarity.value) == 1 - pol
+    await wait_state(dut, S_SETTLE, DEADTIME + 10)
+    await wait_state(dut, S_RUN, SETTLE + 10)
+    # requested setpoint still zero -> straight back to ZERO_OPEN
+    await wait_state(dut, S_ZOPEN, 5)
+
+
+@cocotb.test()
+async def zero_open_stop(dut):
+    """A stop from ZERO_OPEN goes through OPEN_RAMP to IDLE, even with the
+    fastoff_stop bit clear (the bridge is already open)."""
+    await setup(dut, fastoff_zero=1)
+    await run_to_zero_open(dut)
+    dut.servo_enable.value = 0
+    await wait_state(dut, S_OPEN, 3)
+    for _ in range(HOLDOFF):
+        await dtick(dut, I_SMALL)
+    await wait_state(dut, S_IDLE, DEADTIME + 10)
+
+
+@cocotb.test()
+async def trip_in_zero_open_latches(dut):
+    await setup(dut, fastoff_zero=1)
+    await run_to_zero_open(dut)
+    for _ in range(TRIP_TICKS):
+        await dtick(dut, I_TRIP)
+    assert state(dut) == S_TRIP and dut.bridge_en.value == 0
+    for _ in range(HOLDOFF):
+        await dtick(dut, I_SMALL)
+    assert state(dut) == S_TRIPPED

@@ -90,7 +90,10 @@ def test_bench_profile_is_the_mot_stage_with_a_limited_supply():
     # the pair), the supply limit and the protection-related values differ
     same = replace(BENCH, name="mot", L=MOT.L, R_coil=MOT.R_coil,
                    I_rated=MOT.I_rated, I_supply_max=None,
-                   out_clamp_counts=None)
+                   out_clamp_counts=None,
+                   # fast turn-off parts: declared fitted for the bench
+                   # (11-17); the 100 A profile waits for Test 4
+                   fastoff_fitted=MOT.fastoff_fitted)
     assert same == MOT
     assert "mot_bench" not in CHANNELS      # production table untouched
     # the temporary 12-turn test coil: L, R calculated from its geometry

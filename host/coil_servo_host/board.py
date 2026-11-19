@@ -22,6 +22,10 @@ FIFO_DEPTH = 16384
 _HEADER = struct.Struct("<4sII")
 
 
+# FSM states in which the servo is running (rev 6: ZERO_OPEN is RUN with a
+# zero setpoint and the bridge open; register_map.md)
+RUNNING = ("RUN", "ZERO_OPEN")
+
 class Board:
     def __init__(self, host: str, port: int = 9001, timeout: float = 5.0,
                  max_clamp: int | None = None, check_map: bool = True):
@@ -234,19 +238,22 @@ class Board:
         return s
 
     def wait_for_run(self, timeout: float = 30.0) -> dict:
-        """After servo_enable = 1, wait for the FSM to reach RUN. Leaving
+        """After servo_enable = 1, wait for the FSM to reach RUN (or
+        ZERO_OPEN, rev 6: RUN with a zero setpoint and the bridge open,
+        entered within one PI tick of arming at 0 A when fastoff_zero is
+        set -- running, not a fault). Leaving
         IDLE needs a rising EDGE on arm (DIO4) *after* servo_enable is set;
         an arm line that was already high does nothing. Prompts the user
         and raises SystemExit on timeout. Returns sts."""
         s = self.sts()
-        if s["fsm_state_name"] == "RUN":
+        if s["fsm_state_name"] in RUNNING:
             return s
         print("servo enabled, waiting in IDLE: raise arm (DIO4) now -- if it "
               "is already high, drop it and raise it again")
         t_end = time.monotonic() + timeout
         while time.monotonic() < t_end:
             s = self.sts()
-            if s["fsm_state_name"] == "RUN":
+            if s["fsm_state_name"] in RUNNING:
                 return s
             if s["tripped"]:
                 break

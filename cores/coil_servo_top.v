@@ -80,6 +80,11 @@ module coil_servo_top #
   wire        trip_ack       = cfg_data[19];  // TRIPPED -> IDLE
   wire        dither_enable  = cfg_data[20];  // OUT1 sigma-delta dither
   wire        snap_enable    = cfg_data[21];  // zero-setpoint snap (rev 5)
+  // fast turn-off with the bridge opened at current (rev 6; needs the
+  // blocking diode + TVS, docs/fast_turnoff.md; servo_flip_fsm.v)
+  wire        fastoff_flip   = cfg_data[22];
+  wire        fastoff_stop   = cfg_data[23];
+  wire        fastoff_zero   = cfg_data[24];
   wire signed [13:0] sp_reg       = cfg_data[45:32];    // W1
   wire signed [17:0] kp_mant      = cfg_data[81:64];    // W2
   wire        [4:0]  kp_shift     = cfg_data[100:96];   // W3
@@ -206,6 +211,7 @@ module coil_servo_top #
   // Flip FSM
   // ------------------------------------------------------------------
   wire bridge_en, fsm_int_clear, int_hold, out_kill, run_state;
+  reg snap_req;              // the REQUESTED setpoint is zero (snap, below)
   wire [3:0] fsm_state;
   wire timeout_hold, tripped;
 
@@ -214,6 +220,8 @@ module coil_servo_top #
     .servo_enable(servo_enable), .armed(armed),
     .flip_req(flip_pulse), .flip_fault_ack(flip_fault_ack),
     .trip_ack(trip_ack),
+    .fastoff_flip(fastoff_flip), .fastoff_stop(fastoff_stop),
+    .fastoff_zero(fastoff_zero), .snap_req(snap_req),
     .tick(tick_i), .i_meas(i_dec),
     .zero_win(zero_win), .zero_holdoff(zero_holdoff),
     .deadtime(deadtime), .settle(settle), .flip_timeout(flip_timeout),
@@ -230,7 +238,8 @@ module coil_servo_top #
 
   // ------------------------------------------------------------------
   // Zero-setpoint snap (rev 5; register_map.md ctrl b21, W23, STS b14).
-  // In RUN, closed loop: when the selected setpoint, averaged over one PI
+  // In RUN (and ZERO_OPEN, rev 6), closed loop: when the selected
+  // setpoint, averaged over one PI
   // tick, is within snap_thresh of zero, OUT1 is forced to exactly 0 and
   // the integrator is held cleared. The bank turns fully off at once and
   // the coil freewheels at its natural rate with the bridge closed --
@@ -252,7 +261,6 @@ module coil_servo_top #
   wire [21:0] abs_sp_dec = sp_dec[21] ? -sp_dec : sp_dec;
   wire [21:0] snap_on_lim  = {1'b0, snap_thresh, 7'd0};
   wire [21:0] snap_off_lim = {1'b0, snap_thresh, 7'd0} + 22'd128;
-  reg snap_req;                         // the REQUESTED setpoint is zero
   always @(posedge aclk)
     if (!aresetn || !snap_enable || !run_state || open_loop)
       snap_req <= 1'b0;
@@ -397,7 +405,7 @@ module coil_servo_top #
   assign sts_data[23:15]   = 9'd0;
   // register-map revision (docs/register_map.md; registers.MAP_REV): the
   // host refuses to write CFG to a bitstream whose layout it doesn't know
-  assign sts_data[31:24]   = 8'd5;
+  assign sts_data[31:24]   = 8'd6;
   assign sts_data[53:32]   = i_dec;          // W1, s22 (host sign-extends)
   assign sts_data[63:54]   = 10'd0;
   assign sts_data[77:64]   = sp_active;      // W2, s14 (host sign-extends)

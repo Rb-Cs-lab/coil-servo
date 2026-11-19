@@ -360,3 +360,39 @@ def test_zero_setpoint_snap_settings(tmp_path):
     for name in ("mot", "mot_bench"):
         c = load_channel(name)["cfg"]
         assert c["snap_enable"] == 1 and 0 < c["snap_thresh"] < c["zero_win"] // 2
+
+
+@pytest.mark.parametrize("extra", [
+    "fastoff_flip = 1",                               # hardware not declared
+    "fastoff_fitted = false\nfastoff_stop = 1",
+    "fastoff_fitted = true\nfastoff_zero = 1",        # zero needs the snap
+    "fastoff_fitted = true\nfastoff_flip = 2",
+    "fastoff_fitted = 1\nfastoff_flip = 1",           # must be a boolean
+])
+def test_fast_turnoff_refused_without_the_hardware(tmp_path, extra):
+    with pytest.raises(ValueError):
+        load_channel("mot", path=write_toml(tmp_path, extra=extra))
+
+
+def test_fast_turnoff_settings(tmp_path):
+    """Rev 6: off by default (and in the real channels.toml until the
+    hardware tests pass); with the hardware declared, each bit passes
+    through and the model switches to the TVS turn-off and the lower rail."""
+    ch = load_channel("mot", path=write_toml(tmp_path))
+    assert not any(ch["cfg"][k] for k in ("fastoff_flip", "fastoff_stop",
+                                         "fastoff_zero"))
+    assert not ch["model"].fastoff_fitted
+    ch = load_channel("mot", path=write_toml(tmp_path, extra=(
+        "fastoff_fitted = true\nfastoff_flip = 1\nfastoff_stop = 1\n"
+        "fastoff_zero = 1\nsnap_zero_enable = 1\nsnap_zero_amps = 0.1")))
+    c, m = ch["cfg"], ch["model"]
+    assert c["fastoff_flip"] == c["fastoff_stop"] == c["fastoff_zero"] == 1
+    assert m.fastoff_fitted and m.V_rail_eff < m.V_rail
+    assert 20e-6 < m.fastoff_time < 60e-6
+    # [mot] keeps them off until Test 4; the bench (parts fitted 11-17,
+    # repeat of the old test list 11-18) uses all three
+    c = load_channel("mot")["cfg"]
+    assert not any(c[k] for k in ("fastoff_flip", "fastoff_stop",
+                                  "fastoff_zero"))
+    c = load_channel("mot_bench")["cfg"]
+    assert c["fastoff_flip"] == c["fastoff_stop"] == c["fastoff_zero"] == 1

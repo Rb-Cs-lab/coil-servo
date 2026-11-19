@@ -228,7 +228,7 @@ async def build_id_and_map_revision(dut):
     0x1ABCDEF); the map revision is the one the host expects."""
     await setup(dut, cfg=0)
     assert int(dut.build_id_o.value) == 0x1ABCDEF
-    assert sts(dut)["map_rev"] == MAP_REV == 5
+    assert sts(dut)["map_rev"] == MAP_REV == 6
 
 
 @cocotb.test()
@@ -1016,3 +1016,112 @@ async def snap_also_acts_in_flip_and_stop_ramp_downs(dut):
                     f"{name}: overshoot after the flip"
             else:
                 assert on["state"][-1] == "IDLE" and on["ben"][-1] == 0
+
+
+# ---------------------------------------------------------------------------
+# rev 6: fast turn-off with the bridge opened at current (blocking diode +
+# 5KP30A fitted; docs/fast_turnoff.md). The plant models the TVS path.
+# ---------------------------------------------------------------------------
+
+MOT_FAST = replace(MOT, fastoff_fitted=True)
+
+
+async def _hold(world, amps, ticks, tol=0.1):
+    for _ in range(ticks):
+        await world.tick()
+    assert abs(world.plant.I - amps) < tol, f"not at {amps} A: {world.plant.I:.2f}"
+
+
+@cocotb.test()
+async def fast_flip_opens_the_bridge_at_current(dut):
+    """fastoff_flip: the flip request drops the bridge (and both DACs) at
+    30 A at once, the current falls through the TVS in microseconds, the
+    polarity changes only after the zero window and the dead time (pin
+    monitor), and the loop re-settles at the new sign."""
+    extra = dict(fastoff_flip=1)
+    await setup(dut, run_cfg(setpoint=0, **extra))
+    await arm(dut)
+    world = World(dut, sp_amps=30.0, ch=MOT_FAST, cfg_extra=extra)
+    await _hold(world, 30.0, 1000)
+    pol = int(dut.bridge_polarity_o.value)
+
+    dut.flip_req_i.value = 1
+    await ClockCycles(dut.aclk, 10)
+    dut.flip_req_i.value = 0
+    await ClockCycles(dut.aclk, 2)
+    assert int(dut.bridge_enable_o.value) == 0, "fast flip did not open the bridge"
+    assert sts(dut)["fsm_state_name"] == "OPEN_RAMP"
+    assert dacs(dut) == (0, 0)
+
+    states = []
+    for k in range(400):
+        await world.tick()
+        states.append(sts(dut)["fsm_state_name"])
+        if int(dut.bridge_polarity_o.value) != pol and states[-1] == "RUN":
+            break
+    else:
+        raise AssertionError(f"fast flip never completed: {states[-5:]}")
+    assert world.plant.I == 0.0 or world.plant.I < 30.0
+    await _hold(world, 30.0, 1300)
+    assert sts(dut)["sp_sign_mismatch"] == 0
+    # the flip itself (open -> polarity edge) is bounded by the window
+    # holdoff, not by the 2 ms freewheel: compare with the closed-bridge flip
+    first_flip = states.index("FLIP") if "FLIP" in states else None
+    assert first_flip is not None and first_flip * T_S < 20e-6, \
+        f"polarity changed only after {first_flip} ticks"
+
+
+@cocotb.test()
+async def zero_setpoint_opens_the_bridge_and_recloses(dut):
+    """fastoff_zero: stepping the setpoint to 0 at 50 A opens the bridge
+    at once (ZERO_OPEN), the current is gone within ~30 us (bridge-closed
+    freewheel: ~1 ms); the bridge stays open while the setpoint is zero and
+    re-closes, same polarity, when it returns to 50 A."""
+    extra = dict(fastoff_zero=1, **SNAP_ON)
+    await setup(dut, run_cfg(setpoint=0, **extra))
+    await arm(dut)
+    # setpoint register 0 at the arm edge -> straight to ZERO_OPEN
+    await ClockCycles(dut.aclk, 128 * 4)
+    assert sts(dut)["fsm_state_name"] == "ZERO_OPEN"
+    world = World(dut, sp_amps=50.0, ch=MOT_FAST, cfg_extra=extra)
+    await _hold(world, 50.0, 1300)
+    pol = int(dut.bridge_polarity_o.value)
+    assert sts(dut)["fsm_state_name"] == "RUN"
+
+    world.sp_amps = 0.0
+    t_zero = None
+    for k in range(200):
+        await world.tick()
+        if k >= 2:
+            assert int(dut.bridge_enable_o.value) == 0
+        if t_zero is None and world.plant.I == 0.0:
+            t_zero = (k + 1) * T_S
+    assert t_zero is not None and t_zero < 50e-6, f"current gone after {t_zero}"
+    assert sts(dut)["fsm_state_name"] == "ZERO_OPEN"
+    assert sts(dut)["snapped"] == 1
+    assert int(dut.bridge_polarity_o.value) == pol
+
+    world.sp_amps = 50.0
+    await _hold(world, 50.0, 1300)
+    assert sts(dut)["fsm_state_name"] == "RUN"
+    assert int(dut.bridge_enable_o.value) == 1
+    assert int(dut.bridge_polarity_o.value) == pol
+
+
+@cocotb.test()
+async def fast_stop_opens_the_bridge_at_current(dut):
+    extra = dict(fastoff_stop=1)
+    await setup(dut, run_cfg(setpoint=0, **extra))
+    await arm(dut)
+    world = World(dut, sp_amps=30.0, ch=MOT_FAST, cfg_extra=extra)
+    await _hold(world, 30.0, 1000)
+    world.cfg_extra = dict(extra, servo_enable=0)
+    for k in range(100):
+        await world.tick()
+        if k >= 1:
+            assert int(dut.bridge_enable_o.value) == 0
+        if sts(dut)["fsm_state_name"] == "IDLE":
+            break
+    else:
+        raise AssertionError("fast stop never reached IDLE")
+    assert k * T_S < 30e-6 and world.plant.I == 0.0

@@ -41,6 +41,13 @@ from .logs import StatusLog, capture_path, prune_auto_captures
 FLAG_NAMES = ("armed", "bridge_en", "polarity", "tripped", "out_sat",
               "u_floor", "snapped", "int_railed", "sp_sign_mismatch",
               "timeout_hold", "fault")
+# FSM states in which the servo is running: ZERO_OPEN (rev 6) is RUN with
+# a zero setpoint and the bridge opened (fastoff_zero) -- normal, and what
+# RUN turns into at once after an Enable at 0 A with fastoff_zero on
+RUNNING = ("RUN", "ZERO_OPEN")
+# rev-6 fast turn-off: CFG bit -> what it opens the bridge for
+FASTOFF = (("fastoff_flip", "flips"), ("fastoff_stop", "stops"),
+           ("fastoff_zero", "a zero setpoint"))
 # CFG fields that change in normal operation (not part of the profile)
 LIVE_FIELDS = ("servo_enable", "sp_source", "open_loop", "setpoint",
                "capture_sel", "int_clear", "fifo_rst", "trip_ack",
@@ -169,12 +176,16 @@ def out1_actual(s: dict, rb: dict | None) -> tuple[int, str]:
     - "off": bridge enable low, or TRIP/TRIPPED (out_kill): exactly 0. In
       IDLE the integrator is held, so u14 stays at its last value;
     - "open": open loop, the setpoint clamped to +-out_clamp drives OUT1;
+    - "bridge_open": rev-6 fast turn-off (OPEN_RAMP, ZERO_OPEN): the
+      bridge opened at current, both DACs exactly 0;
     - "snapped": zero-setpoint snap (rev 5, STS b14): OUT1 forced to
       exactly 0 in RUN while u14 still shows the PI output;
     - "closed": u14 (with dither on, OUT1 moves by a count around it).
     Below the handoff deadband OUT1 is 0 (OUT2 is unused in the MVP).
     open_loop/out_clamp/deadband come from the CFG read-back (refreshed
     every cfg_refresh_s); without one, closed loop and no deadband."""
+    if s["fsm_state_name"] in ("OPEN_RAMP", "ZERO_OPEN"):
+        return 0, "bridge_open"
     if not s["bridge_en"] or s["fsm_state_name"] in ("TRIP", "TRIPPED"):
         return 0, "off"
     if s.get("snapped"):
@@ -533,6 +544,7 @@ class CoilServoChannel(Device):
             red.append("TRIP: over-current, current freewheeling down")
         if s["timeout_hold"]:
             red.append("TIMEOUT_HOLD: a flip never reached zero current")
+        red.extend(self._fastoff_alarms())
         if s["fault"]:
             red.append("FAULT input (DIO5) high -- not wired in the MVP")
         if s["sp_sign_mismatch"]:
@@ -572,6 +584,31 @@ class CoilServoChannel(Device):
         return {"in1": c["in1_offset"], "in2": c["in2_offset"],
                 "in1_amps": _f(c["in1_offset"] * lsb),
                 "in2_amps": _f(c["in2_offset"] * lsb)}
+
+    def _fastoff_board(self) -> list:
+        """Rev 6: the events the board opens the bridge at current for."""
+        rb, s = self.readback, self.sts
+        if rb is None or s is None or s["map_rev"] != MAP_REV:
+            return []
+        return [what for k, what in FASTOFF if rb.get(k)]
+
+    def _fastoff_alarms(self) -> list:
+        """Red: the board opens the bridge at current although the profile
+        it is matched to (or every profile) says the blocking diode and
+        TVS are not fitted -- config.py refuses such a profile, so someone
+        wrote the bits by hand."""
+        on = self._fastoff_board()
+        if not on:
+            return []
+        name = self.scale_profile()
+        ch = self.profiles.get(name) if name else None
+        if ch is not None and ch["model"].fastoff_fitted:
+            return []
+        return [f"FAST TURN-OFF ON ({', '.join(on)}) but "
+                f"[{name or '?'}] says the blocking diode + bridge TVS are "
+                f"NOT fitted (fastoff_fitted = false): opening the bridge at "
+                f"current dumps the coil energy into the supply. Apply the "
+                f"profile or stop."]
 
     def _offset_warnings(self) -> list:
         """Amber: IN1 never calibrated; the board's offsets differ from
@@ -623,6 +660,9 @@ class CoilServoChannel(Device):
                     "i_supply_max": (self.models[k].I_supply_max
                                      if k in self.models else None),
                     "offsets": self._profile_offsets(k),
+                    "fastoff_fitted": (bool(self.profiles[k]["model"]
+                                            .fastoff_fitted)
+                                       if k in self.profiles else None),
                     "error": self.profile_errors.get(k)} for k in self.order],
                 "held": list(self.held),
                 "scale_profile": scale,
@@ -636,6 +676,7 @@ class CoilServoChannel(Device):
                 "auto_capture_s": self.auto_capture_s,
                 "zero": self.zero_result,
                 "zero_conditions": ZERO_CONDITIONS,
+                "fastoff_board": self._fastoff_board(),
             }
             if self.pending:
                 left = self.pending["deadline"] - time.monotonic()
@@ -975,11 +1016,14 @@ class CoilServoChannel(Device):
             p = self.pending
         if not p:
             return
-        if s["fsm_state_name"] == "RUN":
+        if s["fsm_state_name"] in RUNNING:
             with self._lock:
                 self.pending = None
-            self._set_notice("info", "RUN reached")
-            self._event("run", "arm edge seen, RUN")
+            st = s["fsm_state_name"]
+            self._set_notice("info", "RUN reached" + (
+                " (ZERO_OPEN: zero setpoint, bridge open)"
+                if st == "ZERO_OPEN" else ""))
+            self._event("run", f"arm edge seen, {st}")
         elif s["tripped"] or time.monotonic() > p["deadline"]:
             with self._lock:
                 self.pending = None
@@ -1257,7 +1301,7 @@ class CoilServoChannel(Device):
         while not self._job_cancel.is_set():
             with self._lock:
                 s = self.sts
-            if s and s["fsm_state_name"] == "RUN":
+            if s and s["fsm_state_name"] in RUNNING:
                 return True
             if (s and s["tripped"]) or time.monotonic() > deadline:
                 self._job_phase(
@@ -1343,7 +1387,7 @@ class CoilServoChannel(Device):
         last_f = None
         try:
             while not self._job_cancel.is_set():
-                if self._state() != "RUN":
+                if self._state() not in RUNNING:
                     self._job_phase(f"ended: state {self._state()}")
                     return
                 with self._io:
