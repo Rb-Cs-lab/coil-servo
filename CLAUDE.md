@@ -15,9 +15,9 @@ rest of the repo in line is [docs/mvp_rewrite_brief.md](docs/mvp_rewrite_brief.m
 quick-reference facts; if they conflict, flag it — don't silently pick one.
 
 **Status (2026-11-19).** **Register map rev 7 is deployed on the bench**
-(build ID `6bf3e93`, 2026-11-18, timing met: WNS +0.215 ns; branch
-`rev7-ff`, built on `rev6-test`; **neither branch is merged to main yet**;
-the image is on the Drive, not yet in bitstreams/).
+(build ID `6bf3e93`, 2026-11-18, timing met: WNS +0.215 ns; `rev6-test`
+and `rev7-ff` merged into main 2026-11-19; `bitstreams/coil_servo.bit.bin`,
+rev 6 and rev 5 images archived there).
 - **Rev 6 = fast turn-off with the bridge opened at current** (ctrl b22
   `fastoff_flip`, b23 `fastoff_stop`, b24 `fastoff_zero`; FSM states 10
   OPEN_RAMP, 11 ZERO_OPEN; [docs/fast_turnoff.md](docs/fast_turnoff.md)).
