@@ -208,6 +208,24 @@ Click a card for its page.
   someone loaded values without storing them (Apply profile puts the
   stored ones back). Also: the last zero calibration and its buttons (see
   the controls below).
+- **Setpoint feedforward (register map rev 7, docs/feedforward.md):** the
+  pass transistors need a certain OUT1 voltage for each current. With
+  feedforward on, the FPGA looks the setpoint up in a 16-point table of
+  these voltages (measured on the hardware) and jumps OUT1 straight there;
+  the PI only adds the correction — steps and reversals 2–4× faster on the
+  bench. The panel shows, for this card's profile and for the board (only
+  when the board holds that profile): on/off (`ff_enable`), the margin
+  (`ff_margin_counts`, counts taken off every table point so the table
+  aims slightly low), the table spacing, when the curve was measured (the
+  date comment in channels.toml) and the up-ramp rate (kept slow with
+  feedforward — the transistors overshoot when OUT1 jumps). A plot shows
+  the table (OUT1 counts vs current, a line), the stored curve (dots), the
+  board's table as a red dashed line when it differs, and the last scan
+  (open circles) until it is stored. The **feedforward acting** flag
+  (`ff_on`) is lit while the table is in use (RUN, closed loop,
+  `ff_enable` = 1); the status log has an `ff_on` column. On/off and the
+  margin are profile settings like the snap: change them in channels.toml
+  and Apply profile.
 - **Configuration:** what `python -m coil_servo_host.config <channel>`
   prints (supply limit for bench profiles, sensor scale, pass-bank gain,
   dead zone, floor, clamp, trip, zero window, ramps, PI gains, dither,
@@ -235,7 +253,7 @@ look at the logic board.
 
 ### Old bitstream
 
-The host code knows register-map revision 6. A board still running an
+The host code knows register-map revision 7. A board still running an
 older bitstream (the 2026-08-27 image reports revision 0) has a different
 register layout: writing would land values in the wrong registers. The
 dashboard then shows **OLD BITSTREAM** in red and is **monitoring only** for
@@ -361,6 +379,19 @@ written to the action log with the client's IP address.
   step the generator through the frequencies and each clean new frequency
   adds a point to the Bode plot (gain and phase) and to
   `..._sweep.csv`. STOP ends it.
+
+- **Measure curve…** (in the *Setpoint feedforward* panel) — as `python
+  -m coil_servo_host.ffcal`: applies the card's profile, arms in software
+  (so DIO4 must be low or unplugged — checked) and holds 5 %, 10 %, …
+  100 % of the rated current in closed loop with feedforward off, up the
+  list and back down, recording the OUT1 command at each; about 10 s, then
+  it stops and puts the profile back. Only in IDLE. The result table gives
+  the up and down values and their difference (the transistors warming
+  during the scan — the table's uncertainty). Measuring stores nothing.
+  Then **Store in channels.toml** writes `ff_curve_amps` /
+  `ff_curve_counts` into the profile's section with the date as a comment
+  (`ff_enable` and the margin unchanged); the board gets the new table
+  with *Apply profile*. Commit the changed channels.toml.
 
 - **Zero calibration…** (in the *Zero offsets* panel) — as `python -m
   coil_servo_host.zero`: records the raw IN1/IN2 readings (before the
