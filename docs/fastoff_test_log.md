@@ -1,8 +1,8 @@
-<!-- Generated from the live log page used during the session (logs/testlog/benchtop_test_log.md on the lab PC; logs/ is not in git). Narrative lab notes: docs/lab_notes_2026-11.md. -->
+<!-- Generated from the live log page used during the session (logs/testlog/benchtop_log.html on the lab PC; logs/ is not in git). Narrative lab notes: docs/lab_notes_2026-11.md. -->
 
 # Benchtop Test Log 2 — the old test list, side by side with the new setup
 
-2026-11-17 to 11-18 · Same bench as Benchtop Test Log 1 (bench supply 5 V / ≤ 3 A, profile `mot_bench`, the 12-turn test coil with its damper). New in the circuit: a blocking diode in the supply's + lead and a surge protector (TVS) across the bridge; firmware rev 6 (commit 92d4f15, branch `rev6-test`) that can open the bridge while current flows. Each test below links to the same test in log 1.
+2026-11-17 to 11-19 · Same bench as Benchtop Test Log 1 (bench supply 5 V / ≤ 3 A, profile `mot_bench`, the 12-turn test coil with its damper). New in the circuit: a blocking diode in the supply's + lead and a surge protector (TVS) across the bridge; firmware rev 6 (commit 92d4f15, branch `rev6-test`) that can open the bridge while current flows. Each test below links to the same test in log 1. From 11-18 afternoon: firmware rev 7 (commit 6bf3e93, branch `rev7-ff`) with setpoint feedforward; from 11-18 evening the coil damper is 8.2 Ω + 10 µF (was 3.2 Ω + 10 µF).
 
 ## How to read this log
 
@@ -22,7 +22,11 @@ Every test from log 1 that still means something was repeated. Results are given
 
 **Rising is about 2× slower — because of the controller settings, not the new parts.** On 11-18 the controller began to oscillate at 7 kHz (the coil-with-damper resonance) above 1.85 A, so its settings were lowered (re-tune). With the 11-17 settings the fast switch-off gave the fastest full reversal so far, 0.89 ms (log 1: 0.95 ms); with the 11-18 settings the same reversal takes 1.29 ms to reach 90 % (log 1: 0.74 ms). The choice of settings is open (see Next).
 
-**Open findings:** an unexplained drop-then-trip during one 2 A hold and one burst of 220 kHz on the reading (11-18, same half hour, not reproduced); the damper's resonance moved after it was reconnected; the switch-off burst on the reading has grown; the rail bar stays charged after a fast switch-off without the damper.
+**Feedforward (rev 7, 11-18/19) gives the speed back without touching the settings:** the board now jumps OUT1 straight to a measured value for the requested current and the controller only corrects the rest. 0 → 2 A is within 5 % after **0.39 ms** (11-18 settings alone: 1.29 ms), the one-command reversal reaches 90 % of −2 A in **0.55 ms** (1.30 ms) and is within 2 % after ≈ 1 ms (≈ 1.8–2.7 ms). Holds, noise and 50 of 50 shot sequences are unchanged. It needs a slower setpoint ramp on the bench (5 A/ms): the transistors overshoot by themselves when OUT1 jumps (details).
+
+**The 220 kHz burst has a trigger:** the bridge closing again from “open at zero” at the start of a step (6 of 10 pulses; 0 of 10 with the bridge kept closed). It is on the reading, not in the coil (details).
+
+**Open findings:** an unexplained drop-then-trip during one 2 A hold (11-18, not reproduced); a 229 kHz burst on the reading when the bridge closes again (source not found yet); the damper's resonance moved after it was reconnected; the switch-off burst on the reading has grown; the rail bar stays charged after a fast switch-off without the damper.
 
 ## Side by side, test by test
 
@@ -264,6 +268,21 @@ Log 1's tests in log 1's order. “New setup” = 11-18 (rev 6, bridge opened, n
 
 **To do:** power the LEM from its own supply; check the IN1 cable, tee and connectors; the firmware stall detection (OUT1 rising while the reading falls) is still on the list.
 
+### Update 11-18 evening: what sets off the 229 kHz burst
+
+**Why.** Looking back, the burst is in *every* 11-18 step from zero with the slow settings (0 → 0.5, 1, 1.5 A, and the rev 7 repeat with feedforward off), lasting 1–2.4 ms from the step; single readings reach 2.8–3.1 A, above the 2.79 A trip level — only the “4 readings in a row” rule (`trip_ticks` = 4) kept it from tripping. It is in no log 1 record and in no hold.
+
+**How.** (1) The full-speed recording (8 ns per point, 131 µs long) shows one clean line at **229 kHz**, ≈ ±12 mV at IN1 (≈ ±2.6 A on the current scale): a real 229 kHz signal, not something faster seen through the 1 µs averaging. (2) It appeared once with **no current at all** (the bridge was held open by the safety board at the time, the board still raised the bridge-enable line). (3) Ten 0 → 2 A pulses each way:
+
+| Start of the pulse | Burst |
+|---|---|
+| From 0 A with the bridge open at zero (`fastoff_zero` on): the bridge closes at the step | 6 of 10, up to ±2 A, 0.8–1.8 ms |
+| From 0 A with the bridge kept closed (`fastoff_zero` off) | 0 of 10 |
+| From 0.25 A (bridge already closed) | 0 of 10 |
+| Holds 0.25–2 A | only a 10 mA line at 229 kHz (always there) |
+
+**Result:** the burst is set off by the bridge **closing again**, not by the current or the controller. Something on the bridge-driver side (the drivers' isolated supplies or their decoupling are the first suspects) oscillates at 229 kHz for 1–2 ms after the drivers are switched on, and IN1 picks it up. With feedforward on there was **no burst in 83 re-closes** (33 steps from zero and 50 shot sequences, 11-18/19), so the slow start from zero current seems to be needed too; with feedforward the current leaves the low range within ≈ 0.1 ms. **To do:** scope on the driver supplies and on IN1 at the Red Pitaya, triggered on the bridge-enable line (DIO1) rising. Data: `logs/fastoff/burst_cause.json`, `map_229k.json`, `logs/ff/hf_raw_*.npy`.
+
 ## The change: blocking diode and TVS (11-17)
 
 **Why.** Turning the current down always kept the bridge closed: the coil's current circulates through the bridge's built-in diodes and dies away slowly (≈ 1.3 ms from 100 A on the MOT coils). Opening the bridge is much faster, but the coil's current would then be pushed back into the supply (log 1, 3h: the supply jumped 2.5–3.2 V at 2 A). The blocking diode stops that; the TVS takes the coil's energy instead. Details: docs/fast_turnoff.md.
@@ -355,9 +374,87 @@ Straight across the bridge, banded end (cathode) on the rail bar, other end on t
 - **The resistor sets the reversed current**, not the capacitor. A one-way (diode) damper is not useful.
 - **Recommendation for Test 4:** first look for ringing during holds with **no damper** (5–20 A and 100 A); if there is none, fit none. Full report: `ansys/results/damper_study.html`.
 
+## Rev 7 · Setpoint feedforward (11-18/19) [passed, bench settings chosen]
+
+**Why.** With the 11-18 controller settings (kp 18.7, ki 374, needed because of the 7 kHz coil–damper resonance) every rise is ≈ 2× slower than in log 1: the controller has to *find* the right OUT1 by slowly adding up the error. **Feedforward** gives it the answer up front: the board holds a table “OUT1 needed for this current”, measured on the hardware, and sets OUT1 from it the moment the setpoint changes; the controller only corrects the last few percent. The controller settings, and so its stability, stay the same. Background and setup: `docs/feedforward.md`.
+
+**How.** Firmware rev 7 (commit 6bf3e93, timing met), deployed 11-18. The table: `python -m coil_servo_host.ffcal mot_bench --write` holds 11 currents from 0.22 to 2.2 A, up and back down, and stores the OUT1 each one needs (warm transistors, after a few minutes at 2 A). Tests FF0–FF5, all with the bridge-opening switch-off on.
+
+| Test | What | Result |
+|---|---|---|
+| FF0 (11-18) | Rev 7 with feedforward **off**: one step, six reversals | Same as rev 6: 0 → 2 A 98 % at 1.40 ms (Log 2: 1.41 ms); reversal 90 % at 1293 µs (1289 µs) |
+| FF1 (11-18, 11-19) | The table measured warm: 11-18 twice, 11-19 once (after the damper change) | Repeatable to ±1–2 counts (OUT1 3659 at 0.22 A … 3947 at 2.2 A); up and down passes agree within 1 count |
+| FF2 (11-18, 11-19) | Steps 0 → 0.5 / 1 / 1.5 / 2 A with feedforward on, several ramp rates and table aims | see below |
+| FF3 (11-19) | One-command reversal ±2 A, 12 each, feedforward on and off | 12 / 12 OK; 90 % of −2 A at **555 µs** (off: 1298 µs) |
+| FF4 (11-19) | Holds 0.5 / 1 / 2 A on and off; the shot sequence 50 times | Holds identical; **50 / 50** shots |
+| FF5 (11-19) | Steps right after a 10 min hold at 2 A (warm transistors) | Overshoot grows from +4–6 % to **+7–12 %** (1–2 A; up to 150 mA); times to 90 % and to within 5 % unchanged (0.38 ms at 2 A). During the 10 min hold OUT1 fell by 17 counts (3934 → 3917): warmer transistors need less, so a table measured after a few minutes aims ≈ 15 counts high once they are hot. Acceptable on the bench; for the MOT measure the table at the operating temperature |
+
+### FF2 · What the transistors do when OUT1 jumps
+
+With the default setpoint ramp (200 A/ms) feedforward reaches 90 % within ≈ 30 µs, but the current **overshoots by 30–80 %**; the 2 A and 2.2 A steps went past 2.79 A and the over-current trip opened the bridge (correctly). The cause is in the power stage, not the controller: with the controller switched off (gains 0, OUT1 from the table alone) the current still overshoots right after the step and then sinks over a few ms to a lower final value. The faster OUT1 rises, the bigger the overshoot:
+
+| Table alone, setpoint ramp | 200 A/ms | 20 A/ms | 10 A/ms | 5 A/ms |
+|---|---|---|---|---|
+| Overshoot, 0 → 1 A / 0 → 2 A | trip at 2 A | +49 / +38 % | +23 / +18 % | +14 / +7 % |
+
+Likely a short-lived effect inside the transistors right after they turn on (heating of the chip, or the gate charge), not yet understood. The old, slow controller never showed it because it approached the turn-on point gradually. **To check at 100 A** in Test 4. Two ways to live with it: a slower setpoint ramp, and a table aimed a little low (the controller adds the rest).
+
+### FF2 · The two candidate settings (11-19, damper 8.2 Ω)
+
+![Steps with and without feedforward](img/fastoff/ff_steps_1119.png)
+
+*Grey: Log 2 (11-18, no feedforward; the wide band is the 229 kHz burst on the reading, see 11-18 findings). Orange and blue: feedforward on 11-19. 16 µs averages.*
+
+| 0 → 0.5 / 1 / 1.5 / 2 A | Log 2 (no feedforward) | Aim 40 counts low, 10 A/ms | **Aim 10 counts low, 5 A/ms (chosen)** |
+|---|---|---|---|
+| 90 % reached | 1.90 / 1.42 / 1.14 / 1.09 ms | 0.72 / 0.41 / 0.16 / 0.20 ms | **0.10 / 0.19 / 0.28 / 0.36 ms** |
+| Within 5 % after (1–2 A) | 1.96 / 2.45 / 1.29 ms | 0.97 / 0.67 / 0.56 ms | **0.33 / 0.29 / 0.39 ms** |
+| Overshoot | +3 to +12 % | +3 to +11 % | +4 to +14 % (+14 % only at 0.5 A, ≈ 70 mA) |
+
+**Choice:** aim 10 counts low, 5 A/ms. Aiming 40 counts low leaves 0.5–1 A steps 10–20 % short for milliseconds (the slow controller has to make up the difference). With the 5 A/ms ramp the rise time is set by the ramp (0.4 ms for 2 A), and the current follows it closely. Set in `channels.toml` `[mot_bench]`: `ff_enable = 1`, `ff_margin_counts = 10`, `slew_up_amps_per_ms = 5` (was 200). The 0.5 A “within 5 %” time is not given: ±25 mA is about the size of the reading's noise.
+
+### FF3 · One-command reversal
+
+![Reversal with and without feedforward](img/fastoff/ff_reversal_1119.png)
+
+*Mean of 12 reversals each, 11-19, same settings except feedforward (and the up-ramp: 5 A/ms with it, 200 A/ms without).*
+
+| ±2 A, one command, mean of 12 | Log 2 (11-18) | Feedforward off (11-19) | **Feedforward on (11-19)** |
+|---|---|---|---|
+| At zero | 34 µs | 45 µs | 42 µs |
+| 90 % of −2 A | 1289 µs | 1298 µs | **555 µs** |
+| Within ±2 % | ≈ 2.7 ms | 1.8 ms | **0.96 ms** |
+| Overshoot | — | +0.6 % | +4 % (−2.09 A), then a 7 kHz ring for ≈ 0.4 ms |
+
+**Result:** 12 of 12 OK each way; the reversal is ≈ 2.3× faster to 90 % and ≈ 1.9× faster to ±2 %. With feedforward the current is within 16 mA of −2 A from 0.8 ms on; without, it is still at −1.41 A then. (The 11-19 “feedforward off” run is faster to ±2 % than Log 2's figure: the damper is now 8.2 Ω and the averaged trace is less noisy than the single-run figure of Log 2.)
+
+### FF4 · Holds and the shot sequence
+
+| Hold, 3 recordings of 16.8 ms each | 0.5 A | 1 A | 2 A |
+|---|---|---|---|
+| Mean, feedforward off → on | 0.4924 → 0.4922 A | 1.0120 → 1.0119 A | 1.9963 → 1.9963 A |
+| Scatter, 16 µs averages | 16.0 → 16.0 mA | 16.8 → 14.1 mA | 21.2 → 20.9 mA |
+| Strongest line 3–20 kHz | 3–4 → 3–4 mA (4–7 kHz) | 4–5 → 3–4 mA (4–7 kHz) | 9–12 → 9–11 mA (7 kHz) |
+
+![50 shot sequences with feedforward](img/fastoff/ff_shots_1119.png)
+
+*11-19, feedforward on: +2 A, +1 A, sign change + flip to −2 A, zero, stop; 50 times from a stopped servo.*
+
+| Shot sequence ×50 | Log 2 (11-18) | **Feedforward (11-19)** |
+|---|---|---|
+| Shots OK | 50 / 50 | **50 / 50** |
+| Hold error +2 / +1 / −2 A (mean) | −6 / +14 / +5 mA | −4 / +12 / +4 mA |
+| Shot-to-shot scatter | 2.1 / 2.8 / 3.0 mA | 1.0 / 1.7 / 0.9 mA |
+
+**Result:** holds are the same with and without feedforward (it only acts on changes). In the shot sequence the holds are now settled when they are measured: the remaining −4 / +12 / +4 mA are exactly the setpoint register's rounding (one setpoint count = 27 mA: 2 A is sent as 1.9961 A, 1 A as 1.0117 A), and the shot-to-shot scatter halved. No 229 kHz burst in any of the 50 shots.
+
+Data: `logs/ff/` (ff0_*, ff2*_*: 11-18; d82_*, ff3_*, ff4_*, ff5_*, ffcal_1119.txt: 11-19). The bench test scripts are the ones of Log 2 with feedforward settings passed in.
+
 ## Next
 
-- **Decide the bench controller settings** (11-18 trade-off): keep kp 18.7 / ki 374 (stable to 2.2 A, rises ≈ 2× slower), or restore the damper resonance first (check whether the coil moved; LCR the damper capacitor and connections) and go back towards 31.2 / 942, or keep 31.2 / 942 with the bench limited to 1.8 A.
+- ~~Decide the bench controller settings~~ — settled for the bench (11-19): kp 18.7 / ki 374 with feedforward and a 5 A/ms up-ramp; faster than log 1 at every step. (31.2 / 942 now oscillates at 8.4 kHz in a hold even with the 8.2 Ω damper.)
+- **229 kHz burst at bridge re-close:** scope on the bridge drivers' supplies and IN1, triggered on DIO1 rising (details).
+- **Feedforward at 100 A (Test 4):** measure the table on the MOT with cooling water on; check whether the transistors also overshoot when OUT1 jumps at high current, and set the MOT up-ramp from that.
 - **The rule for the control computer** with the fast flip: send the flip and the setpoint sign change together (or flip first), not setpoint first.
 - **Intermittent reading faults** (11-12 surge, 11-18 drop-then-trip and 220 kHz burst): power the LEM separately; check the IN1 cable, tee and connectors; firmware stall detection.
 - **PC software:** refuse a ki-shift change while the servo runs.
