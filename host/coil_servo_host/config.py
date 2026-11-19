@@ -21,7 +21,9 @@ from dataclasses import replace
 from pathlib import Path
 
 from coil_servo_model.channels import BENCH_CHANNELS, CHANNELS, Channel
-from coil_servo_model.fixed_point import decode_gain, encode_gain, slew_rate_code
+from coil_servo_model.fixed_point import (decode_gain, encode_gain, ff_shift_for,
+                                         ff_table_from_curve, slew_rate_code)
+from coil_servo_model.registers import FF_TABLE_FIELDS
 from coil_servo_model.loop import T_S
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "channels.toml"
@@ -235,6 +237,8 @@ def load_channel(name: str, path: Path = CONFIG_PATH) -> dict:
     if not 0 <= u_floor < out_clamp:
         refuse(f"floor {u_floor} counts must be below the clamp {out_clamp}")
 
+    ff = ff_registers(table, i_fs, trip_amps, u_floor, out_clamp, refuse)
+
     kp, ki = loop_gains(table, i_fs, refuse)
     kp_mant, kp_shift = encode_gain(kp, shift_bits=5)
     ki_mant, ki_shift = encode_gain(ki * T_S, shift_bits=6)
@@ -266,6 +270,7 @@ def load_channel(name: str, path: Path = CONFIG_PATH) -> dict:
         snap_enable=snap_en,
         snap_thresh=amps_to_counts(snap_amps, i_fs),
         **fastoff,
+        **ff,
         in1_offset=amps_to_counts(in1_off, i_fs),
         in2_offset=amps_to_counts(in2_off, i_fs),
         # board LEDs: a fixed pattern marks bench settings (0 = production)
@@ -273,6 +278,49 @@ def load_channel(name: str, path: Path = CONFIG_PATH) -> dict:
     )
     return {"name": name, "host": table["board_host"], "i_fs": i_fs,
             "i_rated": i_rated, "bench": bench, "model": model, "cfg": cfg}
+
+
+def ff_registers(table: dict, i_fs: float, trip_amps: float, u_floor: int,
+                 out_clamp: int, refuse) -> dict:
+    """Setpoint feedforward registers (register map rev 7) from
+    channels.toml: ff_enable, and the curve measured by
+    `python -m coil_servo_host.ffcal <channel>` (ff_curve_amps,
+    ff_curve_counts: the OUT1 command that holds each current), optional
+    ff_margin_counts. The table spacing is chosen so the table reaches the
+    trip level. Without a curve every table word is 0 and ff is off."""
+    en = int(table.get("ff_enable", 0))
+    if en not in (0, 1):
+        refuse(f"ff_enable = {en} must be 0 or 1")
+    amps = table.get("ff_curve_amps")
+    cnts = table.get("ff_curve_counts")
+    off = dict(ff_enable=0, ff_shift=0, **{f: 0 for f in FF_TABLE_FIELDS})
+    if amps is None and cnts is None:
+        if en:
+            refuse("ff_enable = 1 needs the measured curve ff_curve_amps / "
+                   "ff_curve_counts: run python -m coil_servo_host.ffcal "
+                   "<channel> --write")
+        return off
+    if amps is None or cnts is None or len(amps) != len(cnts) or len(amps) < 3:
+        refuse("ff_curve_amps and ff_curve_counts must both be given, with "
+               "the same number (>= 3) of points")
+    amps = [float(a) for a in amps]
+    cnts = [float(c) for c in cnts]
+    if amps[0] <= 0 or any(b <= a for a, b in zip(amps, amps[1:])):
+        refuse("ff_curve_amps must be > 0 and strictly increasing")
+    if any(b < a for a, b in zip(cnts, cnts[1:])):
+        refuse("ff_curve_counts must not decrease (more current never needs "
+               "less OUT1): remeasure")
+    if not (u_floor <= cnts[0] and cnts[-1] <= out_clamp):
+        refuse(f"ff_curve_counts must lie between the floor ({u_floor}) and "
+               f"the clamp ({out_clamp}) counts")
+    margin = int(table.get("ff_margin_counts", 0))
+    if not 0 <= margin <= 500:
+        refuse(f"ff_margin_counts = {margin} must be 0 .. 500")
+    shift = ff_shift_for(amps_to_counts(trip_amps, i_fs))
+    vals = ff_table_from_curve(amps, cnts, i_fs, shift, u_floor, out_clamp,
+                               margin)
+    return dict(ff_enable=en, ff_shift=shift,
+                **{f: v for f, v in zip(FF_TABLE_FIELDS, vals)})
 
 
 def loop_gains(table: dict, i_fs: float, refuse) -> tuple[float, float]:
@@ -423,6 +471,7 @@ def summary_rows(ch: dict) -> list:
              m.fastoff_fitted and any(c.get(k) for k in
                                       ("fastoff_flip", "fastoff_stop",
                                        "fastoff_zero")) else ""))),
+        ("setpoint feedforward", ff_text(c, m.amps_per_lsb)),
         ("IN1 / IN2 zero offset", f"{c['in1_offset'] * m.amps_per_lsb:+.3f} A "
          f"({c['in1_offset']:+d} counts) / "
          f"{c['in2_offset'] * m.amps_per_lsb:+.3f} A "
@@ -433,6 +482,17 @@ def summary_rows(ch: dict) -> list:
          if c["led"] else "all off (production settings)"),
     ]
     return rows
+
+
+def ff_text(c: dict, amps_per_lsb: float) -> str:
+    """One line on the feedforward table (register map rev 7)."""
+    vals = [c[f] for f in FF_TABLE_FIELDS]
+    if not any(vals):
+        return "off (no measured curve: python -m coil_servo_host.ffcal)"
+    step = (1 << c["ff_shift"]) * amps_per_lsb
+    return (f"{'on' if c['ff_enable'] else 'OFF (table loaded)'}: OUT1 "
+            f"{vals[0]} at 0 A ... {vals[-1]} at {15 * step:.3g} A, "
+            f"points every {step:.3g} A; the PI adds the correction")
 
 
 def summary_header(ch: dict) -> str:

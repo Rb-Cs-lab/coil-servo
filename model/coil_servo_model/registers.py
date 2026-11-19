@@ -25,6 +25,8 @@ CFG_FIELDS = {
     "fastoff_flip":   (0, 22, 1, False),
     "fastoff_stop":   (0, 23, 1, False),
     "fastoff_zero":   (0, 24, 1, False),
+    "ff_enable":      (0, 25, 1, False),
+    "ff_shift":       (0, 26, 4, False),
     "setpoint":       (1, 0, 14, True),
     "kp_mant":        (2, 0, 18, True),
     "kp_shift":       (3, 0, 5, False),
@@ -48,6 +50,11 @@ CFG_FIELDS = {
     "in2_offset":     (22, 0, 14, True),
     "snap_thresh":    (23, 0, 14, False),
 }
+# setpoint feedforward table (rev 7): T[k] at word 24 + k // 2, low half for
+# even k, high half (bit 16) for odd k
+for _k in range(16):
+    CFG_FIELDS[f"ff_t{_k}"] = (24 + _k // 2, 16 * (_k % 2), 14, False)
+FF_TABLE_FIELDS = [f"ff_t{_k}" for _k in range(16)]
 
 CFG_WORDS = 32      # CFG_DATA_WIDTH = 1024 bits
 # Register-map revision reported in STS word 0 bits 31:24. Bump it (here,
@@ -56,8 +63,10 @@ CFG_WORDS = 32      # CFG_DATA_WIDTH = 1024 bits
 # build; rev 4 adds the IN1/IN2 offset registers and the build ID; rev 5
 # the zero-setpoint snap (ctrl b21 snap_enable, word 23, STS b14); rev 6
 # the fast turn-off with the bridge opened at current (ctrl b22-b24,
-# FSM states 10 OPEN_RAMP and 11 ZERO_OPEN).
-MAP_REV = 6
+# FSM states 10 OPEN_RAMP and 11 ZERO_OPEN); rev 7 the setpoint
+# feedforward (ctrl b25 ff_enable, b29:26 ff_shift, words 24-31 the table,
+# STS b15 ff_on).
+MAP_REV = 7
 STS_WORDS = 8       # STS_DATA_WIDTH = 256 bits
 
 STS_FIELDS = {
@@ -73,6 +82,7 @@ STS_FIELDS = {
     "u_floor":          (0, 12, 1, False),
     "tripped":          (0, 13, 1, False),
     "snapped":          (0, 14, 1, False),
+    "ff_on":            (0, 15, 1, False),
     "map_rev":          (0, 24, 8, False),
     "i_meas":           (1, 0, 22, True),
     "sp_active":        (2, 0, 14, True),

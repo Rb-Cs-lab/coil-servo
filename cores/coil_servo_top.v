@@ -85,6 +85,10 @@ module coil_servo_top #
   wire        fastoff_flip   = cfg_data[22];
   wire        fastoff_stop   = cfg_data[23];
   wire        fastoff_zero   = cfg_data[24];
+  // setpoint feedforward (rev 7; servo_ff.v): enable, breakpoint spacing
+  // 2^ff_shift counts, 16-point table in words 24-31 (two per word)
+  wire        ff_enable      = cfg_data[25];
+  wire        [3:0]  ff_shift = cfg_data[29:26];
   wire signed [13:0] sp_reg       = cfg_data[45:32];    // W1
   wire signed [17:0] kp_mant      = cfg_data[81:64];    // W2
   wire        [4:0]  kp_shift     = cfg_data[100:96];   // W3
@@ -107,6 +111,13 @@ module coil_servo_top #
   wire signed [13:0] in1_offset   = cfg_data[685:672];  // W21
   wire signed [13:0] in2_offset   = cfg_data[717:704];  // W22
   wire        [13:0] snap_thresh  = cfg_data[749:736];  // W23
+  wire        [223:0] ff_table;                          // W24-W31
+  genvar gk;
+  generate
+    for (gk = 0; gk < 16; gk = gk + 1) begin : ff_unpack
+      assign ff_table[14*gk +: 14] = cfg_data[768 + 32*(gk/2) + 16*(gk%2) +: 14];
+    end
+  endgenerate
 
   assign fifo_resetn = aresetn & ~fifo_rst;
 
@@ -282,6 +293,30 @@ module coil_servo_top #
     snap_zero <= aresetn & (snap_req | snap_force);
 
   // ------------------------------------------------------------------
+  // Setpoint feedforward (rev 7; register_map.md ctrl b25, b29:26, W24-31).
+  // OUT1 for the requested current, looked up from a measured table and
+  // added to the PI output, so the integrator only finds the correction.
+  // Drive frame (the bank only sources current): the slew-limited setpoint
+  // times the bridge polarity sign. Only in RUN and closed loop -- outside
+  // RUN the PI floor is 0 and the setpoint is forced to zero, and the
+  // zero-setpoint snap forces OUT1 to 0 whatever ff says.
+  // ------------------------------------------------------------------
+  reg  signed [13:0] sp_drive;
+  reg                ff_on;
+  always @(posedge aclk) begin
+    // saturating negation: -(-8192) does not fit s14
+    sp_drive <= !polarity ? sp_lim :
+                (sp_lim == -14'sd8192) ? 14'sd8191 : -sp_lim;
+    ff_on    <= aresetn & ff_enable & run_state & ~open_loop;
+  end
+  wire [13:0] u_ff;
+  servo_ff ff_0 (
+    .aclk(aclk), .aresetn(aresetn), .enable(ff_on),
+    .sp(sp_drive), .shift(ff_shift), .table_flat(ff_table),
+    .ff(u_ff)
+  );
+
+  // ------------------------------------------------------------------
   // PI and output stage
   // ------------------------------------------------------------------
   wire signed [13:0] u14;
@@ -305,7 +340,7 @@ module coil_servo_top #
     .tick(tick_e), .e(e_dec),
     .kp_mant(kp_mant), .kp_shift(kp_shift),
     .ki_mant(ki_mant), .ki_shift(ki_shift),
-    .clamp(out_clamp), .floor(pi_floor),
+    .clamp(out_clamp), .floor(pi_floor), .ff(u_ff),
     // open loop holds the integrator cleared: it would otherwise wind up
     // against an error the open-loop drive does not correct, and hit OUT1
     // on the switch back to closed loop (loopback 2026-11-11)
@@ -402,10 +437,11 @@ module coil_servo_top #
   assign sts_data[12]      = at_floor;
   assign sts_data[13]      = tripped;
   assign sts_data[14]      = snap_zero;
-  assign sts_data[23:15]   = 9'd0;
+  assign sts_data[15]      = ff_on;
+  assign sts_data[23:16]   = 8'd0;
   // register-map revision (docs/register_map.md; registers.MAP_REV): the
   // host refuses to write CFG to a bitstream whose layout it doesn't know
-  assign sts_data[31:24]   = 8'd6;
+  assign sts_data[31:24]   = 8'd7;
   assign sts_data[53:32]   = i_dec;          // W1, s22 (host sign-extends)
   assign sts_data[63:54]   = 10'd0;
   assign sts_data[77:64]   = sp_active;      // W2, s14 (host sign-extends)

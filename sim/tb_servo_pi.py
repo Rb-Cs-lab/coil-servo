@@ -26,7 +26,8 @@ CLAMP = MOT.clamp_counts                        # OUT1 command clamp
 FLOOR = round(0.9 * MOT.dead_zone * 8192)       # RUN-only dead-zone floor
 
 
-def apply_gains(dut, kp_m, kp_s, ki_m, ki_s, clamp=CLAMP, floor=0):
+def apply_gains(dut, kp_m, kp_s, ki_m, ki_s, clamp=CLAMP, floor=0, ff=0):
+    dut.ff.value = ff
     dut.kp_mant.value = kp_m
     dut.kp_shift.value = kp_s
     dut.ki_mant.value = ki_m
@@ -35,8 +36,10 @@ def apply_gains(dut, kp_m, kp_s, ki_m, ki_s, clamp=CLAMP, floor=0):
     dut.floor.value = floor
 
 
-async def tick(dut, e, hold=False, clear=False):
+async def tick(dut, e, hold=False, clear=False, ff=None):
     """Run one PI tick and return u14 after the pipeline completes."""
+    if ff is not None:
+        dut.ff.value = ff
     dut.int_hold.value = 1 if hold else 0
     dut.int_clear.value = 1 if clear else 0
     dut.e.value = e
@@ -82,9 +85,11 @@ async def reset_state_is_off(dut):
 
 @cocotb.test()
 async def bit_exact_against_model(dut):
-    """4 gain/floor sets x 800 random ticks with random hold/clear events
-    and the floor switching as the FSM enters/leaves RUN: u14, out_sat,
-    at_floor and the accumulator must match FixedPI exactly."""
+    """7 gain/floor/feedforward sets x 800 random ticks with random
+    hold/clear events and the floor switching as the FSM enters/leaves RUN:
+    u14, out_sat, at_floor and the accumulator must match FixedPI exactly.
+    The last three sets add a random feedforward each tick (rev 7),
+    including the integrator bound going negative and overflowing s48."""
     cocotb.start_soon(start_clock(dut))
     dut.tick.value = 0
     rng = random.Random(42)
@@ -96,7 +101,13 @@ async def bit_exact_against_model(dut):
         ((-1234, 3, 517, 20), (-CLAMP, 0)),    # negative P, odd shifts
         ((5000, 10, 3, 40), (FLOOR, 8000)),    # shift overflow; floor > clamp
     ]
-    for (kp_m, kp_s, ki_m, ki_s), floors in gain_sets:
+    ff_sets = [False] * len(gain_sets) + [True] * 3
+    gain_sets += [
+        (suggested(), (0, FLOOR)),             # MVP with feedforward
+        ((-1234, 3, 517, 20), (-CLAMP, 0, FLOOR)),
+        ((5000, 10, 3, 40), (0, FLOOR, 8000)),  # negative bound overflows
+    ]
+    for ((kp_m, kp_s, ki_m, ki_s), floors), use_ff in zip(gain_sets, ff_sets):
         apply_gains(dut, kp_m, kp_s, ki_m, ki_s, floor=floors[0])
         dut.int_hold.value = 0
         dut.int_clear.value = 0
@@ -118,14 +129,20 @@ async def bit_exact_against_model(dut):
             if rng.random() < 0.03:
                 golden.floor = rng.choice(floors)
                 dut.floor.value = golden.floor
+            ff = 0
+            if use_ff:
+                q = rng.random()
+                ff = (8191 if q < 0.05 else 0 if q < 0.1 else
+                      rng.choice([FLOOR, FLOOR + 1, FLOOR - 1]) if q < 0.2 else
+                      rng.randint(0, 8191))
 
             # HDL semantics: while int_clear is asserted the accumulator is
             # pinned at zero (clear wins over accumulate). Mirror that as
             # clear() + a held step.
             if clear:
                 golden.clear()
-            exp = golden.step(e, hold=hold or clear)
-            got = await tick(dut, e, hold=hold, clear=clear)
+            exp = golden.step(e, hold=hold or clear, ff=ff)
+            got = await tick(dut, e, hold=hold, clear=clear, ff=ff)
 
             assert got == exp, f"tick {n}: u14 HDL {got} != model {exp}"
             assert -CLAMP <= got <= CLAMP, f"tick {n}: clamp violated"
