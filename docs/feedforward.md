@@ -48,6 +48,11 @@ feedback starts from.
    few counts off every point, so the table aims slightly low and the PI
    adds the rest; this avoids overshoot when the transistors are warmer
    than during the scan (warm needs 25–35 counts less, Q5).
+   **Also slow the setpoint up-ramp** (`slew_up_amps_per_ms`): when OUT1
+   jumps, the pass transistors overshoot by themselves (bench: +75-80 % at
+   200 A/ms, +7-14 % at 5 A/ms with the table alone), then sink to a lower
+   value over a few ms. Bench choice (11-19): `ff_margin_counts = 10`,
+   5 A/ms.
 4. `python -m coil_servo_host.config mot_bench` prints the table summary.
 
 For the MOT, the curve is measured in Test 4 at 100 A with the cooling
@@ -64,6 +69,20 @@ at).
 | FF3 | One-command reversal ±2 A | Log 2 (1289 µs to 90 %) |
 | FF4 | Holds, noise, 50 shots with feedforward on | Log 2 (must be unchanged) |
 | FF5 | Overshoot after a 10 min warm hold, margin 0 and 10 | — |
+
+### Bench results (11-18/19, Benchtop Test Log 2, section "Rev 7")
+
+| | Without feedforward | With (margin 10, 5 A/ms) |
+|---|---|---|
+| 0 -> 2 A within 5 % | 1.29 ms | 0.39 ms |
+| 0 -> 1 A within 5 % | 1.96 ms | 0.33 ms |
+| Reversal ±2 A, 90 % / within 2 % | 1.30 / 1.8 ms | 0.55 / 0.96 ms |
+| Holds 0.5-2 A, noise | — | unchanged |
+| 50 shot sequences | 50/50 | 50/50, holds settled, scatter halved |
+
+Aiming 40 counts low left 0.5-1 A steps 10-20 % short for milliseconds.
+The cause of the transistor overshoot is not understood; check it at 100 A
+(Test 4) before choosing the MOT up-ramp.
 
 Simulation (sim/tb_coil_servo_top.py `feedforward_*`): on the model bench
 plant, with a quarter of the model's gains and a table 30 counts low, a

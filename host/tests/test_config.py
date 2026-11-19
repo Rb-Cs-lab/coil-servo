@@ -206,7 +206,8 @@ def test_bench_profile_loads_and_matches_the_model(tmp_path, g_inamp):
     assert cfg["out_clamp"] > m.dead_zone * 8192
 
     # amps-denominated values follow the scale automatically
-    assert cfg["slew_up"] == slew_rate_code(200e3, i_fs)
+    assert cfg["slew_up"] == slew_rate_code(
+        table["slew_up_amps_per_ms"] * 1e3, i_fs)          # bench: 5 A/ms with feedforward
     assert cfg["slew_down"] == slew_rate_code(50e3, i_fs)
     assert cfg["zero_win"] == round(0.5 / i_fs * 8192)     # 19 / 186 at 1.10 V
     assert cfg["trip_timeout"] == 375_000

@@ -96,10 +96,13 @@ def _bench_gains():
 
 # The fast turn-off options (rev 6) are on in the file since 11-18; the
 # bench-profile tests here check the rev-5 behaviour with the bridge closed,
-# and the fast turn-off has its own tests (MOT_FAST) -> off here.
+# and the fast turn-off has its own tests (MOT_FAST) -> off here. Likewise
+# the setpoint feedforward and its slow 5 A/ms up-ramp (file, since 11-19):
+# off and 200 A/ms here; the feedforward_* tests set their own.
 BENCH_REGS = dict(BENCH_FILE_REGS, in1_offset=0, in2_offset=0,
                   u_floor=round(0.9 * BENCH.dead_zone * 8192), **_bench_gains(),
-                  fastoff_flip=0, fastoff_stop=0, fastoff_zero=0)
+                  fastoff_flip=0, fastoff_stop=0, fastoff_zero=0,
+                  ff_enable=0, slew_up=slew_rate_code(200e3, BENCH.I_FS))
 
 
 def bench_cfg(**over):

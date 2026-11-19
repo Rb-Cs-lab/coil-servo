@@ -239,7 +239,10 @@ trip_ticks = 6                  # consecutive ~1 us samples above the level; 4 -
                                 # row once (false trip); costs ~0.2 A extra on the bench
 trip_timeout_us = 3000.0        # same as production; freewheel from 2.5 A
                                 # takes only ~30-40 us (one coil)
-slew_up_amps_per_ms = 200.0     # same physical rates as production: they
+slew_up_amps_per_ms = 5.0       # bench with feedforward (11-19): an abrupt OUT1 rise makes the
+                                # bank overshoot by itself (+75-80 % at 200 A/ms, +4-6 % at 5 A/ms);
+                                # 0 -> 2 A then takes ~0.4 ms. Without feedforward 200 was used
+                                # (production rates; the down rate below still is):
 slew_down_amps_per_ms = 50.0    # are set by rail/L and V_f/L, not by the
                                 # current scale
 snap_zero_enable = 1            # zero-setpoint snap, as [mot]
@@ -262,8 +265,10 @@ fastoff_zero = 1                # a zero setpoint   old test list; needs snap)
 # See [mot]. Bench: measure with python -m coil_servo_host.ffcal mot_bench
 # --write after the transistors have warmed up (a 2 A hold for a few
 # minutes); Q5 (11-13): warm needs 25-35 counts less than cold.
-ff_enable = 0
-ff_margin_counts = 10           # PROVISIONAL: aim slightly low, the PI adds the rest
+ff_enable = 1                   # on since 11-19 (8.2 ohm damper): with the 5 A/ms ramp above,
+                                # 0 -> 2 A within 5 % after 0.51 ms (Log 2 without: 1.32 ms)
+ff_margin_counts = 10           # aim slightly low, the PI adds the rest; 40 left 0.5-1 A steps
+                                # 10-20 % low for ms (11-19)
 
 # --- flip / stop ---
 zero_win_amps = 0.5             # flip zero window -- PROVISIONAL, suits both
@@ -294,8 +299,8 @@ boost_mode = 0
 in1_offset_amps = 0.1963        # measured 2026-11-17 (coil_servo_host.zero)
                                 # (zero tool had read ~0.21 A)
 in2_offset_amps = 0.1731        # measured 2026-11-17 (coil_servo_host.zero)
-ff_curve_amps = [0.22, 0.33, 0.44, 0.66, 0.88, 1.1, 1.32, 1.54, 1.76, 1.98, 2.2]  # measured 2026-11-18 14:26 (coil_servo_host.ffcal)
-ff_curve_counts = [3657, 3702, 3735, 3783, 3819, 3847, 3872, 3893, 3912, 3929, 3946]  # measured 2026-11-18 14:26 (coil_servo_host.ffcal)
+ff_curve_amps = [0.22, 0.33, 0.44, 0.66, 0.88, 1.1, 1.32, 1.54, 1.76, 1.98, 2.2]  # measured 2026-11-19 07:59 (coil_servo_host.ffcal)
+ff_curve_counts = [3659, 3703, 3735, 3784, 3819, 3848, 3873, 3894, 3913, 3930, 3947]  # measured 2026-11-19 07:59 (coil_servo_host.ffcal)
 
 [z_shim]
 board_host = "rp-zshim.local"   # PLACEHOLDER
