@@ -22,6 +22,7 @@ represented by a simple stand-in (see "What is and is not modelled").
 | `results/comparison.html` | **Start here**: table and plots, model vs bench |
 | `compare_fast_turnoff.py`, `results/fast_turnoff.html` | The fast turn-off version against the circuit as built (predictions only) |
 | `damper_study.py`, `damper_model.py`, `results/damper_study.html` | The reversed current after a bridge-opened switch-off: bench measurement against the model, and MOT damper options |
+| `mot_expect.py`, `results/mot_expectations.html` | Ramps and drops to expect on the 100 A setup, with the unknown values varied, and how far to trust each number |
 
 ## Opening the project
 
@@ -157,6 +158,7 @@ Rectangular Plot, pick e.g. `V(i_meas)`.
 | `t_hb_len`, `t_rst_per` | Heartbeat wire re-plugged after this long; reset pressed again after this long | not used |
 | `R_term` | Terminator at the op-amp input (1e9 Ω = not fitted) | 50 Ω |
 | `cgd_pass` | Pass-transistor drain-to-gate capacitance | 1 nF |
+| `k_pass` | Steepness of the pass-transistor current law (amps per volt squared, per transistor). 3.656 is the fit to the bench below 2.5 A; the datasheet curve at 17 A per transistor is several times steeper | 3.656 |
 | `L_coil`, `R_coil`, `R_damp1`, `R_damp2`, `C_damp` | Coil and damper (`R_damp1` = 1e6 Ω removes the damper) | bench values |
 
 Useful signals: `V(i_meas)` = the current the firmware sees, in amps
@@ -319,6 +321,25 @@ ringing test ranks dampers but does not prove one is enough.
 Numbers used: 5KP30A 35 V at 5 mA, 48.4 V at 103 A; DSS2X101-015A 0.67 V
 at 100 A through both halves — both DATASHEET, typed from memory, to be
 checked against the PDFs. Capacitances and leakage ASSUMED.
+
+### What to expect on the 100 A setup (`results/mot_expectations.html`)
+
+Predictions only: the 100 A setup is not built. 41 runs on the `mot_ft`
+design, each one a pulse (ramp up, hold, drop), most with one assumed value
+changed: coil inductance and resistance, supply voltage and cable, the
+pass-transistor law (`k_pass`), controller gains, OUT1 clamp, ramp rate,
+damper.
+
+    ansys\.venv\Scripts\python.exe ansysun_sims.py --m100     (about 20 minutes)
+    ansys\.venv\Scripts\python.exe ansys\mot_expect.py
+
+The report has a table that says, for each number, what it rests on, how
+the same kind of number compared on the bench, and how far to trust it.
+In short: switch-off times are good to about 25 % (they follow the coil
+inductance); ramp-up times to about 30 % (the 5 V supply sets them, and the
+model's supply is ideal); the overshoot and the OUT1 command needed for
+98 A are not reliable and have to be measured; noise and ringing at a hold
+are not predicted at all.
 
 ## Where each part is, and where its numbers come from
 

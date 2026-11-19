@@ -1,0 +1,112 @@
+<html><head><meta charset='utf-8'><title>100 A setup: what to expect</title><style>
+body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; max-width: 980px; margin: 24px auto; }
+h1, h2, h3 { color: #1F497D; } table { border-collapse: collapse; margin: 8px 0; }
+th { background: #DDEBF7; text-align: left; } th, td { border: 1px solid #9DB6D3; padding: 3px 8px; vertical-align: top; }
+img { max-width: 100%; } .note { color: #444; } td.g { background: #E2F0D9; } td.y { background: #FFF2CC; } td.r { background: #FBE5D6; }
+</style></head><body>
+<h1>100 A setup: ramps and drops to expect, and how far to trust them</h1>
+<p>Circuit model (Ansys, design <i>mot_ft</i>): the two MOT coils on the SE-600-5, blocking diode and 5KP30A fitted, damper 1.6 Ω + 22 µF, controller gains kp 3.7 counts/A, ki 111 counts/(A·ms), firmware ramp limit 200 A/ms, no feedforward. <b>Nothing here is measured: the 100 A setup is not built.</b> 41 runs; in most of them one assumed value is changed to see how much the answer moves. Made 2026-11-19 with <i>run_sims.py --m100</i> and <i>mot_expect.py</i>.</p>
+<h2>1. In short</h2><ul>
+<li><b>Ramp 0 → 98 A:</b> 90 % after about 806 µs (622 µs to 904 µs over the unknown values), within 1 % after 1.24 ms, within 0.1 % after 1.61 ms (1.13 ms to 1.76 ms). The 5 V supply sets this, not the controller: for most of the ramp the pass bank is fully open and the current rises as fast as the supply can push it (up to about 188 A/ms). The target of 0.1 % in under 1 ms is not met for a full-size ramp in any run.</li>
+<li><b>Overshoot at 98 A: 3.7 %</b> (2.4 % to 5.4 %), peak 101.7 A. That is above the 100 A trip level, so <b>a ramp straight to 98 A may trip</b>. No overshoot in the model for 75 A and below, or with the ramp slowed to 50 A/ms, or with the gains halved. The bench showed more overshoot than the model (1–2.4 % against 0), so expect at least this much.</li>
+<li><b>Setpoint to zero, bridge kept closed:</b> from 98 A the current reaches the ±0.5 A zero window after 1.68 ms (1.26 ms to 2.09 ms); from 25 A after 627 µs. The drain bar jumps to 19 V for a few microseconds (supply-cable energy, caught by the 5KP12CA).</li>
+<li><b>Fast switch-off (bridge opened):</b> zero after 34 µs from 98 A, 19 µs from 25 A; then a reversed current of -12 A (98 A) to -3.6 A (25 A) through the damper, back inside ±0.5 A after 138 µs. Rail bar 49 V.</li>
+<li><b>Going down to a lower current</b> under the firmware's 50 A/ms limit is clean in the model (98 → 50 A: within 1 % after 1.46 ms, no undershoot). Without that limit the current would dip 19 A too low first.</li>
+<li><b>The OUT1 clamp must be measured.</b> With the pass-transistor law taken from the bench, 98 A needs 6001 counts and the provisional clamp of 5200 counts would stop the current at 47 A; with a datasheet-like law 98 A needs only 4788 counts. Left wide open, the clamp lets the overshoot grow to 11.3 %.</li>
+</ul>
+<h2>2. How far to trust each number</h2>
+<p>Three things limit the accuracy, and they are different for each number: (a) how well this model did on the bench for the same kind of measurement, (b) values of the 100 A setup that are not measured yet (the range column: the spread when each is changed over what seems plausible), (c) effects that are not in the model at all. Green: expect it within about 25 %. Yellow: within about 30 %, or right direction and size. Red: do not rely on it.</p>
+<table><tr><th>Number</th><th>Model</th><th>Range over the unknown values</th><th>What it rests on</th><th>Same kind of number on the bench (model / measured)</th><th>Trust</th></tr>
+<tr><td>Setpoint to zero from 98 A, bridge closed: time to the zero window</td><td>1.68 ms</td><td>1.26 ms to 2.09 ms</td><td>Coil inductance (computed, taken ±25 %), the bridge diode's voltage at 100 A (0.8 V, from the datasheet), coil and cable resistance</td><td>2 A → 0: 159 µs / about 170 µs</td><td class='g'>±25 %, mostly the inductance</td></tr>
+<tr><td>Fast switch-off from 98 A: time to zero</td><td>34 µs</td><td>27 µs to 43 µs (12 to 20 µH, from 100 A)</td><td>Coil inductance and the 5KP30A's clamping voltage (45–49 V at this current, datasheet)</td><td>2 A: 21 µs / 25 µs; clamp 42 V / 49 V</td><td class='g'>±25 %</td></tr>
+<tr><td>Fast switch-off: reversed current and how long it lasts</td><td>-12 A, quiet after 138 µs</td><td>-11 to -14 A</td><td>The damper actually fitted (values not chosen yet) and the coil inductance</td><td>2 A: −0.33 A / −0.31 A, but one third too fast</td><td class='y'>±30 %; follows the damper</td></tr>
+<tr><td>Rail bar and drain bar peaks at a switch-off</td><td>49 V (fast), 19 V (bridge closed)</td><td>17 V to 19 V (bridge closed)</td><td>Datasheet curves of the two surge protectors, typed from memory; supply-cable inductance (1 µH assumed)</td><td>Fast: 42 V / 49 V. Bridge closed: 14.9 V / 12.1 V</td><td class='y'>±20 %; check the datasheets</td></tr>
+<tr><td>Ramp 0 → 98 A: time to 90 %</td><td>806 µs</td><td>622 µs to 904 µs</td><td>Supply voltage left after the blocking diode, cable and coil resistance; coil inductance; how long the controller takes to get the pass bank conducting (about 192 µs here, with no feedforward)</td><td>0 → 2 A: 0.48 ms / 0.45–0.47 ms (set by the controller there, by the supply here)</td><td class='y'>±30 %</td></tr>
+<tr><td>Ramp 0 → 98 A: time to within 1 % / 0.1 %</td><td>1.24 ms / 1.61 ms</td><td>890 µs to 1.44 ms / 1.13 ms to 1.76 ms</td><td>As above, plus the controller gains (to be re-tuned on the hardware) and the overshoot</td><td>0 → 2 A, 98 %: 0.69 ms / 0.62–0.65 ms</td><td class='y'>A lower limit. Noise, warming and ringing can only add</td></tr>
+<tr><td>Overshoot at 98 A</td><td>3.7 %</td><td>2.4 % to 5.4 %</td><td>Where the OUT1 clamp sits above the hold value, the gains, the pass-transistor law</td><td>0.0 % / 1–2.4 %: the model showed less than the bench</td><td class='r'>Size not reliable; that there is one, yes</td></tr>
+<tr><td>OUT1 command at 98 A (sets the clamp)</td><td>6001 counts</td><td>4788 to 6010 counts</td><td>The pass-transistor law, measured only up to 2.5 A and stretched 40 times</td><td>Within 2–8 % inside the measured range</td><td class='r'>Not predicted. Measure it first</td></tr>
+<tr><td>Voltage left across the pass bank at 98 A (heat)</td><td>3.0 V, 48 W per transistor with its ballast</td><td>2.5 V to 3.2 V</td><td>Supply setting, blocking-diode drop (0.8 V), every resistance in the loop (cable and contacts not measured)</td><td>Rail bar at 2 A: 4.61 V / 4.60 V</td><td class='y'>±0.5 V</td></tr>
+<tr><td>Small wobble, ringing or noise at a hold; the 0.1 % stability</td><td>none</td><td>none</td><td>Not in the model: it has no noise, and on the bench it did not keep the 10–20 kHz ringing going</td><td>Ringing: dies away / stays at ±0.1 A</td><td class='r'>Cannot say</td></tr>
+</table>
+<p><b>Not in the model, and able to change the picture:</b></p><ul>
+<li><b>How the SE-600-5 reacts to a load that goes from 0 to 100 A in half a millisecond.</b> The model's supply holds 5 V perfectly behind 0.5 mΩ, so its output capacitance makes no difference here (1 mF and 47 mF give the same ramp). A real switching supply may dip for a millisecond or go into current limit. A supply that sags 0.5 V costs 62 µs on the 90 % time; a worse one costs more. Watch the rail bar on the first ramps.</li>
+<li><b>Eddy currents in the chamber and mounts.</b> They make the coil look like a smaller inductance at first (faster current, as on the bench: 37 µH against 45 µH computed) and make the field settle later than the current.</li>
+<li><b>Warming of the pass transistors during a pulse</b> (about 50 W each at 98 A): the current at a fixed command rises as they warm; the controller corrects it, at its own speed.</li>
+<li><b>The firmware's digital side:</b> 1 µs steps, 14-bit numbers, dither, the exact ramp generator. Checked separately in the firmware test bench; small against the effects above.</li>
+<li><b>The 229 kHz burst on IN1 and the 7–8 kHz ring after a ramp</b> seen on the bench on 11-18: not reproduced by the model, so not predicted for 100 A either.</li>
+<li><b>Feedforward</b> (tried on the bench on 11-18): not in the model. It would remove most of the wait before the current starts.</li></ul>
+<h2>3. Ramps up</h2>
+<p><img src='mot_expect_ramps.png'><br><span class='note'>Model prediction. Solid: coil current. Dashed: the current the firmware asks for.</span></p>
+<table><tr><th>Ramp</th><th>Wait before current flows</th><th>90 %</th><th>Within 1 %</th><th>Within 0.1 %</th><th>Peak</th><th>OUT1 at the hold</th><th>Across the pass bank at the hold</th><th>Heat per pass transistor with its ballast resistor</th></tr>
+<tr><td>0 → 25 A, 200 A/ms</td><td>145 µs</td><td>906 µs</td><td>1.46 ms</td><td>2.01 ms</td><td>25.0 A (+0.0 %)</td><td>4760 counts</td><td>4.21 V</td><td>18 W</td></tr>
+<tr><td>0 → 50 A, 200 A/ms</td><td>167 µs</td><td>736 µs</td><td>1.18 ms</td><td>1.61 ms</td><td>50.0 A (+0.0 %)</td><td>5259 counts</td><td>3.78 V</td><td>31 W</td></tr>
+<tr><td>0 → 75 A, 200 A/ms</td><td>182 µs</td><td>661 µs</td><td>1.06 ms</td><td>1.44 ms</td><td>75.0 A (+0.0 %)</td><td>5667 counts</td><td>3.35 V</td><td>42 W</td></tr>
+<tr><td>0 → 98 A, 200 A/ms</td><td>192 µs</td><td>806 µs</td><td>1.24 ms</td><td>1.61 ms</td><td>101.7 A (+3.7 %)</td><td>6001 counts</td><td>2.96 V</td><td>48 W</td></tr>
+<tr><td>0 → 98 A, 100 A/ms</td><td>280 µs</td><td>1.09 ms</td><td>1.45 ms</td><td>1.82 ms</td><td>100.4 A (+2.5 %)</td><td>6001 counts</td><td>2.96 V</td><td>48 W</td></tr>
+<tr><td>0 → 98 A, 50 A/ms</td><td>406 µs</td><td>1.91 ms</td><td>2.22 ms</td><td>2.58 ms</td><td>98.0 A (+0.0 %)</td><td>6001 counts</td><td>2.96 V</td><td>48 W</td></tr>
+<tr><td>0 → 98 A, no ramp limit</td><td>24 µs</td><td>568 µs</td><td>1.01 ms</td><td>1.37 ms</td><td>101.7 A (+3.7 %)</td><td>6001 counts</td><td>2.96 V</td><td>48 W</td></tr>
+</table>
+<p>Times count from the moment the setpoint starts to rise. Small ramps are not faster than large ones: the first 145 µs or so go by before any current flows, while the controller raises OUT1 from its resting value to where the pass bank starts to conduct, and near that point the bank answers weakly, so the controller is slow there. Large ramps then run into the supply's limit instead.</p>
+<p><img src='mot_expect_anatomy.png'><br><span class='note'>Model prediction, the same run as the blue trace above. Middle: the three voltages along the power path. Bottom: the controller&#x27;s command to the pass bank.</span></p>
+<p>At 98 A the supply terminals are at 4.95 V, the rail bar at 4.14 V (the blocking diode takes 0.8 V) and 3.0 V are left across the pass bank. During the ramp that last voltage falls to about 1 V: the bank is then fully open and the controller's command sits on the clamp. The overshoot comes from the time the controller needs to come back off the clamp.</p>
+<h2>4. One assumed value changed at a time (0 → 98 A, 200 A/ms)</h2>
+<p><img src='mot_expect_sensitivity.png'><br><span class='note'>Model prediction: the 0 → 98 A ramp again, one assumed value changed at a time. Black: every value as assumed.</span></p>
+<table><tr><th>Changed</th><th>90 %</th><th>Within 1 %</th><th>Within 0.1 %</th><th>Peak</th><th>OUT1 at the hold</th><th>Across the pass bank</th><th>Zero window after setpoint → 0</th></tr>
+<tr><td><b>nothing (every value as assumed)</b></td><td>806 µs</td><td>1.24 ms</td><td>1.61 ms</td><td>101.7 A (+3.7 %)</td><td>6001</td><td>2.96 V</td><td>1.68 ms</td></tr>
+<tr><td>Coil pair 12 µH</td><td>730 µs</td><td>1.04 ms</td><td>1.40 ms</td><td>100.6 A (+2.6 %)</td><td>6001</td><td>2.96 V</td><td>1.26 ms</td></tr>
+<tr><td>Coil pair 20 µH</td><td>904 µs</td><td>1.39 ms</td><td>1.75 ms</td><td>101.5 A (+3.6 %)</td><td>6001</td><td>2.96 V</td><td>2.09 ms</td></tr>
+<tr><td>Coil pair + cable 5.4 mΩ</td><td>783 µs</td><td>1.19 ms</td><td>1.56 ms</td><td>102.0 A (+4.1 %)</td><td>6001</td><td>3.16 V</td><td>1.82 ms</td></tr>
+<tr><td>Coil pair + cable 10.4 mΩ</td><td>846 µs</td><td>1.36 ms</td><td>1.69 ms</td><td>100.9 A (+3.0 %)</td><td>6004</td><td>2.67 V</td><td>1.51 ms</td></tr>
+<tr><td>Supply cable 0.5 mΩ, 0.3 µH</td><td>779 µs</td><td>1.19 ms</td><td>1.56 ms</td><td>101.9 A (+4.0 %)</td><td>6001</td><td>3.06 V</td><td>1.68 ms</td></tr>
+<tr><td>Supply cable 4 mΩ, 3 µH</td><td>890 µs</td><td>1.42 ms</td><td>1.76 ms</td><td>101.0 A (+3.1 %)</td><td>6003</td><td>2.72 V</td><td>1.68 ms</td></tr>
+<tr><td>Supply that sags 0.5 V at 100 A, 3 mF</td><td>868 µs</td><td>1.44 ms</td><td>1.71 ms</td><td>100.4 A (+2.4 %)</td><td>6010</td><td>2.52 V</td><td>1.68 ms</td></tr>
+<tr><td>Supply output capacitance 1 mF</td><td>806 µs</td><td>1.24 ms</td><td>1.61 ms</td><td>101.7 A (+3.7 %)</td><td>6001</td><td>2.96 V</td><td>1.68 ms</td></tr>
+<tr><td>Supply output capacitance 47 mF</td><td>805 µs</td><td>1.24 ms</td><td>1.61 ms</td><td>101.7 A (+3.7 %)</td><td>6001</td><td>2.96 V</td><td>1.68 ms</td></tr>
+<tr><td>Supply set to 4.75 V</td><td>856 µs</td><td>1.36 ms</td><td>1.70 ms</td><td>101.1 A (+3.1 %)</td><td>6003</td><td>2.71 V</td><td>1.68 ms</td></tr>
+<tr><td>Supply set to 5.25 V</td><td>767 µs</td><td>1.17 ms</td><td>1.53 ms</td><td>102.1 A (+4.2 %)</td><td>6001</td><td>3.21 V</td><td>1.68 ms</td></tr>
+<tr><td>Supply set to 5.5 V</td><td>737 µs</td><td>1.11 ms</td><td>1.48 ms</td><td>102.4 A (+4.5 %)</td><td>6001</td><td>3.46 V</td><td>1.68 ms</td></tr>
+<tr><td>Pass-FET law 2.7 times steeper</td><td>690 µs</td><td>1.01 ms</td><td>1.30 ms</td><td>102.7 A (+4.8 %)</td><td>5266</td><td>2.96 V</td><td>1.68 ms</td></tr>
+<tr><td>Pass-FET law 8 times steeper (datasheet-like)</td><td>622 µs</td><td>890 µs</td><td>1.13 ms</td><td>103.3 A (+5.4 %)</td><td>4788</td><td>2.96 V</td><td>1.68 ms</td></tr>
+<tr><td>The same with the gains halved</td><td>728 µs</td><td>804 µs</td><td>1.22 ms</td><td>98.0 A (+0.0 %)</td><td>4788</td><td>2.96 V</td><td>1.68 ms</td></tr>
+<tr><td>Hot pass FETs (threshold 0.24 V lower)</td><td>787 µs</td><td>1.22 ms</td><td>1.59 ms</td><td>101.6 A (+3.7 %)</td><td>5789</td><td>2.96 V</td><td>1.68 ms</td></tr>
+<tr><td>Pass-FET drain-gate capacitance 17 nF (the value that rings on the bench)</td><td>805 µs</td><td>1.25 ms</td><td>1.66 ms</td><td>101.8 A (+3.9 %)</td><td>6001</td><td>2.96 V</td><td>1.68 ms</td></tr>
+<tr><td>Controller gains × 0.5</td><td>1.11 ms</td><td>1.76 ms</td><td>2.39 ms</td><td>98.0 A (+0.0 %)</td><td>6001</td><td>2.96 V</td><td>1.68 ms</td></tr>
+<tr><td>Controller gains × 2</td><td>704 µs</td><td>1.01 ms</td><td>1.24 ms</td><td>100.9 A (+3.0 %)</td><td>6001</td><td>2.96 V</td><td>1.68 ms</td></tr>
+<tr><td>Controller gains × 4</td><td>641 µs</td><td>882 µs</td><td>1.02 ms</td><td>100.2 A (+2.2 %)</td><td>6001</td><td>2.96 V</td><td>1.68 ms</td></tr>
+<tr><td>OUT1 clamp wide open (8191 counts)</td><td>795 µs</td><td>1.51 ms</td><td>1.87 ms</td><td>109.1 A (+11.3 %)</td><td>6001</td><td>2.96 V</td><td>1.68 ms</td></tr>
+<tr><td>OUT1 clamp at the provisional 5200 counts</td><td>—</td><td>—</td><td>—</td><td>stops at 47 A</td><td>5200</td><td>3.83 V</td><td>1.02 ms</td></tr>
+<tr><td>No damper</td><td>806 µs</td><td>1.26 ms</td><td>1.61 ms</td><td>101.6 A (+3.7 %)</td><td>6001</td><td>2.96 V</td><td>1.68 ms</td></tr>
+<tr><td>Damper 1.6 Ω + 100 µF</td><td>807 µs</td><td>1.24 ms</td><td>1.55 ms</td><td>101.8 A (+3.9 %)</td><td>6001</td><td>2.96 V</td><td>1.68 ms</td></tr>
+</table>
+<p>The gains are per count, so a steeper pass-transistor law acts like higher gains: the two rows with the 8 times steeper law show that halving the gains then brings back a ramp without overshoot. The gains will be tuned on the hardware; the table shows which way each change pushes.</p>
+<h2>5. Drops</h2>
+<p><img src='mot_expect_drops.png'><br><span class='note'>Model prediction. Left: today&#x27;s switch-off. Middle: the fast switch-off with the new parts (note the microsecond scale). Right: going down to a lower current under the controller.</span></p>
+<table><tr><th>Setpoint to zero, bridge kept closed</th><th>Down to 10 %</th><th>Inside ±0.5 A</th><th>Fall rate</th><th>Drain bar peak</th></tr>
+<tr><td>From 25 A</td><td>561 µs</td><td>627 µs</td><td>40 A/ms</td><td>18 V</td></tr>
+<tr><td>From 50 A</td><td>927 µs</td><td>1.07 ms</td><td>47 A/ms</td><td>19 V</td></tr>
+<tr><td>From 75 A</td><td>1.20 ms</td><td>1.41 ms</td><td>54 A/ms</td><td>19 V</td></tr>
+<tr><td>From 98 A</td><td>1.40 ms</td><td>1.68 ms</td><td>61 A/ms</td><td>19 V</td></tr>
+</table><table><tr><th>Fast switch-off (bridge opened), damper 1.6 Ω + 22 µF</th><th>Zero after</th><th>Reversed current</th><th>Inside ±0.5 A for good</th><th>Rail bar peak</th></tr>
+<tr><td>From 25 A</td><td>19 µs</td><td>-3.6 A</td><td>100 µs</td><td>46 V</td></tr>
+<tr><td>From 50 A</td><td>22 µs</td><td>-7.1 A</td><td>116 µs</td><td>47 V</td></tr>
+<tr><td>From 75 A</td><td>28 µs</td><td>-10.1 A</td><td>128 µs</td><td>48 V</td></tr>
+<tr><td>From 98 A</td><td>34 µs</td><td>-12.3 A</td><td>138 µs</td><td>49 V</td></tr>
+<tr><td>From 100 A, coil pair 12 µH</td><td>27 µs</td><td>-10.8 A</td><td>132 µs</td><td>50 V</td></tr>
+<tr><td>From 100 A, coil pair 20 µH</td><td>43 µs</td><td>-13.7 A</td><td>146 µs</td><td>50 V</td></tr>
+</table><table><tr><th>Down to a lower current</th><th>90 % of the change</th><th>Within 1 % of the new value</th><th>Within 0.1 %</th><th>Dip below the new value</th></tr>
+<tr><td>98 → 50 A, 50 A/ms</td><td>1.03 ms</td><td>1.46 ms</td><td>1.90 ms</td><td>0.0 A</td></tr>
+<tr><td>98 → 20 A, 50 A/ms</td><td>1.59 ms</td><td>2.51 ms</td><td>3.11 ms</td><td>0.0 A</td></tr>
+<tr><td>50 → 20 A, 50 A/ms</td><td>848 µs</td><td>1.54 ms</td><td>2.15 ms</td><td>0.0 A</td></tr>
+<tr><td>98 → 50 A, setpoint stepped (no ramp limit)</td><td>544 µs</td><td>1.67 ms</td><td>2.10 ms</td><td>19.5 A</td></tr>
+</table><ul>
+<li>With the bridge closed the coil's current falls only against one diode drop and the coil's own resistance, 40–61 A/ms. The fast switch-off is about 50 times quicker but leaves the reversed current; the damper report (damper_study.html) covers how the damper values change it.</li>
+<li>After a switch-off with the bridge closed the rail bar is left near 19 V at first in the model: the supply cable's current has nowhere to go when the bank shuts, the 5KP12CA catches it, and the blocking diode then keeps the charge on the rail bar. Harmless for the parts (all rated far higher), and one more reason for the bleeder resistor proposed earlier.</li>
+<li>A ramp down to a lower current follows the 50 A/ms limit closely: the controller, not the coil, sets it.</li></ul>
+<h2>6. What to measure first in Test 4, to replace the red and yellow rows</h2><ol>
+<li>Current against OUT1, slowly, up to the highest current used: gives the clamp, and the real pass-transistor law for this model.</li>
+<li>Rail bar and supply terminals during the first ramps (how the SE-600-5 takes the load step).</li>
+<li>First ramps to 75 A or less, or at 50 A/ms, until the overshoot is known; then decide how close to the 100 A trip the hold can sit.</li>
+<li>Coil pair inductance and resistance (LCR meter, four-wire), then one switch-off with the bridge closed: its fall time checks the diode drop.</li>
+<li>Ringing at holds of 5–20 A and near 100 A, with and without the damper.</li></ol>
+<p class='note'>With those five in hand the model can be re-run and the ranges in section 2 should shrink toward the bench level (about 10 %).</p>
+</body></html>
