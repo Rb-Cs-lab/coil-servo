@@ -192,6 +192,72 @@ for _a, _u in RING_COUNTS.items():
                                               f"PREDICTION: the same with the proposed damper")
 
 
+# --- what to expect on the 100 A setup: ramps up and drops, with the uncertain values varied (2026-11-19) ---
+# All PREDICTIONS on the mot_ft design (MOT pair, SE-600-5, blocking diode and 5KP30A fitted). One run = one pulse:
+# setpoint ramped up at 0.1 ms, held, then at 6.1 ms set to zero (zero snap: OUT1 = 0, bridge closed, the coil
+# freewheels). mot_expect.py turns them into results/mot_expectations.html.
+def counts_for(amps, k=3.656, vt=3.892):
+    """OUT1 counts that give this total current with the pass FETs in their flat region (square law + ballast)."""
+    gate = vt + (amps / 6 / k) ** 0.5 + 0.030 * amps / 6
+    return (gate / 7.98 + 0.0413) / 142.6e-6
+
+
+def _clamp(k=3.656, vt=3.892):
+    """The OUT1 clamp as the configuration rule sets it: the command for the rated 100 A (plus 1 %)."""
+    return {"u_clamp": f"{counts_for(100, k, vt) * 1.01:.0f}"}
+
+
+M100 = {"sp_amps": "98", "t_sp_on": "100us", "t_sp_len": "6ms", "trip_amps": "150", **_clamp()}
+M100_VARIANTS = {
+    # name: (changes, what is varied)
+    "nominal": ({}, "0 -> 98 A, ramp 200 A/ms, every value as assumed"),
+    "to25": ({"sp_amps": "25"}, "0 -> 25 A"),
+    "to50": ({"sp_amps": "50"}, "0 -> 50 A"),
+    "to75": ({"sp_amps": "75"}, "0 -> 75 A"),
+    "slew50": ({"slew_up": "50e3"}, "ramp 50 A/ms"),
+    "slew100": ({"slew_up": "100e3"}, "ramp 100 A/ms"),
+    "step": ({"slew_up": "1e9"}, "no ramp (a step)"),
+    "gain0p5": ({"kp": "1.85", "ki": "55.5e3"}, "controller gains x 0.5"),
+    "gain2": ({"kp": "7.4", "ki": "222e3"}, "controller gains x 2"),
+    "gain4": ({"kp": "14.8", "ki": "444e3"}, "controller gains x 4"),
+    "clamp_open": ({"u_clamp": "8191"}, "OUT1 clamp wide open (8191 counts)"),
+    "clamp_5200": ({"u_clamp": "5200"}, "OUT1 clamp at the provisional 5200 counts"),
+    "L12": ({"L_coil": "6uH"}, "coil pair 12 uH"),
+    "L20": ({"L_coil": "10uH"}, "coil pair 20 uH"),
+    "Rlo": ({"R_coil": "2.7mOhm"}, "coil pair + cable 5.4 mOhm"),
+    "Rhi": ({"R_coil": "5.2mOhm"}, "coil pair + cable 10.4 mOhm"),
+    "lead_lo": ({"R_lead": "0.5mOhm", "L_lead": "0.3uH"}, "supply cable 0.5 mOhm, 0.3 uH"),
+    "lead_hi": ({"R_lead": "4mOhm", "L_lead": "3uH"}, "supply cable 4 mOhm, 3 uH"),
+    "V4p75": ({"V_sup": "4.75"}, "supply set to 4.75 V"),
+    "V5p25": ({"V_sup": "5.25"}, "supply set to 5.25 V"),
+    "V5p5": ({"V_sup": "5.5"}, "supply set to 5.5 V"),
+    "Csup1m": ({"C_sup": "1e-3"}, "supply output capacitance 1 mF"),
+    "Csup47m": ({"C_sup": "47e-3"}, "supply output capacitance 47 mF"),
+    "soft_supply": ({"R_reg": "5mOhm", "C_sup": "3e-3"}, "supply that sags 0.5 V at 100 A, 3 mF"),
+    "K10": ({"k_pass": "10", **_clamp(10)}, "pass-FET law 2.7 times steeper"),
+    "K30": ({"k_pass": "30", **_clamp(30)}, "pass-FET law 8 times steeper (datasheet-like)"),
+    "K30_gain0p5": ({"k_pass": "30", **_clamp(30), "kp": "1.85", "ki": "55.5e3"}, "the same with the gains halved"),
+    "hot": ({"vt_pass": "3.65", **_clamp(vt=3.65)}, "hot pass FETs (threshold 0.24 V lower)"),
+    "nodamper": (dict(NO_DAMPER), "no damper"),
+    "damper100": ({"C_damp": "100uF"}, "damper 1.6 ohm + 100 uF"),
+    "cgd17": ({"cgd_pass": "17e-9"}, "pass-FET drain-gate capacitance 17 nF (the value that rings on the bench)"),
+    # ramps down to a lower current (firmware: 50 A/ms toward zero)
+    "down_98_50": ({"t_sp_len": "1s", "sp2_amps": "-48", "t_sp2_on": "6.1ms", "slew2": "50e3"}, "98 -> 50 A at 50 A/ms"),
+    "down_98_20": ({"t_sp_len": "1s", "sp2_amps": "-78", "t_sp2_on": "6.1ms", "slew2": "50e3"}, "98 -> 20 A at 50 A/ms"),
+    "down_98_50_step": ({"t_sp_len": "1s", "sp2_amps": "-48", "t_sp2_on": "6.1ms", "slew2": "1e9"}, "98 -> 50 A as a step"),
+    "down_50_20": ({"sp_amps": "50", "t_sp_len": "1s", "sp2_amps": "-30", "t_sp2_on": "6.1ms", "slew2": "50e3"}, "50 -> 20 A at 50 A/ms"),
+    # the same pulse ended by the fast switch-off (bridge opened and OUT1 zeroed together)
+    "fastoff": ({"t_sp_len": "1s", "t_en_off": "6.1ms", "t_run_off": "6.1ms"}, "pulse ended by opening the bridge"),
+}
+for _n, (_over, _what) in M100_VARIANTS.items():
+    SCENARIOS["m100_" + _n] = ("mot_ft", "Tran_12ms", "12ms", {**M100, **_over}, "PREDICTION, 100 A setup: " + _what)
+# fast switch-off from other currents and with other coil inductances (fine time step, fixed OUT1 as in FASTOFF_MOT)
+for _a, _u in ((25, "4.762"), (50, "5.260"), (75, "5.669")):
+    SCENARIOS[f"m100_fast_{_a}A"] = ("mot_ft", "Tran_3ms", "3ms", {**FASTOFF_MOT, "ol_kcounts": _u}, f"PREDICTION: bridge opened at {_a} A, proposed damper")
+for _l, _v in ((12, "6uH"), (20, "10uH")):
+    SCENARIOS[f"m100_fast_L{_l}"] = ("mot_ft", "Tran_3ms", "3ms", {**FASTOFF_MOT, "L_coil": _v}, f"PREDICTION: bridge opened at 100 A, coil pair {_l} uH")
+
+
 def defaults(config):
     v = {k: val for k, (val, _) in COMMON_VARS.items()}
     v.update({k: val for k, (val, _) in CONFIGS[config]["vars"].items()})
@@ -258,5 +324,7 @@ if __name__ == "__main__":
         for k, v in SCENARIOS.items():
             print(f"{k:22s} {v[4]}")
         sys.exit(0)
+    if "--m100" in args:        # the 100 A expectation runs (mot_expect.py)
+        args = [n for n in SCENARIOS if n.startswith("m100_")]
     # default: the scenarios of the as-built project; name the ft_ ones to run those
     run(args or [n for n, v in SCENARIOS.items() if not v[0].endswith("_ft")])

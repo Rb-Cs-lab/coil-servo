@@ -120,8 +120,9 @@ Rgs g s 10k
 *   src    source bar (supply 0 V)
 *   VT     this FET's fitted threshold (see IXTN200N10L2 above)
 *   CGD    drain-gate ("Miller") capacitance, CGS gate-source capacitance
-.subckt PASS_LEG d gbus g s src VT=3.892 RG=24.9 RPD=47k RBAL=0.030 CGD=1n CGS=22n
-XM d g s IXTN200N10L2 VT=VT CGD=CGD CGS=CGS
+*   K      steepness of the current law, A/V^2 per FET (3.656 = the bench fit below 2.5 A)
+.subckt PASS_LEG d gbus g s src VT=3.892 RG=24.9 RPD=47k RBAL=0.030 CGD=1n CGS=22n K=3.656
+XM d g s IXTN200N10L2 VT=VT CGD=CGD CGS=CGS K=K
 Rg gbus g RG
 Rpd g s RPD
 Rbal s src RBAL

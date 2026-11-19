@@ -100,6 +100,7 @@ COMMON_VARS = {
     "t_hb_len": ("10s", "how long the heartbeat wire stays pulled"),
     "t_rst_per": ("20s", "the reset button is pressed again this long after the first press"),
     "R_term": ("50ohm", "terminator at the op-amp input (1e9 = not fitted)"),
+    "k_pass": ("3.656", "pass-FET current law steepness, A/V^2 per FET: 3.656 = fitted on the bench below 2.5 A; the datasheet curve near 17 A per FET is several times steeper (10-30)"),
     "cgd_pass": ("1e-9", "pass-FET drain-gate capacitance, farads. 1 nF = datasheet value at 25 V; it is several times larger at the ~5 V the FETs work at"),
 }
 
@@ -229,7 +230,7 @@ def parts(config: str) -> list[tuple]:
     # One block per leg (MOSFET + gate resistor + pull-down + ballast, PASS_LEG).
     for k, vth in enumerate(VTH_3MA, 1):
         P += [(grp, f"M{k}", "PASS_LEG", {"d": "ret", "gbus": "gate_bus", "g": f"pg{k}", "s": f"ps{k}", "src": "0"},
-               {"VT": f"vt_pass+({vth - VTH_MEAN:+.4f})", "CGD": "cgd_pass", "CGS": "23e-9-cgd_pass"})]
+               {"VT": f"vt_pass+({vth - VTH_MEAN:+.4f})", "CGD": "cgd_pass", "CGS": "23e-9-cgd_pass", "K": "k_pass"})]
     P += [(grp, "D_tvs", "TVS_5KP12CA", {"a": "ret", "b": "0"}, {})]
 
     # ---- gate stage -----------------------------------------------------
